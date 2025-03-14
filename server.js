@@ -1,9 +1,9 @@
+import Fastify from "fastify";
+import WebSocket from "ws";
+import dotenv from "dotenv";
 import fastifyFormBody from "@fastify/formbody";
 import fastifyWs from "@fastify/websocket";
-import dotenv from "dotenv";
-import Fastify from "fastify";
 import Twilio from "twilio";
-import WebSocket from "ws";
 
 // Load environment variables from .env file
 dotenv.config();
@@ -24,14 +24,6 @@ if (
   !TWILIO_AUTH_TOKEN ||
   !TWILIO_PHONE_NUMBER
 ) {
-  console.log("ELEVENLABS_API_KEY:", process.env.ELEVENLABS_API_KEY);
-  console.log("TWILIO_ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID);
-  console.log("TWILIO_PHONE_NUMBER:", process.env.TWILIO_PHONE_NUMBER);
-
-  console.log("ELEVENLABS_AGENT_ID:", process.env.ELEVENLABS_AGENT_ID);
-  console.log("TWILIO_AUTH_TOKEN:", process.env.TWILIO_AUTH_TOKEN);
-  // console.log("TWILIO_PHONE_NUMBER:", process.env.TWILIO_PHONE_NUMBER);
-
   console.error("Missing required environment variables");
   throw new Error("Missing required environment variables");
 }
@@ -115,14 +107,14 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
   const first_message = request.query.first_message || "";
 
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-    <Response>
+      <Response>
         <Connect>
-        <Stream url="wss://${request.headers.host}/outbound-media-stream">
+          <Stream url="wss://${request.headers.host}/outbound-media-stream">
             <Parameter name="prompt" value="${prompt}" />
             <Parameter name="first_message" value="${first_message}" />
-        </Stream>
+          </Stream>
         </Connect>
-    </Response>`;
+      </Response>`;
 
   reply.type("text/xml").send(twimlResponse);
 });
@@ -156,10 +148,6 @@ fastify.register(async (fastifyInstance) => {
             // Send initial configuration with prompt and first message
             const initialConfig = {
               type: "conversation_initiation_client_data",
-              dynamic_variables: {
-                user_name: "Angelo",
-                user_id: 1234,
-              },
               conversation_config_override: {
                 agent: {
                   prompt: {

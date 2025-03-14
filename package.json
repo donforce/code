@@ -1,19 +1,20 @@
 {
-    "name": "twilio-elevenlabs-websocket",
+    "name": "convai-twilio-js",
     "version": "1.0.0",
-    "type": "module",
-    "description": "Servidor WebSocket para manejar llamadas con Twilio y Eleven Labs usando Fastify",
-    "main": "server.js",
+    "main": "index.js",
     "scripts": {
-      "start": "node server.js"
+      "test": "echo \"Error: no test specified\" && exit 1"
     },
+    "author": "ElevenLabs",
+    "license": "ISC",
+    "description": "",
+    "type": "module",
     "dependencies": {
-      "@fastify/formbody": "^6.0.0",
-      "@fastify/websocket": "^8.0.0",
-      "dotenv": "^16.0.3",
-      "fastify": "^5.00.0",
-      "twilio": "^4.14.0",
-      "ws": "^8.11.0"
+      "@fastify/formbody": "^8.0.1",
+      "@fastify/websocket": "^11.0.1",
+      "dotenv": "^16.4.5",
+      "fastify": "^5.1.0",
+      "twilio": "^5.4.4",
+      "ws": "^8.18.0"
     }
   }
-  
