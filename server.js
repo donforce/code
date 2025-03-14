@@ -70,7 +70,7 @@ async function getSignedUrl() {
 
 // Route to initiate outbound calls
 fastify.post("/outbound-call", async (request, reply) => {
-  const { number, prompt, first_message } = request.body;
+  const { number, prompt, first_message, client_name } = request.body;
   console.error("/outbound-call", request.body);
   if (!number) {
     return reply.code(400).send({ error: "Phone number is required" });
@@ -82,9 +82,10 @@ fastify.post("/outbound-call", async (request, reply) => {
       to: number,
       url: `https://${
         request.headers.host
-      }/outbound-call-twiml?prompt=${encodeURIComponent(
-        prompt
-      )}&first_message=${encodeURIComponent(first_message)}`,
+      }/outbound-call-twiml?prompt=${encodeURIComponent(prompt)}
+      &first_message=${encodeURIComponent(
+        first_message
+      )} &client_name=${encodeURIComponent(client_name)}`,
     });
 
     reply.send({
@@ -105,6 +106,7 @@ fastify.post("/outbound-call", async (request, reply) => {
 fastify.all("/outbound-call-twiml", async (request, reply) => {
   const prompt = request.query.prompt || "";
   const first_message = request.query.first_message || "";
+  const client_name = request.query.client_name || "";
 
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
       <Response>
@@ -112,6 +114,8 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
           <Stream url="wss://${request.headers.host}/outbound-media-stream">
             <Parameter name="prompt" value="${prompt}" />
             <Parameter name="first_message" value="${first_message}" />
+            <Parameter name="client_name" value="${client_name}" />
+
           </Stream>
         </Connect>
       </Response>`;
@@ -170,6 +174,7 @@ fastify.register(async (fastifyInstance) => {
                   first_message:
                     customParameters?.first_message ||
                     "hey there! how can I help you today?",
+                  client_name: customParameters?.client_name || "",
                 },
                 keep_alive: true,
               },
