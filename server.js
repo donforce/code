@@ -175,6 +175,13 @@ fastify.register(async (fastifyInstance) => {
             try {
               const message = JSON.parse(data);
 
+              if (message.type === "session_ended") {
+                console.warn(
+                  "[ElevenLabs] ¡La sesión se cerrará pronto! Intentando reconectar..."
+                );
+                setTimeout(setupElevenLabs, 1000); // Intentar reconectar en 1 segundo
+              }
+
               switch (message.type) {
                 case "conversation_initiation_metadata":
                   console.log("[ElevenLabs] Received initiation metadata");
