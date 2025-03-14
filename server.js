@@ -35,15 +35,12 @@ fastify.register(fastifyWs);
 
 const PORT = process.env.PORT || 8000;
 
-// Root route for health check
 fastify.get("/", async (_, reply) => {
   reply.send({ message: "Server is running" });
 });
 
-// Initialize Twilio client
 const twilioClient = new Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-// Helper function to get signed URL for authenticated conversations
 async function getSignedUrl() {
   try {
     const response = await fetch(
@@ -68,9 +65,8 @@ async function getSignedUrl() {
   }
 }
 
-// Route to initiate outbound calls
 fastify.post("/outbound-call", async (request, reply) => {
-  const { number, prompt, first_message, client_name } = request.body;
+  const { number, prompt, first_message } = request.body;
   console.error("/outbound-call", request.body);
 
   if (!number) {
@@ -85,9 +81,7 @@ fastify.post("/outbound-call", async (request, reply) => {
         request.headers.host
       }/outbound-call-twiml?prompt=${encodeURIComponent(
         prompt
-      )}&first_message=${encodeURIComponent(
-        first_message
-      )}&client_name=${encodeURIComponent(client_name)}`,
+      )}&first_message=${encodeURIComponent(first_message)}`,
     });
 
     reply.send({
@@ -97,18 +91,13 @@ fastify.post("/outbound-call", async (request, reply) => {
     });
   } catch (error) {
     console.error("Error initiating outbound call:", error);
-    reply.code(500).send({
-      success: false,
-      error: "Failed to initiate call",
-    });
+    reply.code(500).send({ success: false, error: "Failed to initiate call" });
   }
 });
 
-// TwiML route for outbound calls
 fastify.all("/outbound-call-twiml", async (request, reply) => {
   const prompt = request.query.prompt || "";
   const first_message = request.query.first_message || "";
-  const client_name = request.query.client_name || "Cliente";
 
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
       <Response>
@@ -116,7 +105,6 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
           <Stream url="wss://${request.headers.host}/outbound-media-stream">
             <Parameter name="prompt" value="${prompt}" />
             <Parameter name="first_message" value="${first_message}" />
-            <Parameter name="client_name" value="${client_name}" />
           </Stream>
         </Connect>
       </Response>`;
@@ -124,7 +112,6 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
   reply.type("text/xml").send(twimlResponse);
 });
 
-// WebSocket route for handling media streams
 fastify.register(async (fastifyInstance) => {
   fastifyInstance.get(
     "/outbound-media-stream",
@@ -147,9 +134,6 @@ fastify.register(async (fastifyInstance) => {
           elevenLabsWs.on("open", () => {
             console.log("[ElevenLabs] Connected to Conversational AI");
 
-            const clientName =
-              customParameters?.client_name?.trim() || "Cliente";
-
             const silencePacket = {
               type: "audio",
               audio_event: {
@@ -164,22 +148,15 @@ fastify.register(async (fastifyInstance) => {
               conversation_config_override: {
                 agent: {
                   prompt: {
-                    prompt: `Eres un asistente de bienes raíces en Florida. Estás hablando con ${clientName}.`,
+                    prompt: `Eres un asistente de bienes raíces en Florida. Mantén una conversación amigable y útil.`,
                   },
-                  first_message: `Hola ${clientName}, soy un asesor de bienes raíces. ¿En qué te puedo ayudar hoy?`,
+                  first_message: `Hola, soy un asesor de bienes raíces. ¿En qué te puedo ayudar hoy?`,
                 },
                 keep_alive: true,
               },
             };
 
             elevenLabsWs.send(JSON.stringify(initialConfig));
-
-            setTimeout(() => {
-              if (elevenLabsWs.readyState === WebSocket.OPEN) {
-                elevenLabsWs.send(JSON.stringify(silencePacket));
-                console.log("[ElevenLabs] Enviando keep-alive.");
-              }
-            }, 3000);
           });
 
           elevenLabsWs.on("close", () => {
@@ -212,14 +189,15 @@ fastify.register(async (fastifyInstance) => {
 
             case "media":
               if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                const audioMessage = {
-                  type: "user_audio_chunk",
-                  user_audio_chunk: Buffer.from(
-                    msg.media.payload,
-                    "base64"
-                  ).toString("base64"),
-                };
-                elevenLabsWs.send(JSON.stringify(audioMessage));
+                elevenLabsWs.send(
+                  JSON.stringify({
+                    type: "user_audio_chunk",
+                    user_audio_chunk: Buffer.from(
+                      msg.media.payload,
+                      "base64"
+                    ).toString("base64"),
+                  })
+                );
               }
               break;
 
@@ -246,7 +224,6 @@ fastify.register(async (fastifyInstance) => {
   );
 });
 
-// Start the Fastify server
 fastify.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
   if (err) {
     console.error("Error starting server:", err);
