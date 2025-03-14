@@ -1,0 +1,18 @@
+{
+    "name": "twilio-elevenlabs-websocket",
+    "version": "1.0.0",
+    "description": "Servidor WebSocket para manejar llamadas con Twilio y Eleven Labs",
+    "main": "server.js",
+    "scripts": {
+      "start": "node server.js"
+    },
+    "dependencies": {
+      "@fastify/formbody": "^8.0.0",
+      "@fastify/websocket": "^9.0.0",
+      "dotenv": "^16.0.3",
+      "fastify": "^4.15.0",
+      "twilio": "^4.14.0",
+      "ws": "^8.11.0"
+    }
+  }
+  
