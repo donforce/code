@@ -71,7 +71,7 @@ async function getSignedUrl() {
 // Route to initiate outbound calls
 fastify.post("/outbound-call", async (request, reply) => {
   const { number, prompt, first_message } = request.body;
-
+  console.error("/outbound-call", request.body);
   if (!number) {
     return reply.code(400).send({ error: "Phone number is required" });
   }
