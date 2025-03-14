@@ -24,6 +24,10 @@ if (
   !TWILIO_AUTH_TOKEN ||
   !TWILIO_PHONE_NUMBER
 ) {
+  console.log("ELEVENLABS_API_KEY:", process.env.ELEVENLABS_API_KEY);
+  console.log("TWILIO_ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID);
+  console.log("TWILIO_PHONE_NUMBER:", process.env.TWILIO_PHONE_NUMBER);
+
   console.error("Missing required environment variables");
   throw new Error("Missing required environment variables");
 }
