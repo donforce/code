@@ -28,6 +28,10 @@ if (
   console.log("TWILIO_ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID);
   console.log("TWILIO_PHONE_NUMBER:", process.env.TWILIO_PHONE_NUMBER);
 
+  console.log("ELEVENLABS_AGENT_ID:", process.env.ELEVENLABS_AGENT_ID);
+  console.log("TWILIO_AUTH_TOKEN:", process.env.TWILIO_AUTH_TOKEN);
+  // console.log("TWILIO_PHONE_NUMBER:", process.env.TWILIO_PHONE_NUMBER);
+
   console.error("Missing required environment variables");
   throw new Error("Missing required environment variables");
 }
