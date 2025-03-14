@@ -10,7 +10,10 @@ dotenv.config();
 const fastify = Fastify({ logger: true });
 fastify.register(fastifyWebsocket);
 
-const wss = new WebSocketServer({ port: 8080 });
+const WS_PORT = process.env.WS_PORT || 3001; // Usa un puerto dinámico
+const wss = new WebSocketServer({ port: WS_PORT });
+
+console.log(`WebSocket corriendo en el puerto ${WS_PORT}`);
 
 wss.on("connection", (ws) => {
   console.log("Cliente conectado al WebSocket");
@@ -68,7 +71,8 @@ async function generarAudio(texto) {
 }
 
 // Servidor Fastify en Railway
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000; // Railway asigna el puerto automáticamente
+
 fastify.listen({ port: PORT, host: "0.0.0.0" }, (err, address) => {
   if (err) {
     console.error(err);
