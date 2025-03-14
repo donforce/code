@@ -159,6 +159,7 @@ fastify.register(async (fastifyInstance) => {
                     customParameters?.first_message ||
                     "hey there! how can I help you today?",
                 },
+                keep_alive: true,
               },
             };
 
