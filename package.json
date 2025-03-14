@@ -11,11 +11,14 @@
       "@fastify/formbody": "^8.0.0",
       "@fastify/websocket": "^9.0.0",
       "dotenv": "^16.0.3",
-      "fastify": "^5.0.0",
+      "fastify": "^5.2.1",
       "twilio": "^4.14.0",
       "ws": "^8.11.0"
     }
   }
+
+ 
+  
 
   
   
