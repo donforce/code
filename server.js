@@ -175,7 +175,7 @@ fastify.register(async (fastifyInstance) => {
                   first_message:
                     customParameters?.first_message ||
                     "hey there! how can I help you today?",
-                  client_name: customParameters?.client_name || "",
+                  client_name: customParameters?.client_name || "Daniel",
                 },
                 keep_alive: true,
               },
