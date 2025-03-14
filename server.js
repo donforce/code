@@ -145,6 +145,18 @@ fastify.register(async (fastifyInstance) => {
           elevenLabsWs.on("open", () => {
             console.log("[ElevenLabs] Connected to Conversational AI");
 
+            const silencePacket = {
+              type: "audio",
+              audio_event: {
+                audio_base_64: Buffer.from([0x00]).toString("base64"), // Paquete de silencio
+              },
+            };
+
+            elevenLabsWs.send(JSON.stringify(silencePacket));
+            console.log(
+              "[ElevenLabs] Enviando audio de silencio inicial para evitar desconexión."
+            );
+
             // Send initial configuration with prompt and first message
             const initialConfig = {
               type: "conversation_initiation_client_data",
