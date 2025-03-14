@@ -82,10 +82,11 @@ fastify.post("/outbound-call", async (request, reply) => {
       to: number,
       url: `https://${
         request.headers.host
-      }/outbound-call-twiml?prompt=${encodeURIComponent(prompt)}
-      &first_message=${encodeURIComponent(
+      }/outbound-call-twiml?prompt=${encodeURIComponent(
+        prompt
+      )}&first_message=${encodeURIComponent(
         first_message
-      )} &client_name=${encodeURIComponent(client_name)}`,
+      )}&client_name=${encodeURIComponent(client_name)}`,
     });
 
     reply.send({
