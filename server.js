@@ -170,7 +170,7 @@ fastify.register(async (fastifyInstance) => {
                 keep_alive: true,
               },
               dynamic_variables: {
-                client_name: clientName,
+                client_name: `Daniel`,
               },
 
             };
