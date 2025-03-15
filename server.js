@@ -162,18 +162,17 @@ fastify.register(async (fastifyInstance) => {
               conversation_config_override: {
                 agent: {
                   prompt: {
-                    prompt: `Hola , soy un asistente de bienes raíces en Florida. ¿Cómo puedo ayudarte hoy?`,
+                    prompt: "Hola {client_name}, soy un asistente de bienes raíces en Florida. ¿Cómo puedo ayudarte hoy?",
                   },
-                  first_message: `Hola , estoy aquí para ayudarte con tu consulta sobre propiedades.`,
-                 
+                  first_message: "Hola {client_name}, estoy aquí para ayudarte con tu consulta sobre propiedades.",
                 },
                 keep_alive: true,
               },
               dynamic_variables: {
-                client_name: `Daniel`,
+                client_name: customParameters?.client_name || "Cliente",
               },
-
             };
+            
             console.log("initialConfig ",JSON.stringify(initialConfig));
 
 
