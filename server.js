@@ -136,6 +136,7 @@ fastify.register(async (fastifyInstance) => {
 
       ws.on("error", console.error);
 
+      // Set up ElevenLabs connection
       const setupElevenLabs = async () => {
         try {
           const signedUrl = await getSignedUrl();
@@ -173,24 +174,60 @@ fastify.register(async (fastifyInstance) => {
             };
 
             elevenLabsWs.send(JSON.stringify(initialConfig));
-
-            setTimeout(() => {
-              if (elevenLabsWs.readyState === WebSocket.OPEN) {
-                elevenLabsWs.send(JSON.stringify(silencePacket));
-                console.log("[ElevenLabs] Enviando keep-alive.");
-              }
-            }, 3000);
           });
 
-          elevenLabsWs.on("close", () => {
-            console.warn(
-              "[ElevenLabs] WebSocket cerrado. Intentando reconectar en 3 segundos..."
-            );
-            setTimeout(setupElevenLabs, 3000);
+          elevenLabsWs.on("message", (data) => {
+            try {
+              const message = JSON.parse(data);
+
+              switch (message.type) {
+                case "conversation_initiation_metadata":
+                  console.log("[ElevenLabs] Received initiation metadata");
+                  break;
+
+                case "audio":
+                  if (streamSid) {
+                    const audioData = {
+                      event: "media",
+                      streamSid,
+                      media: {
+                        payload:
+                          message.audio?.chunk ||
+                          message.audio_event?.audio_base_64,
+                      },
+                    };
+                    ws.send(JSON.stringify(audioData));
+                  }
+                  break;
+
+                case "agent_response":
+                  console.log(
+                    `[Twilio] Agent response: ${message.agent_response_event?.agent_response}`
+                  );
+                  break;
+
+                case "user_transcript":
+                  console.log(
+                    `[Twilio] User transcript: ${message.user_transcription_event?.user_transcript}`
+                  );
+                  break;
+
+                default:
+                  console.log(
+                    `[ElevenLabs] Unhandled message type: ${message.type}`
+                  );
+              }
+            } catch (error) {
+              console.error("[ElevenLabs] Error processing message:", error);
+            }
           });
 
           elevenLabsWs.on("error", (error) => {
             console.error("[ElevenLabs] WebSocket error:", error);
+          });
+
+          elevenLabsWs.on("close", () => {
+            console.log("[ElevenLabs] Disconnected");
           });
         } catch (error) {
           console.error("[ElevenLabs] Setup error:", error);
@@ -247,10 +284,6 @@ fastify.register(async (fastifyInstance) => {
   );
 });
 
-fastify.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
-  if (err) {
-    console.error("Error starting server:", err);
-    process.exit(1);
-  }
+fastify.listen({ port: PORT, host: "0.0.0.0" }, () => {
   console.log(`[Server] Listening on port ${PORT}`);
 });
