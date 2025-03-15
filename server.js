@@ -103,8 +103,8 @@ fastify.post("/outbound-call", async (request, reply) => {
 
 // TwiML route for outbound calls
 fastify.all("/outbound-call-twiml", async (request, reply) => {
-  const prompt = request.query.prompt || "";
-  const first_message = request.query.first_message || "";
+  const prompt = request.query.prompt || "Eres un asistente especialista en el sector inmobiliario";
+  const first_message = request.query.first_message || "Hola como estas?";
   const client_name = request.query.client_name || "Cliente";
 
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
