@@ -186,7 +186,7 @@ fastify.register(async (fastifyInstance) => {
 
               switch (message.type) {
                 case "conversation_initiation_metadata":
-                  console.log("[ElevenLabs] Received initiation metadata");
+                  console.log("[ElevenLabs] Received initiation metadata", JSON.stringify(message, null, 2));
                   break;
 
                 case "audio":
