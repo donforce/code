@@ -166,7 +166,7 @@ fastify.register(async (fastifyInstance) => {
                   },
                   first_message: `Hola {client_name}, estoy aquí para ayudarte con tu consulta sobre propiedades.`,
                   variables: {
-                    client_name: clientName,
+                    client_name: customParameters?.client_name || "Cliente",
                   },
                 },
                 keep_alive: true,
