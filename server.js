@@ -170,11 +170,12 @@ fastify.register(async (fastifyInstance) => {
                 keep_alive: true,
               },
               dynamic_variables: {
-                client_name: "Dan",
+                client_name: clientName,
               },
 
             };
-            
+            console.log("initialConfig ",JSON.stringify(initialConfig));
+
 
             elevenLabsWs.send(JSON.stringify(initialConfig));
           });
