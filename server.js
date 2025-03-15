@@ -165,11 +165,12 @@ fastify.register(async (fastifyInstance) => {
                     prompt: `Hola {client_name}, soy un asistente de bienes raíces en Florida. ¿Cómo puedo ayudarte hoy?`,
                   },
                   first_message: `Hola {client_name}, estoy aquí para ayudarte con tu consulta sobre propiedades.`,
-                  variables: {
-                    client_name: customParameters?.client_name || "Cliente",
-                  },
+                 
                 },
                 keep_alive: true,
+              },
+              dynamic_variables: {
+                client_name: "Dan",
               },
             };
 
