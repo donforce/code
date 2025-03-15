@@ -131,7 +131,6 @@ fastify.all("/get-personal", async (request, reply) => {
     },
     conversation_config_override: {
       agent: {
-        agent_id: ELEVENLABS_AGENT_ID,
         prompt: {
           prompt: "Hola {client_name}, soy un asistente de bienes raíces en Florida. ¿Cómo puedo ayudarte hoy?",
         },
