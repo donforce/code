@@ -121,6 +121,27 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
   reply.type("text/xml").send(twimlResponse);
 });
 
+fastify.all("/get-personal", async (request, reply) => {
+  console.log(" request ",request.body);
+  const {caller_id}=request.body;
+
+  reply.send({
+    dynamic_variables: {
+      client_name: "Cliente",
+    },
+    conversation_config_override: {
+      agent: {
+        agent_id: ELEVENLABS_AGENT_ID,
+        prompt: {
+          prompt: "Hola {client_name}, soy un asistente de bienes raíces en Florida. ¿Cómo puedo ayudarte hoy?",
+        },
+        first_message: "Hola {client_name}, estoy aquí para ayudarte con tu consulta sobre propiedades.",
+      },
+      keep_alive: true,
+    },
+  });
+});
+
 // WebSocket route for handling media streams
 fastify.register(async (fastifyInstance) => {
   fastifyInstance.get(
@@ -161,6 +182,7 @@ fastify.register(async (fastifyInstance) => {
               type: "conversation_initiation_client_data",
               conversation_config_override: {
                 agent: {
+                  agent_id: ELEVENLABS_AGENT_ID,
                   prompt: {
                     prompt: "Hola {client_name}, soy un asistente de bienes raíces en Florida. ¿Cómo puedo ayudarte hoy?",
                   },
