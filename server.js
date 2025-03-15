@@ -165,16 +165,16 @@ fastify.register(async (fastifyInstance) => {
                   prompt: {
                     prompt:
                       customParameters?.prompt ||
-                      "you are a gary from the phone store",
+                      "You are an assistant from a phone store.",
                   },
                   first_message:
                     customParameters?.first_message ||
-                    "hey there! how can I help you today?",
+                    "Hey there! How can I help you today?",
+                  variables: {
+                    client_name: "Daniel",
+                  },
                 },
                 keep_alive: true,
-              },
-              dynamic_variables: {
-                client_name: "Daniel",
               },
             };
 
