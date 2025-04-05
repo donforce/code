@@ -103,7 +103,9 @@ fastify.post("/outbound-call", async (request, reply) => {
 
 // TwiML route for outbound calls
 fastify.all("/outbound-call-twiml", async (request, reply) => {
-  const prompt = request.query.prompt || "Eres un asistente especialista en el sector inmobiliario";
+  const prompt =
+    request.query.prompt ||
+    "Eres un asistente especialista en el sector inmobiliario";
   const first_message = request.query.first_message || "Hola como estas?";
   const client_name = request.query.client_name || "Cliente";
 
@@ -122,8 +124,8 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
 });
 
 fastify.all("/get-personal", async (request, reply) => {
-  console.log(" request ",request.body);
-  const {caller_id}=request.body;
+  console.log(" request ", request.body);
+  const { caller_id } = request.body;
 
   reply.send({
     dynamic_variables: {
@@ -132,9 +134,11 @@ fastify.all("/get-personal", async (request, reply) => {
     conversation_config_override: {
       agent: {
         prompt: {
-          prompt: "Hola {client_name}, soy un asistente de bienes raíces en Florida. ¿Cómo puedo ayudarte hoy?",
+          prompt:
+            "Hola {client_name}, soy un asistente de bienes raíces en Florida. ¿Cómo puedo ayudarte hoy?",
         },
-        first_message: "Hola {client_name}, estoy aquí para ayudarte con tu consulta sobre propiedades.",
+        first_message:
+          "Hola {client_name}, estoy aquí para ayudarte con tu consulta sobre propiedades.",
       },
       keep_alive: true,
     },
@@ -174,18 +178,17 @@ fastify.register(async (fastifyInstance) => {
                 audio_base_64: Buffer.from([0x00]).toString("base64"),
               },
             };
-
-            elevenLabsWs.send(JSON.stringify(silencePacket));
-
             const initialConfig = {
               type: "conversation_initiation_client_data",
               conversation_config_override: {
                 agent: {
                   agent_id: ELEVENLABS_AGENT_ID,
                   prompt: {
-                    prompt: "Hola {client_name}, soy un asistente de bienes raíces en Florida. ¿Cómo puedo ayudarte hoy?",
+                    prompt:
+                      "Hola {{client_name}}, soy un asistente de bienes raíces en Florida. ¿Cómo puedo ayudarte hoy?",
                   },
-                  first_message: "Hola {client_name}, estoy aquí para ayudarte con tu consulta sobre propiedades.",
+                  first_message:
+                    "Hola {{client_name}}, estoy aquí para ayudarte con tu consulta sobre propiedades.",
                 },
                 keep_alive: true,
               },
@@ -193,11 +196,12 @@ fastify.register(async (fastifyInstance) => {
                 client_name: customParameters?.client_name || "Cliente",
               },
             };
-            
-            console.log("initialConfig ",JSON.stringify(initialConfig));
 
+            console.log("initialConfig ", JSON.stringify(initialConfig));
 
             elevenLabsWs.send(JSON.stringify(initialConfig));
+
+            elevenLabsWs.send(JSON.stringify(silencePacket));
           });
 
           elevenLabsWs.on("message", (data) => {
@@ -206,7 +210,10 @@ fastify.register(async (fastifyInstance) => {
 
               switch (message.type) {
                 case "conversation_initiation_metadata":
-                  console.log("[ElevenLabs] Received initiation metadata", JSON.stringify(message, null, 2));
+                  console.log(
+                    "[ElevenLabs] Received initiation metadata",
+                    JSON.stringify(message, null, 2)
+                  );
                   break;
 
                 case "audio":
