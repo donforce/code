@@ -116,10 +116,10 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     request.query.prompt ||
     "Eres un asistente especialista en el sector inmobiliario";
   const first_message = request.query.first_message || "Hola como estas?";
-  const client_name = request.query.client_name || "";
-  const client_phone = request.query.client_phone || "";
-  const client_email = request.query.client_email || "";
-  const client_id = request.query.client_id || "";
+  const client_name = request.query.client_name || "cliente";
+  const client_phone = request.query.client_phone || "453453";
+  const client_email = request.query.client_email || "asdasd@hjdjhd.com";
+  const client_id = request.query.client_id || "213425";
 
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
       <Response>
@@ -128,12 +128,11 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
             <Parameter name="prompt" value="${prompt}" />
             <Parameter name="first_message" value="${first_message}" />
             <Parameter name="client_name" value="${client_name}" />
-            <Parameter name="client_phone" value="${client_phone}" />
-            <Parameter name="client_email" value="${client_email}" />
-            <Parameter name="client_id" value="${client_id}" />
           </Stream>
         </Connect>
       </Response>`;
+
+  console.log("twimlResponse", twimlResponse);
 
   reply.type("text/xml").send(twimlResponse);
 });
@@ -179,6 +178,7 @@ fastify.register(async (fastifyInstance) => {
       const setupElevenLabs = async () => {
         try {
           const signedUrl = await getSignedUrl();
+          console.log("[ElevenLabs] signedUrl ", signedUrl);
           elevenLabsWs = new WebSocket(signedUrl);
 
           elevenLabsWs.on("open", () => {
