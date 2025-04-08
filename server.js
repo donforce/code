@@ -256,8 +256,25 @@ fastify.register(async (fastifyInstance) => {
             console.error("[ElevenLabs] WebSocket error:", error);
           });
 
-          elevenLabsWs.on("close", () => {
+          elevenLabsWs.on("close", async () => {
             console.log("[ElevenLabs] Disconnected");
+
+            if (callSid) {
+              try {
+                await twilioClient
+                  .calls(callSid)
+                  .update({ status: "completed" });
+                console.log(
+                  `[Twilio] Call ${callSid} ended due to ElevenLabs disconnection.`
+                );
+              } catch (err) {
+                console.error("[Twilio] Error ending call:", err);
+              }
+            }
+
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.close();
+            }
           });
         } catch (error) {
           console.error("[ElevenLabs] Setup error:", error);
