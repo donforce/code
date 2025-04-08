@@ -183,6 +183,7 @@ fastify.register(async (fastifyInstance) => {
               conversation_config_override: {
                 agent: {
                   agent_id: ELEVENLABS_AGENT_ID,
+                  /*
                   prompt: {
                     prompt:
                       customParameters?.prompt ||
@@ -191,11 +192,13 @@ fastify.register(async (fastifyInstance) => {
                   first_message:
                     customParameters?.first_message ||
                     "Holaaa {{client_name}}!, soy Daniela. Asistente de Yudelsa Ulloa, Rialtor de la florida. Como estás hoy?",
+                    */
                 },
+
                 keep_alive: true,
               },
               dynamic_variables: {
-                client_name: customParameters?.client_name || "Cliente",
+                client_name: customParameters?.client_name || "",
               },
             };
 
