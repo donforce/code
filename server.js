@@ -70,7 +70,15 @@ async function getSignedUrl() {
 
 // Route to initiate outbound calls
 fastify.post("/outbound-call", async (request, reply) => {
-  const { number, prompt, first_message, client_name } = request.body;
+  const {
+    number,
+    prompt,
+    first_message,
+    client_name,
+    client_phone,
+    client_email,
+    client_id,
+  } = request.body;
   console.error("/outbound-call", request.body);
 
   if (!number) {
@@ -83,11 +91,12 @@ fastify.post("/outbound-call", async (request, reply) => {
       to: number,
       url: `https://${
         request.headers.host
-      }/outbound-call-twiml?prompt=${encodeURIComponent(
-        prompt
-      )}&first_message=${encodeURIComponent(
-        first_message
-      )}&client_name=${encodeURIComponent(client_name)}`,
+      }/outbound-call-twiml?prompt=${encodeURIComponent(prompt)}
+      &first_message=${encodeURIComponent(first_message)}
+      &client_name=${encodeURIComponent(client_name)}
+      &client_phone=${encodeURIComponent(client_phone)}
+      &client_email=${encodeURIComponent(client_email)}
+      &client_id=${encodeURIComponent(client_id)}`,
     });
 
     reply.send({
@@ -116,6 +125,9 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
             <Parameter name="prompt" value="${prompt}" />
             <Parameter name="first_message" value="${first_message}" />
             <Parameter name="client_name" value="${client_name}" />
+            <Parameter name="client_phone" value="${client_phone}" />
+            <Parameter name="client_email" value="${client_email}" />
+            <Parameter name="client_id" value="${client_id}" />
           </Stream>
         </Connect>
       </Response>`;
@@ -199,6 +211,9 @@ fastify.register(async (fastifyInstance) => {
               },
               dynamic_variables: {
                 client_name: customParameters?.client_name || "",
+                client_email: customParameters?.client_email || "",
+                client_phone: customParameters?.client_phone || "",
+                client_id: customParameters?.client_id || "",
               },
             };
 
