@@ -70,7 +70,6 @@ fastify.post("/outbound-call", async (request, reply) => {
     return reply.code(400).send({ error: "Phone number is required" });
   }
 
-  // Calcular fecha y día de la semana automáticamente
   const date = new Date();
   const diasSemana = [
     "Domingo",
@@ -160,6 +159,7 @@ fastify.register(async (fastifyInstance) => {
       let callSid = null;
       let elevenLabsWs = null;
       let customParameters = null;
+      let lastUserTranscript = "";
 
       ws.on("error", console.error);
 
@@ -213,6 +213,7 @@ fastify.register(async (fastifyInstance) => {
                     JSON.stringify(message, null, 2)
                   );
                   break;
+
                 case "audio":
                   if (streamSid) {
                     const audioData = {
@@ -227,11 +228,13 @@ fastify.register(async (fastifyInstance) => {
                     ws.send(JSON.stringify(audioData));
                   }
                   break;
+
                 case "agent_response":
                   console.log(
                     `[Twilio] Agent response: ${message.agent_response_event?.agent_response}`
                   );
                   break;
+
                 case "user_transcript":
                   const transcript =
                     message.user_transcription_event?.user_transcript
@@ -239,6 +242,15 @@ fastify.register(async (fastifyInstance) => {
                       .trim() || "";
 
                   console.log(`[Twilio] User transcript: ${transcript}`);
+
+                  if (transcript === lastUserTranscript) {
+                    console.log(
+                      "[System] Repeated transcript detected, ignoring..."
+                    );
+                    break;
+                  }
+
+                  lastUserTranscript = transcript;
 
                   const normalized = transcript.replace(/[\s,]/g, "");
                   const isNumericSequence = /^\d{7,}$/.test(normalized);
@@ -282,13 +294,18 @@ fastify.register(async (fastifyInstance) => {
                     if (ws.readyState === WebSocket.OPEN) {
                       ws.close();
                     }
+
+                    break;
                   }
 
                   break;
+
                 default:
-                  console.log(
-                    `[ElevenLabs] Unhandled message type: ${message.type}`
-                  );
+                  if (message.type !== "ping") {
+                    console.log(
+                      `[ElevenLabs] Unhandled message type: ${message.type}`
+                    );
+                  }
               }
             } catch (error) {
               console.error("[ElevenLabs] Error processing message:", error);
@@ -336,6 +353,7 @@ fastify.register(async (fastifyInstance) => {
               callSid = msg.start.callSid;
               customParameters = msg.start.customParameters;
               break;
+
             case "media":
               if (elevenLabsWs?.readyState === WebSocket.OPEN) {
                 elevenLabsWs.send(
@@ -349,11 +367,13 @@ fastify.register(async (fastifyInstance) => {
                 );
               }
               break;
+
             case "stop":
               if (elevenLabsWs?.readyState === WebSocket.OPEN) {
                 elevenLabsWs.close();
               }
               break;
+
             default:
               console.log(`[Twilio] Unhandled event: ${msg.event}`);
           }
