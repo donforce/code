@@ -1,3 +1,4 @@
+@ -1,323 +1,326 @@
 import Fastify from "fastify";
 import WebSocket from "ws";
 import dotenv from "dotenv";
@@ -70,15 +71,7 @@ async function getSignedUrl() {
 
 // Route to initiate outbound calls
 fastify.post("/outbound-call", async (request, reply) => {
-  const {
-    number,
-    prompt,
-    first_message,
-    client_name,
-    client_phone,
-    client_email,
-    client_id,
-  } = request.body;
+  const { number, prompt, first_message, client_name } = request.body;
   console.error("/outbound-call", request.body);
 
   if (!number) {
@@ -91,12 +84,11 @@ fastify.post("/outbound-call", async (request, reply) => {
       to: number,
       url: `https://${
         request.headers.host
-      }/outbound-call-twiml?prompt=${encodeURIComponent(prompt)}
-      &first_message=${encodeURIComponent(first_message)}
-      &client_name=${encodeURIComponent(client_name)}
-      &client_phone=${encodeURIComponent(client_phone)}
-      &client_email=${encodeURIComponent(client_email)}
-      &client_id=${encodeURIComponent(client_id)}`,
+      }/outbound-call-twiml?prompt=${encodeURIComponent(
+        prompt
+      )}&first_message=${encodeURIComponent(
+        first_message
+      )}&client_name=${encodeURIComponent(client_name)}`,
     });
 
     reply.send({
@@ -116,10 +108,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     request.query.prompt ||
     "Eres un asistente especialista en el sector inmobiliario";
   const first_message = request.query.first_message || "Hola como estas?";
-  const client_name = request.query.client_name || "cliente";
-  const client_phone = request.query.client_phone || "453453";
-  const client_email = request.query.client_email || "asdasd@hjdjhd.com";
-  const client_id = request.query.client_id || "213425";
+  const client_name = request.query.client_name || "Cliente";
 
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
       <Response>
@@ -131,8 +120,6 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
           </Stream>
         </Connect>
       </Response>`;
-
-  console.log("twimlResponse", twimlResponse);
 
   reply.type("text/xml").send(twimlResponse);
 });
@@ -178,7 +165,6 @@ fastify.register(async (fastifyInstance) => {
       const setupElevenLabs = async () => {
         try {
           const signedUrl = await getSignedUrl();
-          console.log("[ElevenLabs] signedUrl ", signedUrl);
           elevenLabsWs = new WebSocket(signedUrl);
 
           elevenLabsWs.on("open", () => {
@@ -213,10 +199,8 @@ fastify.register(async (fastifyInstance) => {
                 keep_alive: true,
               },
               dynamic_variables: {
+                client_name: customParameters?.client_name || "Cliente",
                 client_name: customParameters?.client_name || "",
-                client_email: customParameters?.client_email || "",
-                client_phone: customParameters?.client_phone || "",
-                client_id: customParameters?.client_id || "",
               },
             };
 
