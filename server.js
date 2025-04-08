@@ -116,7 +116,10 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     request.query.prompt ||
     "Eres un asistente especialista en el sector inmobiliario";
   const first_message = request.query.first_message || "Hola como estas?";
-  const client_name = request.query.client_name || "Cliente";
+  const client_name = request.query.client_name || "";
+  const client_phone = request.query.client_phone || "";
+  const client_email = request.query.client_email || "";
+  const client_id = request.query.client_id || "";
 
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
       <Response>
