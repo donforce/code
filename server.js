@@ -202,9 +202,10 @@ fastify.register(async (fastifyInstance) => {
             );
           });
 
-          elevenLabsWs.on("message", (data) => {
+          elevenLabsWs.on("message", async (data) => {
             try {
               const message = JSON.parse(data);
+
               switch (message.type) {
                 case "conversation_initiation_metadata":
                   console.log(
@@ -232,9 +233,57 @@ fastify.register(async (fastifyInstance) => {
                   );
                   break;
                 case "user_transcript":
-                  console.log(
-                    `[Twilio] User transcript: ${message.user_transcription_event?.user_transcript}`
-                  );
+                  const transcript =
+                    message.user_transcription_event?.user_transcript
+                      ?.toLowerCase()
+                      .trim() || "";
+
+                  console.log(`[Twilio] User transcript: ${transcript}`);
+
+                  const normalized = transcript.replace(/[\s,]/g, "");
+                  const isNumericSequence = /^\d{7,}$/.test(normalized);
+                  const hasVoicemailPhrases = [
+                    "deje su mensaje",
+                    "después del tono",
+                    "mensaje de voz",
+                    "buzón de voz",
+                    "el número que usted marcó",
+                    "no está disponible",
+                    "intente más tarde",
+                    "ha sido desconectado",
+                    "gracias por llamar",
+                  ].some((phrase) => transcript.includes(phrase));
+
+                  if (isNumericSequence || hasVoicemailPhrases) {
+                    console.log(
+                      "[System] Detected voicemail or machine response. Hanging up..."
+                    );
+
+                    if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                      elevenLabsWs.close();
+                    }
+
+                    if (callSid) {
+                      try {
+                        await twilioClient
+                          .calls(callSid)
+                          .update({ status: "completed" });
+                        console.log(
+                          `[Twilio] Call ${callSid} terminated due to invalid transcript.`
+                        );
+                      } catch (err) {
+                        console.error(
+                          "[Twilio] Error ending call after detection:",
+                          err
+                        );
+                      }
+                    }
+
+                    if (ws.readyState === WebSocket.OPEN) {
+                      ws.close();
+                    }
+                  }
+
                   break;
                 default:
                   console.log(
