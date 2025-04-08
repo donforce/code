@@ -39,27 +39,20 @@ fastify.get("/", async (_, reply) => {
 const twilioClient = new Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 async function getSignedUrl() {
-  try {
-    const response = await fetch(
-      `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${ELEVENLABS_AGENT_ID}`,
-      {
-        method: "GET",
-        headers: {
-          "xi-api-key": ELEVENLABS_API_KEY,
-        },
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Failed to get signed URL: ${response.statusText}`);
+  const response = await fetch(
+    `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${ELEVENLABS_AGENT_ID}`,
+    {
+      method: "GET",
+      headers: {
+        "xi-api-key": ELEVENLABS_API_KEY,
+      },
     }
-
-    const data = await response.json();
-    return data.signed_url;
-  } catch (error) {
-    console.error("Error getting signed URL:", error);
-    throw error;
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to get signed URL: ${response.statusText}`);
   }
+  const data = await response.json();
+  return data.signed_url;
 }
 
 fastify.post("/outbound-call", async (request, reply) => {
@@ -77,6 +70,22 @@ fastify.post("/outbound-call", async (request, reply) => {
     return reply.code(400).send({ error: "Phone number is required" });
   }
 
+  // Calcular fecha y día de la semana automáticamente
+  const date = new Date();
+  const diasSemana = [
+    "Domingo",
+    "Lunes",
+    "Martes",
+    "Miércoles",
+    "Jueves",
+    "Viernes",
+    "Sábado",
+  ];
+  const dia_semana = diasSemana[date.getDay()];
+  const fecha = `${String(date.getDate()).padStart(2, "0")}/${String(
+    date.getMonth() + 1
+  ).padStart(2, "0")}/${String(date.getFullYear()).slice(-2)}`;
+
   try {
     const call = await twilioClient.calls.create({
       from: TWILIO_PHONE_NUMBER,
@@ -93,7 +102,9 @@ fastify.post("/outbound-call", async (request, reply) => {
         client_phone
       )}&client_email=${encodeURIComponent(
         client_email
-      )}&client_id=${encodeURIComponent(client_id)}`,
+      )}&client_id=${encodeURIComponent(client_id)}&fecha=${encodeURIComponent(
+        fecha
+      )}&dia_semana=${encodeURIComponent(dia_semana)}`,
     });
 
     reply.send({
@@ -115,44 +126,27 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     client_phone,
     client_email,
     client_id,
+    fecha,
+    dia_semana,
   } = request.query;
 
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-      <Response>
-        <Connect>
-          <Stream url="wss://${request.headers.host}/outbound-media-stream">
-            <Parameter name="prompt" value="${prompt}" />
-            <Parameter name="first_message" value="${first_message}" />
-            <Parameter name="client_name" value="${client_name}" />
-            <Parameter name="client_phone" value="${client_phone}" />
-            <Parameter name="client_email" value="${client_email}" />
-            <Parameter name="client_id" value="${client_id}" />
-          </Stream>
-        </Connect>
-      </Response>`;
+    <Response>
+      <Connect>
+        <Stream url="wss://${request.headers.host}/outbound-media-stream">
+          <Parameter name="prompt" value="${prompt}" />
+          <Parameter name="first_message" value="${first_message}" />
+          <Parameter name="client_name" value="${client_name}" />
+          <Parameter name="client_phone" value="${client_phone}" />
+          <Parameter name="client_email" value="${client_email}" />
+          <Parameter name="client_id" value="${client_id}" />
+          <Parameter name="fecha" value="${fecha}" />
+          <Parameter name="dia_semana" value="${dia_semana}" />
+        </Stream>
+      </Connect>
+    </Response>`;
 
   reply.type("text/xml").send(twimlResponse);
-});
-
-fastify.all("/get-personal", async (request, reply) => {
-  const { caller_id } = request.body;
-
-  reply.send({
-    dynamic_variables: {
-      client_name: "Cliente",
-    },
-    conversation_config_override: {
-      agent: {
-        prompt: {
-          prompt:
-            "Hola {client_name}, soy un asistente de bienes raíces en Florida. ¿Cómo puedo ayudarte hoy?",
-        },
-        first_message:
-          "Hola {client_name}, estoy aquí para ayudarte con tu consulta sobre propiedades.",
-      },
-      keep_alive: true,
-    },
-  });
 });
 
 fastify.register(async (fastifyInstance) => {
@@ -190,11 +184,12 @@ fastify.register(async (fastifyInstance) => {
                 client_phone: customParameters?.client_phone || "",
                 client_email: customParameters?.client_email || "",
                 client_id: customParameters?.client_id || "",
+                fecha: customParameters?.fecha || "",
+                dia_semana: customParameters?.dia_semana || "",
               },
             };
 
             console.log("initialConfig ", JSON.stringify(initialConfig));
-
             elevenLabsWs.send(JSON.stringify(initialConfig));
 
             elevenLabsWs.send(
@@ -210,7 +205,6 @@ fastify.register(async (fastifyInstance) => {
           elevenLabsWs.on("message", (data) => {
             try {
               const message = JSON.parse(data);
-
               switch (message.type) {
                 case "conversation_initiation_metadata":
                   console.log(
