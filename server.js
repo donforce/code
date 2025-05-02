@@ -193,20 +193,16 @@ fastify.register(async (fastifyInstance) => {
             };
 
             console.log("initialConfig ", JSON.stringify(initialConfig));
-            setTimeout(() => {
-              elevenLabsWs.send(JSON.stringify(initialConfig));
+            elevenLabsWs.send(JSON.stringify(initialConfig));
 
-              setTimeout(() => {
-                elevenLabsWs.send(
-                  JSON.stringify({
-                    type: "audio",
-                    audio_event: {
-                      audio_base_64: Buffer.from([0x00]).toString("base64"),
-                    },
-                  })
-                );
-              }, 150); // 150ms extra para asegurar
-            }, 100);
+            elevenLabsWs.send(
+              JSON.stringify({
+                type: "audio",
+                audio_event: {
+                  audio_base_64: Buffer.from([0x00]).toString("base64"),
+                },
+              })
+            );
           });
 
           elevenLabsWs.on("message", async (data) => {
