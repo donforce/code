@@ -188,7 +188,7 @@ fastify.register(async (fastifyInstance) => {
                 dia_semana: customParameters?.dia_semana || "",
               },
               usage: {
-                no_ip_reason: "ip_not_available",
+                no_ip_reason: "user_ip_not_collected",
               },
             };
 
