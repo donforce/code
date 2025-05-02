@@ -187,6 +187,9 @@ fastify.register(async (fastifyInstance) => {
                 fecha: customParameters?.fecha || "",
                 dia_semana: customParameters?.dia_semana || "",
               },
+              usage: {
+                no_ip_reason: "ip_not_available",
+              },
             };
 
             console.log("initialConfig ", JSON.stringify(initialConfig));
