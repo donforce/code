@@ -207,7 +207,7 @@ fastify.register(async (fastifyInstance) => {
                   })
                 );
               }, 100);
-            }, 100);
+            }, 50);
           });
 
           elevenLabsWs.on("message", async (data) => {
