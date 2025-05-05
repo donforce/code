@@ -92,7 +92,7 @@ fastify.register(async (fastifyInstance) => {
 
         await supabase.from("calls").insert({
           lead_id: customParameters.client_id,
-          user_id: null,
+          user_id: customParameters.user_id || null,
           call_sid: callSid,
           result,
           duration,
