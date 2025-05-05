@@ -32,7 +32,6 @@ if (
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-
 const fastify = Fastify();
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
@@ -45,23 +44,6 @@ fastify.get("/", async (_, reply) => {
 
 const twilioClient = new Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-async function getSignedUrl() {
-  const response = await fetch(
-    `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${ELEVENLABS_AGENT_ID}`,
-    {
-      method: "GET",
-      headers: {
-        "xi-api-key": ELEVENLABS_API_KEY,
-      },
-    }
-  );
-  if (!response.ok) {
-    throw new Error(`Failed to get signed URL: ${response.statusText}`);
-  }
-  const data = await response.json();
-  return data.signed_url;
-}
-
 fastify.post("/outbound-call", async (request, reply) => {
   const {
     number,
@@ -71,6 +53,7 @@ fastify.post("/outbound-call", async (request, reply) => {
     client_phone,
     client_email,
     client_id,
+    user_id,
   } = request.body;
 
   if (!number) {
@@ -108,7 +91,9 @@ fastify.post("/outbound-call", async (request, reply) => {
         client_phone
       )}&client_email=${encodeURIComponent(
         client_email
-      )}&client_id=${encodeURIComponent(client_id)}&fecha=${encodeURIComponent(
+      )}&client_id=${encodeURIComponent(
+        client_id
+      )}&user_id=${encodeURIComponent(user_id)}&fecha=${encodeURIComponent(
         fecha
       )}&dia_semana=${encodeURIComponent(dia_semana)}`,
     });
@@ -133,6 +118,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     client_phone,
     client_email,
     client_id,
+    user_id,
     fecha,
     dia_semana,
   } = request.query;
@@ -147,6 +133,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
           <Parameter name="client_phone" value="${client_phone}" />
           <Parameter name="client_email" value="${client_email}" />
           <Parameter name="client_id" value="${client_id}" />
+          <Parameter name="user_id" value="${user_id}" />
           <Parameter name="fecha" value="${fecha}" />
           <Parameter name="dia_semana" value="${dia_semana}" />
         </Stream>
@@ -168,6 +155,7 @@ fastify.register(async (fastifyInstance) => {
       let elevenLabsWs = null;
       let customParameters = null;
       let lastUserTranscript = "";
+      let callStartTime = null;
 
       ws.on("error", console.error);
 
@@ -178,6 +166,8 @@ fastify.register(async (fastifyInstance) => {
 
           elevenLabsWs.on("open", () => {
             console.log("[ElevenLabs] Connected to Conversational AI");
+
+            callStartTime = Date.now();
 
             const initialConfig = {
               type: "conversation_initiation_client_data",
@@ -192,6 +182,7 @@ fastify.register(async (fastifyInstance) => {
                 client_phone: customParameters?.client_phone || "",
                 client_email: customParameters?.client_email || "",
                 client_id: customParameters?.client_id || "",
+                user_id: customParameters?.user_id || "",
                 fecha: customParameters?.fecha || "",
                 dia_semana: customParameters?.dia_semana || "",
               },
@@ -200,9 +191,7 @@ fastify.register(async (fastifyInstance) => {
               },
             };
 
-            console.log("initialConfig ", JSON.stringify(initialConfig));
             elevenLabsWs.send(JSON.stringify(initialConfig));
-
             elevenLabsWs.send(
               JSON.stringify({
                 type: "audio",
@@ -213,131 +202,27 @@ fastify.register(async (fastifyInstance) => {
             );
           });
 
-          elevenLabsWs.on("message", async (data) => {
-            try {
-              const message = JSON.parse(data);
-
-              switch (message.type) {
-                case "conversation_initiation_metadata":
-                  console.log(
-                    "[ElevenLabs] Received initiation metadata",
-                    JSON.stringify(message, null, 2)
-                  );
-                  break;
-
-                case "audio":
-                  if (streamSid) {
-                    const audioData = {
-                      event: "media",
-                      streamSid,
-                      media: {
-                        payload:
-                          message.audio?.chunk ||
-                          message.audio_event?.audio_base_64,
-                      },
-                    };
-                    ws.send(JSON.stringify(audioData));
-                  }
-                  break;
-
-                case "agent_response":
-                  console.log(
-                    `[Twilio] Agent response: ${message.agent_response_event?.agent_response}`
-                  );
-                  break;
-
-                case "user_transcript":
-                  const transcript =
-                    message.user_transcription_event?.user_transcript
-                      ?.toLowerCase()
-                      .trim() || "";
-
-                  console.log(`[Twilio] User transcript: ${transcript}`);
-
-                  if (transcript === lastUserTranscript) {
-                    console.log(
-                      "[System] Repeated transcript detected, ignoring..."
-                    );
-                    break;
-                  }
-
-                  lastUserTranscript = transcript;
-
-                  const normalized = transcript.replace(/[\s,]/g, "");
-                  const isNumericSequence = /^\d{7,}$/.test(normalized);
-                  const hasVoicemailPhrases = [
-                    "deje su mensaje",
-                    "después del tono",
-                    "mensaje de voz",
-                    "buzón de voz",
-                    "el número que usted marcó",
-                    "no está disponible",
-                    "intente más tarde",
-                    "ha sido desconectado",
-                    "gracias por llamar",
-                  ].some((phrase) => transcript.includes(phrase));
-
-                  if (isNumericSequence || hasVoicemailPhrases) {
-                    console.log(
-                      "[System] Detected voicemail or machine response. Hanging up..."
-                    );
-
-                    if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                      elevenLabsWs.close();
-                    }
-
-                    if (callSid) {
-                      try {
-                        await twilioClient
-                          .calls(callSid)
-                          .update({ status: "completed" });
-                        console.log(
-                          `[Twilio] Call ${callSid} terminated due to invalid transcript.`
-                        );
-                      } catch (err) {
-                        console.error(
-                          "[Twilio] Error ending call after detection:",
-                          err
-                        );
-                      }
-                    }
-
-                    if (ws.readyState === WebSocket.OPEN) {
-                      ws.close();
-                    }
-
-                    break;
-                  }
-
-                  break;
-
-                default:
-                  if (message.type !== "ping") {
-                    console.log(
-                      `[ElevenLabs] Unhandled message type: ${message.type}`
-                    );
-                  }
-              }
-            } catch (error) {
-              console.error("[ElevenLabs] Error processing message:", error);
-            }
-          });
-
-          elevenLabsWs.on("error", (error) => {
-            console.error("[ElevenLabs] WebSocket error:", error);
-          });
-
           elevenLabsWs.on("close", async () => {
             console.log("[ElevenLabs] Disconnected");
+
+            const durationSeconds = callStartTime
+              ? Math.floor((Date.now() - callStartTime) / 1000)
+              : null;
+
+            if (customParameters?.client_id && customParameters?.user_id) {
+              await supabase.from("calls").insert({
+                client_id: customParameters.client_id,
+                user_id: customParameters.user_id,
+                duration: durationSeconds,
+                status: "completed",
+              });
+            }
 
             if (callSid) {
               try {
                 await twilioClient
                   .calls(callSid)
                   .update({ status: "completed" });
-                console.log(
-                  `[Twilio] Call ${callSid} ended due to ElevenLabs disconnection.`
-                );
               } catch (err) {
                 console.error("[Twilio] Error ending call:", err);
               }
