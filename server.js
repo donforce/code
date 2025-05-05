@@ -13,6 +13,8 @@ const {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
   TWILIO_PHONE_NUMBER,
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY,
 } = process.env;
 
 if (
@@ -20,11 +22,15 @@ if (
   !ELEVENLABS_AGENT_ID ||
   !TWILIO_ACCOUNT_SID ||
   !TWILIO_AUTH_TOKEN ||
-  !TWILIO_PHONE_NUMBER
+  !TWILIO_PHONE_NUMBER ||
+  !SUPABASE_URL ||
+  !SUPABASE_SERVICE_ROLE_KEY
 ) {
   console.error("Missing required environment variables");
   throw new Error("Missing required environment variables");
 }
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 const fastify = Fastify();
 fastify.register(fastifyFormBody);
