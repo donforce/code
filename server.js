@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import fastifyFormBody from "@fastify/formbody";
 import fastifyWs from "@fastify/websocket";
 import Twilio from "twilio";
+import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
 
