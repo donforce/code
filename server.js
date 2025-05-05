@@ -13,6 +13,8 @@ const {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
   TWILIO_PHONE_NUMBER,
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY,
 } = process.env;
 
 if (
@@ -20,11 +22,15 @@ if (
   !ELEVENLABS_AGENT_ID ||
   !TWILIO_ACCOUNT_SID ||
   !TWILIO_AUTH_TOKEN ||
-  !TWILIO_PHONE_NUMBER
+  !TWILIO_PHONE_NUMBER ||
+  !SUPABASE_URL ||
+  !SUPABASE_SERVICE_ROLE_KEY
 ) {
   console.error("Missing required environment variables");
   throw new Error("Missing required environment variables");
 }
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 const fastify = Fastify();
 fastify.register(fastifyFormBody);
@@ -104,6 +110,10 @@ fastify.post("/outbound-call", async (request, reply) => {
       )}&client_id=${encodeURIComponent(client_id)}&fecha=${encodeURIComponent(
         fecha
       )}&dia_semana=${encodeURIComponent(dia_semana)}`,
+      //status finish call to site
+      statusCallback: `https://${request.headers.host}/twilio-status`,
+      statusCallbackEvent: ["completed"],
+      statusCallbackMethod: "POST",
     });
 
     reply.send({
@@ -397,4 +407,26 @@ fastify.register(async (fastifyInstance) => {
 
 fastify.listen({ port: PORT, host: "0.0.0.0" }, () => {
   console.log(`[Server] Listening on port ${PORT}`);
+});
+
+fastify.post("/twilio-status", async (request, reply) => {
+  const callSid = request.body.CallSid;
+  const callDuration = parseInt(request.body.CallDuration || "0", 10);
+  const callStatus = request.body.CallStatus;
+  console.log("twilio-status");
+
+  try {
+    await supabase
+      .from("calls")
+      .update({
+        duration: callDuration,
+        status: callStatus,
+      })
+      .eq("call_sid", callSid);
+
+    reply.code(200).send("OK");
+  } catch (error) {
+    console.error("Error updating call duration and status:", error);
+    reply.code(500).send("Error");
+  }
 });
