@@ -15,7 +15,7 @@ const {
   TWILIO_AUTH_TOKEN,
   TWILIO_PHONE_NUMBER,
   SUPABASE_URL,
-  SUPABASE_SERVICE_KEY,
+  SUPABASE_SERVICE_ROLE_KEY,
 } = process.env;
 
 if (
@@ -25,13 +25,13 @@ if (
   !TWILIO_AUTH_TOKEN ||
   !TWILIO_PHONE_NUMBER ||
   !SUPABASE_URL ||
-  !SUPABASE_SERVICE_KEY
+  !SUPABASE_SERVICE_ROLE_KEY
 ) {
   console.error("Missing required environment variables");
   throw new Error("Missing required environment variables");
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const fastify = Fastify();
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
@@ -44,88 +44,29 @@ fastify.get("/", async (_, reply) => {
 
 const twilioClient = new Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-fastify.post("/outbound-call", async (request, reply) => {
-  const {
-    number,
-    prompt,
-    first_message,
-    client_name,
-    client_phone,
-    client_email,
-    client_id,
-  } = request.body;
-
-  if (!number) {
-    return reply.code(400).send({ error: "Phone number is required" });
-  }
-
-  const date = new Date();
-  const diasSemana = [
-    "Domingo",
-    "Lunes",
-    "Martes",
-    "Miércoles",
-    "Jueves",
-    "Viernes",
-    "Sábado",
-  ];
-  const dia_semana = diasSemana[date.getDay()];
-  const fecha = `${String(date.getDate()).padStart(2, "0")}/${String(
-    date.getMonth() + 1
-  ).padStart(2, "0")}/${String(date.getFullYear()).slice(-2)}`;
+fastify.post("/save-call-result", async (request, reply) => {
+  const { lead_id, user_id, call_sid, result, duration } = request.body;
 
   try {
-    const call = await twilioClient.calls.create({
-      from: TWILIO_PHONE_NUMBER,
-      to: number,
-      url: `https://${
-        request.headers.host
-      }/outbound-call-twiml?prompt=${encodeURIComponent(
-        prompt
-      )}&first_message=${encodeURIComponent(
-        first_message
-      )}&client_name=${encodeURIComponent(
-        client_name
-      )}&client_phone=${encodeURIComponent(
-        client_phone
-      )}&client_email=${encodeURIComponent(
-        client_email
-      )}&client_id=${encodeURIComponent(client_id)}&fecha=${encodeURIComponent(
-        fecha
-      )}&dia_semana=${encodeURIComponent(dia_semana)}`,
+    const { error } = await supabase.from("calls").insert({
+      lead_id,
+      user_id,
+      call_sid,
+      result,
+      duration,
+      created_at: new Date().toISOString(),
     });
 
-    await supabase.from("calls").insert({
-      call_sid: call.sid,
-      lead_id: client_id,
-      user_phone: client_phone,
-      user_email: client_email,
-      result: "initiated",
-      started_at: new Date().toISOString(),
-    });
+    if (error) {
+      console.error("Error saving call result:", error.message);
+      return reply.code(500).send({ success: false, error: error.message });
+    }
 
-    reply.send({ success: true, message: "Call initiated", callSid: call.sid });
-  } catch (error) {
-    console.error("Error initiating outbound call:", error);
-    reply.code(500).send({ success: false, error: "Failed to initiate call" });
+    reply.send({ success: true });
+  } catch (err) {
+    console.error("Unexpected error saving call result:", err);
+    reply.code(500).send({ success: false, error: "Unexpected server error" });
   }
-});
-
-fastify.all("/outbound-call-twiml", async (request, reply) => {
-  const params = request.query;
-
-  const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-    <Response>
-      <Connect>
-        <Stream url="wss://${request.headers.host}/outbound-media-stream">
-          ${Object.entries(params)
-            .map(([key, val]) => `<Parameter name="${key}" value="${val}" />`)
-            .join("\n")}
-        </Stream>
-      </Connect>
-    </Response>`;
-
-  reply.type("text/xml").send(twimlResponse);
 });
 
 fastify.register(async (fastifyInstance) => {
@@ -139,19 +80,39 @@ fastify.register(async (fastifyInstance) => {
       let callSid = null;
       let elevenLabsWs = null;
       let customParameters = null;
-      let startTime = null;
+      let lastUserTranscript = "";
+      let callStartTime = Date.now();
 
       ws.on("error", console.error);
 
+      const saveCallToSupabase = async (result) => {
+        const duration = Math.floor((Date.now() - callStartTime) / 1000);
+
+        if (!customParameters) return;
+
+        await supabase.from("calls").insert({
+          lead_id: customParameters.client_id,
+          user_id: null,
+          call_sid: callSid,
+          result,
+          duration,
+          created_at: new Date().toISOString(),
+        });
+      };
+
       const setupElevenLabs = async () => {
         try {
-          const signedUrl = await getSignedUrl();
-          elevenLabsWs = new WebSocket(signedUrl);
+          const signedUrl = await fetch(
+            `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${ELEVENLABS_AGENT_ID}`,
+            {
+              method: "GET",
+              headers: { "xi-api-key": ELEVENLABS_API_KEY },
+            }
+          ).then((res) => res.json());
+
+          elevenLabsWs = new WebSocket(signedUrl.signed_url);
 
           elevenLabsWs.on("open", () => {
-            console.log("[ElevenLabs] Connected to Conversational AI");
-            startTime = new Date();
-
             elevenLabsWs.send(
               JSON.stringify({
                 type: "conversation_initiation_client_data",
@@ -159,17 +120,8 @@ fastify.register(async (fastifyInstance) => {
                   agent: { agent_id: ELEVENLABS_AGENT_ID },
                   keep_alive: true,
                 },
-                dynamic_variables: customParameters || {},
+                dynamic_variables: customParameters,
                 usage: { no_ip_reason: "user_ip_not_collected" },
-              })
-            );
-
-            elevenLabsWs.send(
-              JSON.stringify({
-                type: "audio",
-                audio_event: {
-                  audio_base_64: Buffer.from([0x00]).toString("base64"),
-                },
               })
             );
           });
@@ -181,75 +133,74 @@ fastify.register(async (fastifyInstance) => {
                 message.user_transcription_event?.user_transcript
                   ?.toLowerCase()
                   .trim() || "";
-              const isMachine =
-                /mensaje de voz|buz[oó]n|no est[aá] disponible|intente m[aá]s tarde/.test(
-                  transcript
-                );
-              if (isMachine && callSid) {
-                await endCall("machine");
+
+              if (transcript === lastUserTranscript) return;
+              lastUserTranscript = transcript;
+
+              const normalized = transcript.replace(/\s|,/g, "");
+              const isVoicemail =
+                /^\d{7,}$/.test(normalized) ||
+                [
+                  "deje su mensaje",
+                  "después del tono",
+                  "mensaje de voz",
+                  "buzón de voz",
+                  "el número que usted marcó",
+                  "no está disponible",
+                  "intente más tarde",
+                  "ha sido desconectado",
+                  "gracias por llamar",
+                ].some((p) => transcript.includes(p));
+
+              if (isVoicemail) {
+                await saveCallToSupabase("voicemail");
+                elevenLabsWs.close();
+                ws.close();
                 return;
               }
             }
           });
 
           elevenLabsWs.on("close", async () => {
-            console.log("[ElevenLabs] Disconnected");
-            await endCall("completed");
+            await saveCallToSupabase("completed");
+            ws.close();
           });
-
-          elevenLabsWs.on("error", (err) =>
-            console.error("[ElevenLabs] WebSocket error:", err)
-          );
         } catch (err) {
           console.error("[ElevenLabs] Setup error:", err);
         }
       };
 
-      const endCall = async (status) => {
-        const endTime = new Date();
-        const duration = Math.round(
-          (endTime.getTime() - startTime.getTime()) / 1000
-        );
-        if (callSid && customParameters?.client_id) {
-          await supabase
-            .from("calls")
-            .update({
-              result: status,
-              ended_at: endTime.toISOString(),
-              duration_seconds: duration,
-            })
-            .eq("call_sid", callSid);
-        }
-      };
-
       setupElevenLabs();
 
-      ws.on("message", (msg) => {
-        const parsed = JSON.parse(msg);
-        if (parsed.event === "start") {
-          streamSid = parsed.start.streamSid;
-          callSid = parsed.start.callSid;
-          customParameters = parsed.start.customParameters;
-        } else if (
-          parsed.event === "media" &&
-          elevenLabsWs?.readyState === WebSocket.OPEN
-        ) {
-          elevenLabsWs.send(
-            JSON.stringify({
-              type: "user_audio_chunk",
-              user_audio_chunk: Buffer.from(
-                parsed.media.payload,
-                "base64"
-              ).toString("base64"),
-            })
-          );
-        } else if (parsed.event === "stop") {
-          if (elevenLabsWs?.readyState === WebSocket.OPEN) elevenLabsWs.close();
+      ws.on("message", (message) => {
+        const msg = JSON.parse(message);
+        switch (msg.event) {
+          case "start":
+            streamSid = msg.start.streamSid;
+            callSid = msg.start.callSid;
+            customParameters = msg.start.customParameters;
+            break;
+          case "media":
+            if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+              elevenLabsWs.send(
+                JSON.stringify({
+                  type: "user_audio_chunk",
+                  user_audio_chunk: Buffer.from(
+                    msg.media.payload,
+                    "base64"
+                  ).toString("base64"),
+                })
+              );
+            }
+            break;
+          case "stop":
+            elevenLabsWs?.close();
+            break;
         }
       });
 
       ws.on("close", () => {
-        if (elevenLabsWs?.readyState === WebSocket.OPEN) elevenLabsWs.close();
+        elevenLabsWs?.close();
       });
     }
   );
@@ -258,14 +209,3 @@ fastify.register(async (fastifyInstance) => {
 fastify.listen({ port: PORT, host: "0.0.0.0" }, () => {
   console.log(`[Server] Listening on port ${PORT}`);
 });
-
-async function getSignedUrl() {
-  const res = await fetch(
-    `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${ELEVENLABS_AGENT_ID}`,
-    {
-      headers: { "xi-api-key": ELEVENLABS_API_KEY },
-    }
-  );
-  const data = await res.json();
-  return data.signed_url;
-}
