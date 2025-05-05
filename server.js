@@ -44,6 +44,23 @@ fastify.get("/", async (_, reply) => {
 
 const twilioClient = new Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
+async function getSignedUrl() {
+  const response = await fetch(
+    `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${ELEVENLABS_AGENT_ID}`,
+    {
+      method: "GET",
+      headers: {
+        "xi-api-key": ELEVENLABS_API_KEY,
+      },
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to get signed URL: ${response.statusText}`);
+  }
+  const data = await response.json();
+  return data.signed_url;
+}
+
 fastify.post("/outbound-call", async (request, reply) => {
   const {
     number,
