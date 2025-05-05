@@ -4,9 +4,7 @@ import dotenv from "dotenv";
 import fastifyFormBody from "@fastify/formbody";
 import fastifyWs from "@fastify/websocket";
 import Twilio from "twilio";
-import pkg from "@supabase/supabase-js";
-
-const { createClient } = pkg;
+import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
 
@@ -18,20 +16,35 @@ const {
   TWILIO_PHONE_NUMBER,
   SUPABASE_URL,
   SUPABASE_SERVICE_KEY,
-  PORT = 8000,
 } = process.env;
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY)
-  throw new Error("Missing Supabase config");
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+if (
+  !ELEVENLABS_API_KEY ||
+  !ELEVENLABS_AGENT_ID ||
+  !TWILIO_ACCOUNT_SID ||
+  !TWILIO_AUTH_TOKEN ||
+  !TWILIO_PHONE_NUMBER ||
+  !SUPABASE_URL ||
+  !SUPABASE_SERVICE_KEY
+) {
+  console.error("Missing required environment variables");
+  throw new Error("Missing required environment variables");
+}
 
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 const fastify = Fastify();
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
+const PORT = process.env.PORT || 8000;
+
+fastify.get("/", async (_, reply) => {
+  reply.send({ message: "Server is running" });
+});
+
 const twilioClient = new Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-fastify.post("/outbound-call", async (req, reply) => {
+fastify.post("/outbound-call", async (request, reply) => {
   const {
     number,
     prompt,
@@ -40,17 +53,13 @@ fastify.post("/outbound-call", async (req, reply) => {
     client_phone,
     client_email,
     client_id,
-  } = req.body;
+  } = request.body;
 
-  if (!number)
+  if (!number) {
     return reply.code(400).send({ error: "Phone number is required" });
+  }
 
   const date = new Date();
-  const fecha = `${date.getDate().toString().padStart(2, "0")}/${(
-    date.getMonth() + 1
-  )
-    .toString()
-    .padStart(2, "0")}/${date.getFullYear().toString().slice(-2)}`;
   const diasSemana = [
     "Domingo",
     "Lunes",
@@ -61,13 +70,16 @@ fastify.post("/outbound-call", async (req, reply) => {
     "Sábado",
   ];
   const dia_semana = diasSemana[date.getDay()];
+  const fecha = `${String(date.getDate()).padStart(2, "0")}/${String(
+    date.getMonth() + 1
+  ).padStart(2, "0")}/${String(date.getFullYear()).slice(-2)}`;
 
   try {
     const call = await twilioClient.calls.create({
       from: TWILIO_PHONE_NUMBER,
       to: number,
       url: `https://${
-        req.headers.host
+        request.headers.host
       }/outbound-call-twiml?prompt=${encodeURIComponent(
         prompt
       )}&first_message=${encodeURIComponent(
@@ -83,31 +95,37 @@ fastify.post("/outbound-call", async (req, reply) => {
       )}&dia_semana=${encodeURIComponent(dia_semana)}`,
     });
 
-    reply.send({
-      success: true,
-      message: "Call initiated",
-      callSid: call.sid,
-      timestamp: new Date().toISOString(),
+    await supabase.from("calls").insert({
+      call_sid: call.sid,
+      lead_id: client_id,
+      user_phone: client_phone,
+      user_email: client_email,
+      result: "initiated",
+      started_at: new Date().toISOString(),
     });
-  } catch (err) {
-    console.error("Error initiating call:", err);
+
+    reply.send({ success: true, message: "Call initiated", callSid: call.sid });
+  } catch (error) {
+    console.error("Error initiating outbound call:", error);
     reply.code(500).send({ success: false, error: "Failed to initiate call" });
   }
 });
 
-fastify.all("/outbound-call-twiml", async (req, reply) => {
-  const p = req.query;
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Connect>
-    <Stream url="wss://${req.headers.host}/outbound-media-stream">
-      ${Object.keys(p)
-        .map((key) => `<Parameter name="${key}" value="${p[key]}" />`)
-        .join("\n")}
-    </Stream>
-  </Connect>
-</Response>`;
-  reply.type("text/xml").send(xml);
+fastify.all("/outbound-call-twiml", async (request, reply) => {
+  const params = request.query;
+
+  const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+    <Response>
+      <Connect>
+        <Stream url="wss://${request.headers.host}/outbound-media-stream">
+          ${Object.entries(params)
+            .map(([key, val]) => `<Parameter name="${key}" value="${val}" />`)
+            .join("\n")}
+        </Stream>
+      </Connect>
+    </Response>`;
+
+  reply.type("text/xml").send(twimlResponse);
 });
 
 fastify.register(async (fastifyInstance) => {
@@ -115,134 +133,118 @@ fastify.register(async (fastifyInstance) => {
     "/outbound-media-stream",
     { websocket: true },
     (ws, req) => {
-      console.log("[WS] New media stream connected");
-      let streamSid,
-        callSid,
-        elevenLabsWs,
-        customParams,
-        lastTranscript = "",
-        callStartTime;
+      console.info("[Server] Twilio connected to outbound media stream");
+
+      let streamSid = null;
+      let callSid = null;
+      let elevenLabsWs = null;
+      let customParameters = null;
+      let startTime = null;
+
+      ws.on("error", console.error);
 
       const setupElevenLabs = async () => {
-        const signedUrl = await fetch(
-          `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${ELEVENLABS_AGENT_ID}`,
-          {
-            headers: { "xi-api-key": ELEVENLABS_API_KEY },
-          }
-        )
-          .then((res) => res.json())
-          .then((r) => r.signed_url);
+        try {
+          const signedUrl = await getSignedUrl();
+          elevenLabsWs = new WebSocket(signedUrl);
 
-        elevenLabsWs = new WebSocket(signedUrl);
+          elevenLabsWs.on("open", () => {
+            console.log("[ElevenLabs] Connected to Conversational AI");
+            startTime = new Date();
 
-        elevenLabsWs.on("open", () => {
-          console.log("[ElevenLabs] Connected");
-          callStartTime = new Date();
+            elevenLabsWs.send(
+              JSON.stringify({
+                type: "conversation_initiation_client_data",
+                conversation_config_override: {
+                  agent: { agent_id: ELEVENLABS_AGENT_ID },
+                  keep_alive: true,
+                },
+                dynamic_variables: customParameters || {},
+                usage: { no_ip_reason: "user_ip_not_collected" },
+              })
+            );
 
-          elevenLabsWs.send(
-            JSON.stringify({
-              type: "conversation_initiation_client_data",
-              conversation_config_override: {
-                agent: { agent_id: ELEVENLABS_AGENT_ID },
-                keep_alive: true,
-              },
-              dynamic_variables: {
-                client_name: customParams?.client_name || "",
-                client_phone: customParams?.client_phone || "",
-                client_email: customParams?.client_email || "",
-                client_id: customParams?.client_id || "",
-                fecha: customParams?.fecha || "",
-                dia_semana: customParams?.dia_semana || "",
-              },
-            })
-          );
-        });
+            elevenLabsWs.send(
+              JSON.stringify({
+                type: "audio",
+                audio_event: {
+                  audio_base_64: Buffer.from([0x00]).toString("base64"),
+                },
+              })
+            );
+          });
 
-        elevenLabsWs.on("message", async (data) => {
-          const msg = JSON.parse(data.toString());
-
-          if (msg.type === "user_transcript") {
-            const transcript =
-              msg.user_transcription_event?.user_transcript
-                ?.toLowerCase()
-                .trim() ?? "";
-            if (transcript && transcript !== lastTranscript) {
-              lastTranscript = transcript;
-
-              const voicemail = [
-                "buzón de voz",
-                "deje su mensaje",
-                "no está disponible",
-                "después del tono",
-                "intente más tarde",
-                "gracias por llamar",
-              ].some((p) => transcript.includes(p));
-
-              if (voicemail) {
-                console.log("[System] Voicemail detected. Ending call...");
-                if (elevenLabsWs.readyState === WebSocket.OPEN)
-                  elevenLabsWs.close();
-                if (ws.readyState === WebSocket.OPEN) ws.close();
+          elevenLabsWs.on("message", async (data) => {
+            const message = JSON.parse(data);
+            if (message.type === "user_transcript") {
+              const transcript =
+                message.user_transcription_event?.user_transcript
+                  ?.toLowerCase()
+                  .trim() || "";
+              const isMachine =
+                /mensaje de voz|buz[oó]n|no est[aá] disponible|intente m[aá]s tarde/.test(
+                  transcript
+                );
+              if (isMachine && callSid) {
+                await endCall("machine");
+                return;
               }
             }
-          }
-        });
+          });
 
-        elevenLabsWs.on("close", async () => {
-          console.log("[ElevenLabs] Closed");
-          if (callSid && customParams?.client_id) {
-            const duration = Math.floor(
-              (Date.now() - callStartTime.getTime()) / 1000
-            );
-            await supabase.from("calls").insert({
-              user_id: customParams.user_id,
-              lead_id: customParams.client_id,
-              call_sid: callSid,
-              result: "completed",
-              transcript: lastTranscript,
-              duration,
-              created_at: callStartTime.toISOString(),
-              ended_at: new Date().toISOString(),
-            });
-          }
-        });
+          elevenLabsWs.on("close", async () => {
+            console.log("[ElevenLabs] Disconnected");
+            await endCall("completed");
+          });
 
-        elevenLabsWs.on("error", (err) =>
-          console.error("[ElevenLabs] WS Error:", err)
+          elevenLabsWs.on("error", (err) =>
+            console.error("[ElevenLabs] WebSocket error:", err)
+          );
+        } catch (err) {
+          console.error("[ElevenLabs] Setup error:", err);
+        }
+      };
+
+      const endCall = async (status) => {
+        const endTime = new Date();
+        const duration = Math.round(
+          (endTime.getTime() - startTime.getTime()) / 1000
         );
+        if (callSid && customParameters?.client_id) {
+          await supabase
+            .from("calls")
+            .update({
+              result: status,
+              ended_at: endTime.toISOString(),
+              duration_seconds: duration,
+            })
+            .eq("call_sid", callSid);
+        }
       };
 
       setupElevenLabs();
 
-      ws.on("message", (raw) => {
-        const msg = JSON.parse(raw.toString());
-
-        if (msg.event === "start") {
-          streamSid = msg.start.streamSid;
-          callSid = msg.start.callSid;
-          customParams = msg.start.customParameters;
-        }
-
-        if (
-          msg.event === "media" &&
+      ws.on("message", (msg) => {
+        const parsed = JSON.parse(msg);
+        if (parsed.event === "start") {
+          streamSid = parsed.start.streamSid;
+          callSid = parsed.start.callSid;
+          customParameters = parsed.start.customParameters;
+        } else if (
+          parsed.event === "media" &&
           elevenLabsWs?.readyState === WebSocket.OPEN
         ) {
           elevenLabsWs.send(
             JSON.stringify({
               type: "user_audio_chunk",
               user_audio_chunk: Buffer.from(
-                msg.media.payload,
+                parsed.media.payload,
                 "base64"
               ).toString("base64"),
             })
           );
-        }
-
-        if (
-          msg.event === "stop" &&
-          elevenLabsWs?.readyState === WebSocket.OPEN
-        ) {
-          elevenLabsWs.close();
+        } else if (parsed.event === "stop") {
+          if (elevenLabsWs?.readyState === WebSocket.OPEN) elevenLabsWs.close();
         }
       });
 
@@ -256,3 +258,14 @@ fastify.register(async (fastifyInstance) => {
 fastify.listen({ port: PORT, host: "0.0.0.0" }, () => {
   console.log(`[Server] Listening on port ${PORT}`);
 });
+
+async function getSignedUrl() {
+  const res = await fetch(
+    `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${ELEVENLABS_AGENT_ID}`,
+    {
+      headers: { "xi-api-key": ELEVENLABS_API_KEY },
+    }
+  );
+  const data = await res.json();
+  return data.signed_url;
+}
