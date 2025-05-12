@@ -685,6 +685,21 @@ fastify.post("/twilio-status", async (request, reply) => {
     console.log("[Twilio] Call updated successfully", { call });
 
     if (call?.user_id) {
+      // Update user's available minutes
+      const { error: userError } = await supabase.rpc("decrement_minutes", {
+        uid: call.user_id,
+        mins: Math.ceil(callDuration / 60), // Convert seconds to minutes (rounded up)
+      });
+
+      if (userError) {
+        console.error("[Twilio] Error updating user minutes:", userError);
+      } else {
+        console.log("[Twilio] User minutes updated successfully", {
+          userId: call.user_id,
+          deductedMinutes: Math.ceil(callDuration / 60),
+        });
+      }
+
       // Release the user's active call status
       activeUserCalls.delete(call.user_id);
 
