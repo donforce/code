@@ -19,6 +19,7 @@ const {
   SUPABASE_SERVICE_ROLE_KEY,
 } = process.env;
 
+// Verificar variables de entorno requeridas
 if (
   !ELEVENLABS_API_KEY ||
   !ELEVENLABS_AGENT_ID ||
@@ -26,11 +27,15 @@ if (
   !TWILIO_AUTH_TOKEN ||
   !TWILIO_PHONE_NUMBER ||
   !SUPABASE_URL ||
-  !SUPABASE_SERVICE_ROLE_KEY
+  !SUPABASE_SERVICE_ROLE_KEY ||
+  !process.env.PUBLIC_URL
 ) {
   console.error("Missing required environment variables");
   throw new Error("Missing required environment variables");
 }
+
+// Asegurar que PUBLIC_URL no termine en /
+const PUBLIC_URL = process.env.PUBLIC_URL.replace(/\/$/, "");
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -132,13 +137,25 @@ async function processQueueItem(queueItem) {
       metadata: { lead },
     });
 
+    // Construir URLs para Twilio
+    const twimlUrl = `${PUBLIC_URL}/outbound-call-twiml`;
+    const callbackUrl = `${PUBLIC_URL}/twilio-status`;
+
+    await Logger.info("Iniciando llamada con URLs", {
+      userId: queueItem.user_id,
+      source: "call_system",
+      metadata: {
+        twimlUrl,
+        callbackUrl,
+        publicUrl: PUBLIC_URL,
+      },
+    });
+
     // Realizar la llamada
     const call = await twilioClient.calls.create({
       from: TWILIO_PHONE_NUMBER,
       to: lead.phone,
-      url: `${
-        process.env.PUBLIC_URL
-      }/outbound-call-twiml?prompt=${encodeURIComponent(
+      url: `${twimlUrl}?prompt=${encodeURIComponent(
         "Eres un asistente de ventas inmobiliarias."
       )}&first_message=${encodeURIComponent(
         "Hola, ¿cómo estás?"
@@ -149,7 +166,7 @@ async function processQueueItem(queueItem) {
       )}&client_email=${encodeURIComponent(
         lead.email
       )}&client_id=${encodeURIComponent(queueItem.lead_id)}`,
-      statusCallback: `${process.env.PUBLIC_URL}/twilio-status`,
+      statusCallback: callbackUrl,
       statusCallbackEvent: ["completed"],
       statusCallbackMethod: "POST",
     });
