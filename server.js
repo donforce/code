@@ -235,7 +235,9 @@ async function processQueueItem(queueItem) {
     const call = await twilioClient.calls.create({
       from: TWILIO_PHONE_NUMBER,
       to: queueItem.lead.phone,
-      url: `http://0.0.0.0:${PORT}/outbound-call-twiml?prompt=${encodeURIComponent(
+      url: `https://${
+        request.headers.host
+      }/outbound-call-twiml?prompt=${encodeURIComponent(
         "Eres un asistente de ventas inmobiliarias."
       )}&first_message=${encodeURIComponent(
         "Hola, ¿cómo estás?"
@@ -250,7 +252,7 @@ async function processQueueItem(queueItem) {
       )}&fecha=${encodeURIComponent(fecha)}&dia_semana=${encodeURIComponent(
         dia_semana
       )}`,
-      statusCallback: `http://0.0.0.0:${PORT}/twilio-status`,
+      statusCallback: `https://${request.headers.host}/twilio-status`,
       statusCallbackEvent: ["completed"],
       statusCallbackMethod: "POST",
     });
@@ -343,7 +345,9 @@ fastify.post("/outbound-call", async (request, reply) => {
     const call = await twilioClient.calls.create({
       from: TWILIO_PHONE_NUMBER,
       to: number,
-      url: `http://0.0.0.0:${PORT}/outbound-call-twiml?prompt=${encodeURIComponent(
+      url: `https://${
+        request.headers.host
+      }/outbound-call-twiml?prompt=${encodeURIComponent(
         prompt
       )}&first_message=${encodeURIComponent(
         first_message
@@ -356,7 +360,7 @@ fastify.post("/outbound-call", async (request, reply) => {
       )}&client_id=${encodeURIComponent(client_id)}&fecha=${encodeURIComponent(
         fecha
       )}&dia_semana=${encodeURIComponent(dia_semana)}`,
-      statusCallback: `http://0.0.0.0:${PORT}/twilio-status`,
+      statusCallback: `https://${request.headers.host}/twilio-status`,
       statusCallbackEvent: ["completed"],
       statusCallbackMethod: "POST",
     });
