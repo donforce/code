@@ -320,7 +320,7 @@ fastify.post("/twilio-status", async (request, reply) => {
       .single();
 
     if (callRecord?.user_id) {
-      await Logger.info("Llamada finalizada", {
+      await Logger.info("Llamada  finalizada", {
         userId: callRecord.user_id,
         source: "call_system",
         callSid,
