@@ -17,6 +17,7 @@ const {
   TWILIO_PHONE_NUMBER,
   SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY,
+  RAILWAY_STATIC_URL,
 } = process.env;
 
 if (
@@ -26,7 +27,8 @@ if (
   !TWILIO_AUTH_TOKEN ||
   !TWILIO_PHONE_NUMBER ||
   !SUPABASE_URL ||
-  !SUPABASE_SERVICE_ROLE_KEY
+  !SUPABASE_SERVICE_ROLE_KEY ||
+  !RAILWAY_STATIC_URL
 ) {
   console.error("Missing required environment variables");
   throw new Error("Missing required environment variables");
@@ -235,9 +237,7 @@ async function processQueueItem(queueItem) {
     const call = await twilioClient.calls.create({
       from: TWILIO_PHONE_NUMBER,
       to: queueItem.lead.phone,
-      url: `https://${
-        request.headers.host
-      }/outbound-call-twiml?prompt=${encodeURIComponent(
+      url: `${RAILWAY_STATIC_URL}/outbound-call-twiml?prompt=${encodeURIComponent(
         "Eres un asistente de ventas inmobiliarias."
       )}&first_message=${encodeURIComponent(
         "Hola, ¿cómo estás?"
@@ -252,7 +252,7 @@ async function processQueueItem(queueItem) {
       )}&fecha=${encodeURIComponent(fecha)}&dia_semana=${encodeURIComponent(
         dia_semana
       )}`,
-      statusCallback: `https://${request.headers.host}/twilio-status`,
+      statusCallback: `${RAILWAY_STATIC_URL}/twilio-status`,
       statusCallbackEvent: ["completed"],
       statusCallbackMethod: "POST",
     });
@@ -269,7 +269,7 @@ async function processQueueItem(queueItem) {
       call_sid: call.sid,
       status: "In Progress",
       result: "initiated",
-      queue_id: queueItem.id, // Agregando referencia a la cola
+      queue_id: queueItem.id,
     });
 
     if (callError) {
