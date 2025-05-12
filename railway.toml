@@ -1,0 +1,60 @@
+[build]
+builder = "nixpacks"
+buildCommand = "npm install"
+
+[deploy]
+startCommand = "npm start"
+healthcheckPath = "/"
+healthcheckTimeout = 100
+restartPolicyType = "on-failure"
+restartPolicyMaxRetries = 10
+numReplicas = 1
+autoScaling = false
+
+[deploy.env]
+NODE_ENV = "production"
+PORT = "8000"
+
+# Configuración de Twilio
+[env]
+TWILIO_ACCOUNT_SID = "${TWILIO_ACCOUNT_SID}"
+TWILIO_AUTH_TOKEN = "${TWILIO_AUTH_TOKEN}"
+TWILIO_PHONE_NUMBER = "${TWILIO_PHONE_NUMBER}"
+
+# Configuración de Supabase
+SUPABASE_URL = "${SUPABASE_URL}"
+SUPABASE_SERVICE_ROLE_KEY = "${SUPABASE_SERVICE_ROLE_KEY}"
+
+# Configuración de ElevenLabs
+ELEVENLABS_API_KEY = "${ELEVENLABS_API_KEY}"
+ELEVENLABS_AGENT_ID = "${ELEVENLABS_AGENT_ID}"
+
+# Configuración de la aplicación
+PUBLIC_URL = "https://${RAILWAY_STATIC_URL}"
+MAX_CONCURRENT_CALLS = "5"
+QUEUE_PROCESSING_INTERVAL = "5000"
+
+# Configuración de logs
+LOG_LEVEL = "info"
+LOG_RETENTION_DAYS = "30"
+
+[service]
+internal_port = 8000
+auto_stop_machines = false
+auto_start_machines = true
+
+# Monitoreo de salud
+[healthcheck]
+path = "/health"
+interval = "30s"
+timeout = "10s"
+retries = 3
+
+# Configuración de recursos
+[service.resources]
+memory = "512MB"
+cpu = "0.5"
+
+# Configuración para la limpieza automática de logs
+[cronjobs]
+clean_logs = "0 0 * * * ./clean-logs.sh" 
