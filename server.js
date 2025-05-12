@@ -207,8 +207,68 @@ async function processUserQueue(userId) {
   }
 }
 
+// Add this function at the top with other utility functions
+async function cancelPendingCalls(userId, reason) {
+  console.log("[Queue] Cancelling pending calls for user", { userId, reason });
+  const { error } = await supabase
+    .from("call_queue")
+    .update({
+      status: "cancelled",
+      completed_at: new Date().toISOString(),
+      error_message: reason,
+    })
+    .eq("user_id", userId)
+    .eq("status", "pending");
+
+  if (error) {
+    console.error("[Queue] Error cancelling pending calls:", error);
+    throw error;
+  }
+  console.log("[Queue] Successfully cancelled pending calls for user", {
+    userId,
+  });
+}
+
 async function processQueueItem(queueItem) {
   try {
+    // Check available minutes before proceeding
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select("available_minutes")
+      .eq("id", queueItem.user_id)
+      .single();
+
+    if (userError) {
+      console.error("[Queue] Error checking user minutes:", userError);
+      throw userError;
+    }
+
+    if (!userData || userData.available_minutes <= 0) {
+      console.log("[Queue] No available minutes for user", {
+        userId: queueItem.user_id,
+        availableMinutes: userData?.available_minutes || 0,
+      });
+
+      // Cancel all pending calls for this user
+      await cancelPendingCalls(queueItem.user_id, "No hay minutos disponibles");
+
+      // Update current queue item status
+      const { error: updateError } = await supabase
+        .from("call_queue")
+        .update({
+          status: "cancelled",
+          completed_at: new Date().toISOString(),
+          error_message: "No hay minutos disponibles",
+        })
+        .eq("id", queueItem.id);
+
+      if (updateError) {
+        console.error("[Queue] Error updating queue item:", updateError);
+      }
+
+      return false;
+    }
+
     // Mark user as having active call
     activeUserCalls.set(queueItem.user_id, true);
 
