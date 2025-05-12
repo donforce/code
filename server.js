@@ -6,7 +6,6 @@ import fastifyWs from "@fastify/websocket";
 import Twilio from "twilio";
 import { createClient } from "@supabase/supabase-js";
 import Logger from "./lib/logger.js";
-import { healthCheck } from "./health.js";
 
 dotenv.config();
 
@@ -362,17 +361,6 @@ fastify.post("/twilio-status", async (request, reply) => {
     });
     console.error("Error updating call duration or minutes:", error);
     reply.code(500).send("Error");
-  }
-});
-
-// Endpoint de salud
-fastify.get("/health", async (request, reply) => {
-  const health = await healthCheck();
-
-  if (health.status === "error") {
-    reply.code(500).send(health);
-  } else {
-    reply.send(health);
   }
 });
 

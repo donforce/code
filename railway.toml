@@ -1,0 +1,40 @@
+# Configuración de construcción
+[build]
+builder = "nixpacks"
+buildCommand = "npm install"
+
+# Configuración de despliegue
+[deploy]
+startCommand = "npm start"
+restart = "on-failure"
+numReplicas = 1
+autoScaling = false
+
+[deploy.env]
+NODE_ENV = "production"
+PORT = "8000"
+
+# Variables de entorno
+[env]
+TWILIO_ACCOUNT_SID = "${TWILIO_ACCOUNT_SID}"
+TWILIO_AUTH_TOKEN = "${TWILIO_AUTH_TOKEN}"
+TWILIO_PHONE_NUMBER = "${TWILIO_PHONE_NUMBER}"
+SUPABASE_URL = "${SUPABASE_URL}"
+SUPABASE_SERVICE_ROLE_KEY = "${SUPABASE_SERVICE_ROLE_KEY}"
+ELEVENLABS_API_KEY = "${ELEVENLABS_API_KEY}"
+ELEVENLABS_AGENT_ID = "${ELEVENLABS_AGENT_ID}"
+PUBLIC_URL = "https://${RAILWAY_STATIC_URL}"
+QUEUE_PROCESSING_INTERVAL = "5000"
+LOG_LEVEL = "info"
+LOG_RETENTION_DAYS = "30"
+
+# Configuración del servicio
+[service]
+internal_port = 8000
+auto_stop_machines = false
+auto_start_machines = true
+
+# Configuración de recursos
+[service.resources]
+memory = "1024MB"
+cpu = "1.0"
