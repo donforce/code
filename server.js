@@ -1,9 +1,73 @@
-import Logger from "./logger.js";
+import Fastify from "fastify";
+import WebSocket from "ws";
+import dotenv from "dotenv";
+import fastifyFormBody from "@fastify/formbody";
+import fastifyWs from "@fastify/websocket";
+import Twilio from "twilio";
+import { createClient } from "@supabase/supabase-js";
+import Logger from "./lib/logger.js";
 import { healthCheck } from "./health.js";
 
-// ... existing code ...
+dotenv.config();
 
-// Add logging to processQueueItem function
+const {
+  ELEVENLABS_API_KEY,
+  ELEVENLABS_AGENT_ID,
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_PHONE_NUMBER,
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY,
+} = process.env;
+
+if (
+  !ELEVENLABS_API_KEY ||
+  !ELEVENLABS_AGENT_ID ||
+  !TWILIO_ACCOUNT_SID ||
+  !TWILIO_AUTH_TOKEN ||
+  !TWILIO_PHONE_NUMBER ||
+  !SUPABASE_URL ||
+  !SUPABASE_SERVICE_ROLE_KEY
+) {
+  console.error("Missing required environment variables");
+  throw new Error("Missing required environment variables");
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+const fastify = Fastify();
+fastify.register(fastifyFormBody);
+fastify.register(fastifyWs);
+
+const PORT = process.env.PORT || 8000;
+
+fastify.get("/", async (_, reply) => {
+  reply.send({ message: "Server is running" });
+});
+
+const twilioClient = new Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+
+async function getSignedUrl() {
+  const response = await fetch(
+    `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${ELEVENLABS_AGENT_ID}`,
+    {
+      method: "GET",
+      headers: {
+        "xi-api-key": ELEVENLABS_API_KEY,
+      },
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to get signed URL: ${response.statusText}`);
+  }
+  const data = await response.json();
+  return data.signed_url;
+}
+
+// Mapa para rastrear llamadas activas por usuario
+const activeUserCalls = new Map();
+
+// Función para procesar la siguiente llamada en cola
 async function processQueueItem(queueItem) {
   try {
     // Verificar si el usuario ya tiene una llamada activa
@@ -69,7 +133,38 @@ async function processQueueItem(queueItem) {
       metadata: { lead },
     });
 
-    // ... rest of the existing code ...
+    // Realizar la llamada
+    const call = await twilioClient.calls.create({
+      from: TWILIO_PHONE_NUMBER,
+      to: lead.phone,
+      url: `${
+        process.env.PUBLIC_URL
+      }/outbound-call-twiml?prompt=${encodeURIComponent(
+        "Eres un asistente de ventas inmobiliarias."
+      )}&first_message=${encodeURIComponent(
+        "Hola, ¿cómo estás?"
+      )}&client_name=${encodeURIComponent(
+        lead.name
+      )}&client_phone=${encodeURIComponent(
+        lead.phone
+      )}&client_email=${encodeURIComponent(
+        lead.email
+      )}&client_id=${encodeURIComponent(queueItem.lead_id)}`,
+      statusCallback: `${process.env.PUBLIC_URL}/twilio-status`,
+      statusCallbackEvent: ["completed"],
+      statusCallbackMethod: "POST",
+    });
+
+    // Registrar la llamada
+    await supabase.from("calls").insert({
+      lead_id: queueItem.lead_id,
+      user_id: queueItem.user_id,
+      call_sid: call.sid,
+      status: "In Progress",
+      result: "initiated",
+    });
+
+    return true;
   } catch (error) {
     await Logger.error("Error procesando llamada", {
       userId: queueItem.user_id,
@@ -85,6 +180,131 @@ async function processQueueItem(queueItem) {
     return false;
   }
 }
+
+// Función para procesar la cola de un usuario específico
+async function processUserQueue(userId) {
+  try {
+    // Verificar si el usuario ya tiene una llamada activa
+    if (activeUserCalls.get(userId)) {
+      return;
+    }
+
+    // Obtener la siguiente llamada pendiente para este usuario
+    const { data: nextCall } = await supabase
+      .from("call_queue")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("status", "pending")
+      .order("queue_position", { ascending: true })
+      .limit(1)
+      .single();
+
+    if (nextCall) {
+      // Actualizar estado a in_progress
+      await supabase
+        .from("call_queue")
+        .update({
+          status: "in_progress",
+          started_at: new Date().toISOString(),
+        })
+        .eq("id", nextCall.id);
+
+      // Procesar la llamada
+      const success = await processQueueItem(nextCall);
+
+      if (!success) {
+        // Si falla, marcar como fallida
+        await supabase
+          .from("call_queue")
+          .update({
+            status: "failed",
+            completed_at: new Date().toISOString(),
+            error_message: "Error al procesar la llamada",
+          })
+          .eq("id", nextCall.id);
+      }
+    }
+  } catch (error) {
+    console.error("Error procesando cola de usuario:", error);
+  }
+}
+
+// Suscribirse a cambios en las llamadas
+const callsChannel = supabase
+  .channel("server-calls")
+  .on(
+    "postgres_changes",
+    {
+      event: "UPDATE",
+      schema: "public",
+      table: "calls",
+      filter: "status=eq.'completed'",
+    },
+    async (payload) => {
+      try {
+        // Cuando una llamada se completa, buscar la entrada en la cola
+        const { data: queueItem } = await supabase
+          .from("call_queue")
+          .select("*")
+          .eq("status", "in_progress")
+          .single();
+
+        if (queueItem) {
+          // Liberar al usuario
+          activeUserCalls.delete(queueItem.user_id);
+
+          // Marcar como completada
+          await supabase
+            .from("call_queue")
+            .update({
+              status: "completed",
+              completed_at: new Date().toISOString(),
+            })
+            .eq("id", queueItem.id);
+
+          // Procesar siguiente llamada en la cola del usuario
+          await processUserQueue(queueItem.user_id);
+        }
+      } catch (error) {
+        console.error("Error procesando actualización de llamada:", error);
+      }
+    }
+  )
+  .subscribe();
+
+// Suscribirse a cambios en los minutos disponibles
+const minutesChannel = supabase
+  .channel("server-minutes")
+  .on(
+    "postgres_changes",
+    {
+      event: "UPDATE",
+      schema: "public",
+      table: "users",
+      filter: "available_minutes<=0",
+    },
+    async (payload) => {
+      try {
+        const userId = payload.new.id;
+        // Liberar al usuario
+        activeUserCalls.delete(userId);
+
+        // Cancelar todas las llamadas pendientes del usuario
+        await supabase
+          .from("call_queue")
+          .update({
+            status: "cancelled",
+            completed_at: new Date().toISOString(),
+            error_message: "No hay minutos disponibles",
+          })
+          .eq("user_id", userId)
+          .eq("status", "pending");
+      } catch (error) {
+        console.error("Error cancelando llamadas:", error);
+      }
+    }
+  )
+  .subscribe();
 
 // Add logging to twilio-status endpoint
 fastify.post("/twilio-status", async (request, reply) => {
@@ -156,4 +376,6 @@ fastify.get("/health", async (request, reply) => {
   }
 });
 
-// ... rest of the existing code ...
+fastify.listen({ port: PORT, host: "0.0.0.0" }, () => {
+  console.log(`[Server] Listening on port ${PORT}`);
+});
