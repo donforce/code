@@ -393,7 +393,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
     <Response>
       <Connect>
-        <Stream url="ws://0.0.0.0:${PORT}/outbound-media-stream">
+        <Stream url="wss://${request.headers.host}/outbound-media-stream">
           <Parameter name="prompt" value="${prompt}" />
           <Parameter name="first_message" value="${first_message}" />
           <Parameter name="client_name" value="${client_name}" />
