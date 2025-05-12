@@ -345,9 +345,7 @@ fastify.post("/outbound-call", async (request, reply) => {
     const call = await twilioClient.calls.create({
       from: TWILIO_PHONE_NUMBER,
       to: number,
-      url: `https://${
-        request.headers.host
-      }/outbound-call-twiml?prompt=${encodeURIComponent(
+      url: `https://${RAILWAY_PUBLIC_DOMAIN}/outbound-call-twiml?prompt=${encodeURIComponent(
         prompt
       )}&first_message=${encodeURIComponent(
         first_message
@@ -360,7 +358,7 @@ fastify.post("/outbound-call", async (request, reply) => {
       )}&client_id=${encodeURIComponent(client_id)}&fecha=${encodeURIComponent(
         fecha
       )}&dia_semana=${encodeURIComponent(dia_semana)}`,
-      statusCallback: `https://${request.headers.host}/twilio-status`,
+      statusCallback: `https://RAILWAY_PUBLIC_DOMAIN/twilio-status`,
       statusCallbackEvent: ["completed"],
       statusCallbackMethod: "POST",
     });
@@ -393,7 +391,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
     <Response>
       <Connect>
-        <Stream url="wss://${request.headers.host}/outbound-media-stream">
+        <Stream url="wss://${RAILWAY_PUBLIC_DOMAIN}/outbound-media-stream">
           <Parameter name="prompt" value="${prompt}" />
           <Parameter name="first_message" value="${first_message}" />
           <Parameter name="client_name" value="${client_name}" />
