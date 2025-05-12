@@ -183,13 +183,22 @@ async function processQueueItem(queueItem) {
 // Función para procesar la cola de un usuario específico
 async function processUserQueue(userId) {
   try {
+    await Logger.info("Procesando cola de usuario", {
+      userId,
+      source: "queue_system",
+    });
+
     // Verificar si el usuario ya tiene una llamada activa
     if (activeUserCalls.get(userId)) {
+      await Logger.info("Usuario tiene llamada activa, saltando", {
+        userId,
+        source: "queue_system",
+      });
       return;
     }
 
     // Obtener la siguiente llamada pendiente para este usuario
-    const { data: nextCall } = await supabase
+    const { data: nextCall, error: queueError } = await supabase
       .from("call_queue")
       .select("*")
       .eq("user_id", userId)
@@ -198,9 +207,27 @@ async function processUserQueue(userId) {
       .limit(1)
       .single();
 
+    if (queueError) {
+      if (queueError.code === "PGRST116") {
+        // No hay llamadas pendientes
+        await Logger.info("No hay llamadas pendientes para el usuario", {
+          userId,
+          source: "queue_system",
+        });
+        return;
+      }
+      throw queueError;
+    }
+
     if (nextCall) {
+      await Logger.info("Procesando siguiente llamada en cola", {
+        userId,
+        source: "queue_system",
+        metadata: { queueId: nextCall.id },
+      });
+
       // Actualizar estado a in_progress
-      await supabase
+      const { error: updateError } = await supabase
         .from("call_queue")
         .update({
           status: "in_progress",
@@ -208,10 +235,18 @@ async function processUserQueue(userId) {
         })
         .eq("id", nextCall.id);
 
+      if (updateError) throw updateError;
+
       // Procesar la llamada
       const success = await processQueueItem(nextCall);
 
       if (!success) {
+        await Logger.error("Fallo al procesar llamada", {
+          userId,
+          source: "queue_system",
+          metadata: { queueId: nextCall.id },
+        });
+
         // Si falla, marcar como fallida
         await supabase
           .from("call_queue")
@@ -224,7 +259,15 @@ async function processUserQueue(userId) {
       }
     }
   } catch (error) {
+    await Logger.error("Error procesando cola de usuario", {
+      userId,
+      source: "queue_system",
+      metadata: { error: error.message },
+    });
     console.error("Error procesando cola de usuario:", error);
+
+    // Liberar al usuario en caso de error
+    activeUserCalls.delete(userId);
   }
 }
 
@@ -305,6 +348,53 @@ const minutesChannel = supabase
   )
   .subscribe();
 
+// Suscribirse a cambios en la cola de llamadas
+const queueChannel = supabase
+  .channel("server-queue")
+  .on(
+    "postgres_changes",
+    {
+      event: "*",
+      schema: "public",
+      table: "call_queue",
+    },
+    async (payload) => {
+      try {
+        if (
+          payload.eventType === "INSERT" &&
+          payload.new.status === "pending"
+        ) {
+          await processUserQueue(payload.new.user_id);
+        }
+      } catch (error) {
+        console.error("Error procesando evento de cola:", error);
+      }
+    }
+  )
+  .subscribe();
+
+// Función para procesar todas las colas pendientes
+async function processAllPendingQueues() {
+  try {
+    // Obtener usuarios únicos con llamadas pendientes
+    const { data: pendingQueues, error } = await supabase
+      .from("call_queue")
+      .select("user_id")
+      .eq("status", "pending")
+      .order("queue_position", { ascending: true });
+
+    if (error) throw error;
+
+    // Procesar cola para cada usuario
+    const uniqueUserIds = [...new Set(pendingQueues.map((q) => q.user_id))];
+    for (const userId of uniqueUserIds) {
+      await processUserQueue(userId);
+    }
+  } catch (error) {
+    console.error("Error procesando colas pendientes:", error);
+  }
+}
+
 // Add logging to twilio-status endpoint
 fastify.post("/twilio-status", async (request, reply) => {
   const callSid = request.body.CallSid;
@@ -319,7 +409,7 @@ fastify.post("/twilio-status", async (request, reply) => {
       .single();
 
     if (callRecord?.user_id) {
-      await Logger.info("Llamada  finalizada", {
+      await Logger.info("Llamada finalizada", {
         userId: callRecord.user_id,
         source: "call_system",
         callSid,
@@ -363,6 +453,13 @@ fastify.post("/twilio-status", async (request, reply) => {
     reply.code(500).send("Error");
   }
 });
+
+// Procesar colas cada 30 segundos
+const QUEUE_INTERVAL = parseInt(process.env.QUEUE_PROCESSING_INTERVAL) || 30000;
+setInterval(processAllPendingQueues, QUEUE_INTERVAL);
+
+// Procesar colas al inicio
+processAllPendingQueues();
 
 fastify.listen({ port: PORT, host: "0.0.0.0" }, () => {
   console.log(`[Server] Listening on port ${PORT}`);
