@@ -414,9 +414,22 @@ fastify.post("/twilio-status", async (request, reply) => {
   const callSid = request.body.CallSid;
   const callDuration = parseInt(request.body.CallDuration || "0", 10);
   const callStatus = request.body.CallStatus;
-  console.log("twilio-status");
 
   try {
+    const { data: callRecord } = await supabase
+      .from("calls")
+      .select("user_id")
+      .eq("call_sid", callSid)
+      .single();
+
+    if (callRecord?.user_id) {
+      // Resta minutos disponibles
+      await supabase.rpc("decrement_minutes", {
+        uid: callRecord.user_id,
+        mins: callDuration,
+      });
+    }
+
     await supabase
       .from("calls")
       .update({
@@ -427,7 +440,7 @@ fastify.post("/twilio-status", async (request, reply) => {
 
     reply.code(200).send("OK");
   } catch (error) {
-    console.error("Error updating call duration and status:", error);
+    console.error("Error updating call duration or minutes:", error);
     reply.code(500).send("Error");
   }
 });
