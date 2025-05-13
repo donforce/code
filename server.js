@@ -6,6 +6,8 @@ import fastifyFormBody from "@fastify/formbody";
 import fastifyWs from "@fastify/websocket";
 import Twilio from "twilio";
 import { createClient } from "@supabase/supabase-js";
+import os from "os";
+import { performance } from "perf_hooks";
 
 dotenv.config();
 
@@ -41,6 +43,13 @@ fastify.register(fastifyWs);
 
 const PORT = process.env.PORT || 8000;
 const activeUserCalls = new Map(); // Track active calls per user
+
+// Add metrics tracking variables
+let startTime = performance.now();
+let totalCalls = 0;
+let activeCalls = 0;
+let failedCalls = 0;
+let lastMetricsCheck = Date.now();
 
 // Subscribe to call queue changes
 const queueChannel = supabase
@@ -231,6 +240,8 @@ async function cancelPendingCalls(userId, reason) {
 
 async function processQueueItem(queueItem) {
   try {
+    totalCalls++;
+    activeCalls++;
     // Check available minutes before proceeding
     const { data: userData, error: userError } = await supabase
       .from("users")
@@ -339,6 +350,8 @@ async function processQueueItem(queueItem) {
 
     return true;
   } catch (error) {
+    failedCalls++;
+    activeCalls--;
     console.error("[Queue] Error processing call:", error);
     // Release user in case of error
     activeUserCalls.delete(queueItem.user_id);
@@ -745,19 +758,51 @@ fastify.post("/twilio-status", async (request, reply) => {
     console.log("[Twilio] Call updated successfully", { call });
 
     if (call?.user_id) {
-      // Update user's available minutes
+      // Get current available minutes before update
+      const { data: userData, error: fetchError } = await supabase
+        .from("users")
+        .select("available_minutes")
+        .eq("id", call.user_id)
+        .single();
+
+      if (fetchError) {
+        console.error("[Twilio] Error fetching user minutes:", fetchError);
+      } else {
+        console.log("[Twilio] Current user minutes before update:", {
+          userId: call.user_id,
+          availableMinutes: userData.available_minutes,
+        });
+      }
+
+      // Update user's available minutes (callDuration is already in seconds)
       const { error: userError } = await supabase.rpc("decrement_minutes", {
         uid: call.user_id,
-        mins: Math.ceil(callDuration / 60), // Convert seconds to minutes (rounded up)
+        mins: callDuration, // Pass the duration directly in seconds
       });
 
       if (userError) {
         console.error("[Twilio] Error updating user minutes:", userError);
       } else {
-        console.log("[Twilio] User minutes updated successfully", {
-          userId: call.user_id,
-          deductedMinutes: Math.ceil(callDuration / 60),
-        });
+        // Get updated available minutes
+        const { data: updatedUser, error: updateFetchError } = await supabase
+          .from("users")
+          .select("available_minutes")
+          .eq("id", call.user_id)
+          .single();
+
+        if (updateFetchError) {
+          console.error(
+            "[Twilio] Error fetching updated user minutes:",
+            updateFetchError
+          );
+        } else {
+          console.log("[Twilio] User minutes updated successfully", {
+            userId: call.user_id,
+            previousMinutes: userData?.available_minutes || 0,
+            deductedSeconds: callDuration,
+            newMinutes: updatedUser.available_minutes,
+          });
+        }
       }
 
       // Release the user's active call status
@@ -790,6 +835,95 @@ fastify.post("/twilio-status", async (request, reply) => {
   } catch (error) {
     console.error("[Twilio] Error in status callback:", error);
     reply.code(500).send("Error");
+  }
+});
+
+// Add the metrics endpoint
+fastify.get("/metrics", async (request, reply) => {
+  try {
+    // Basic server metrics
+    const uptime = Math.floor((performance.now() - startTime) / 1000); // in seconds
+    const memoryUsage = process.memoryUsage();
+    const cpuUsage = os.loadavg();
+    const freeMemory = os.freemem();
+    const totalMemory = os.totalmem();
+
+    // Get call queue metrics from database
+    const { data: queueMetrics, error: queueError } = await supabase
+      .from("call_queue")
+      .select("status")
+      .in("status", ["pending", "in_progress", "completed", "failed"])
+      .then((result) => {
+        const counts = {
+          pending: 0,
+          in_progress: 0,
+          completed: 0,
+          failed: 0,
+        };
+        result.data?.forEach((item) => {
+          counts[item.status]++;
+        });
+        return counts;
+      });
+
+    if (queueError) {
+      console.error("[Metrics] Error fetching queue metrics:", queueError);
+    }
+
+    // Get active users count
+    const { count: activeUsers, error: userError } = await supabase
+      .from("users")
+      .select("id", { count: "exact" })
+      .gt("available_minutes", 0);
+
+    if (userError) {
+      console.error("[Metrics] Error fetching user metrics:", userError);
+    }
+
+    // Calculate calls per minute
+    const currentTime = Date.now();
+    const timeElapsed = (currentTime - lastMetricsCheck) / 1000 / 60; // in minutes
+    const callsPerMinute = timeElapsed > 0 ? totalCalls / timeElapsed : 0;
+
+    // Reset counters
+    lastMetricsCheck = currentTime;
+    totalCalls = 0;
+
+    const metrics = {
+      server: {
+        uptime,
+        memory: {
+          used: Math.round((memoryUsage.heapUsed / 1024 / 1024) * 100) / 100, // MB
+          total: Math.round((totalMemory / 1024 / 1024) * 100) / 100, // MB
+          free: Math.round((freeMemory / 1024 / 1024) * 100) / 100, // MB
+          percentage: Math.round((1 - freeMemory / totalMemory) * 100),
+        },
+        cpu: {
+          load1: cpuUsage[0],
+          load5: cpuUsage[1],
+          load15: cpuUsage[2],
+        },
+      },
+      calls: {
+        active: activeCalls,
+        failed: failedCalls,
+        perMinute: Math.round(callsPerMinute * 100) / 100,
+      },
+      queue: queueMetrics || {
+        pending: 0,
+        in_progress: 0,
+        completed: 0,
+        failed: 0,
+      },
+      users: {
+        active: activeUsers || 0,
+      },
+    };
+
+    reply.send(metrics);
+  } catch (error) {
+    console.error("[Metrics] Error generating metrics:", error);
+    reply.code(500).send({ error: "Error generating metrics" });
   }
 });
 
