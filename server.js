@@ -927,6 +927,51 @@ fastify.get("/metrics", async (request, reply) => {
   }
 });
 
+// API Integration endpoints
+fastify.post("/api/integration/leads", async (request, reply) => {
+  try {
+    const apiKey = request.headers["x-api-key"] || request.headers["authorization"]?.replace("Bearer ", "");
+    if (!apiKey) {
+      return reply.code(401).send({ error: "API key requerida" });
+    }
+    const { data: keyData, error: keyError } = await supabase
+      .from("api_keys")
+      .select("user_id, is_active")
+      .eq("api_key", apiKey)
+      .single();
+    if (keyError || !keyData || !keyData.is_active) {
+      return reply.code(401).send({ error: "API key inválida" });
+    }
+    const userId = keyData.user_id;
+    const body = request.body;
+    const { name, phone, email, auto_call = false, source = "api", notes } = body;
+    if (!name || !phone || !email) {
+      return reply.code(400).send({ error: "Campos requeridos faltantes" });
+    }
+    const { data: newLead, error: insertError } = await supabase
+      .from("leads")
+      .insert({
+        user_id: userId,
+        name,
+        phone,
+        email,
+        auto_call,
+        source,
+        notes,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+    if (insertError) {
+      return reply.code(400).send({ error: insertError.message });
+    }
+    return reply.send({ success: true, data: newLead });
+  } catch (error) {
+    console.error("Error en API de leads:", error);
+    return reply.code(500).send({ error: "Error interno del servidor" });
+  }
+});
 fastify.listen({ port: PORT, host: "0.0.0.0" }, () => {
   console.log(`[Server] Listening on port ${PORT}`);
 });
