@@ -997,3 +997,4 @@ fastify.post("/api/integration/leads", async (request, reply) => {
 fastify.listen({ port: PORT, host: "0.0.0.0" }, () => {
   console.log(`[Server] Listening on port ${PORT}`);
 });
+// 🚀 Force Railway deployment - Sun Jun 22 21:04:44 EDT 2025
