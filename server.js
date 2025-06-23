@@ -895,6 +895,11 @@ fastify.register(async (fastifyInstance) => {
           elevenLabsWs.on("message", async (data) => {
             try {
               const message = JSON.parse(data);
+              console.log(
+                "[ElevenLabs] WS Event:",
+                message.type,
+                JSON.stringify(message, null, 2)
+              );
 
               switch (message.type) {
                 case "conversation_initiation_metadata":
