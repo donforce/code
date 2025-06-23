@@ -670,6 +670,179 @@ fastify.register(async (fastifyInstance) => {
 
                   break;
 
+                case "conversation_summary":
+                  console.log("=".repeat(80));
+                  console.log(
+                    "📝 [TRANSCRIPT SUMMARY] Conversation Summary Received"
+                  );
+                  console.log("=".repeat(80));
+                  console.log("📋 Summary Details:");
+                  console.log(`   • Call SID: ${callSid}`);
+                  console.log(
+                    `   • Lead: ${customParameters?.client_name || "N/A"}`
+                  );
+                  console.log(
+                    `   • Phone: ${customParameters?.client_phone || "N/A"}`
+                  );
+                  console.log("");
+                  console.log("📄 Transcript Summary:");
+                  console.log(
+                    `   • Summary: ${
+                      message.conversation_summary_event
+                        ?.conversation_summary || "N/A"
+                    }`
+                  );
+                  console.log(
+                    `   • Duration: ${
+                      message.conversation_summary_event
+                        ?.conversation_duration || "N/A"
+                    }`
+                  );
+                  console.log(
+                    `   • Turn Count: ${
+                      message.conversation_summary_event?.turn_count || "N/A"
+                    }`
+                  );
+                  console.log("=".repeat(80));
+
+                  // Save transcript summary to database
+                  if (callSid) {
+                    try {
+                      const { error: updateError } = await supabase
+                        .from("calls")
+                        .update({
+                          transcript_summary:
+                            message.conversation_summary_event
+                              ?.conversation_summary,
+                          conversation_duration:
+                            message.conversation_summary_event
+                              ?.conversation_duration,
+                          turn_count:
+                            message.conversation_summary_event?.turn_count,
+                          updated_at: new Date().toISOString(),
+                        })
+                        .eq("call_sid", callSid);
+
+                      if (updateError) {
+                        console.error(
+                          "[ElevenLabs] Error saving transcript summary:",
+                          updateError
+                        );
+                      } else {
+                        console.log(
+                          "[ElevenLabs] Transcript summary saved to database"
+                        );
+                      }
+                    } catch (dbError) {
+                      console.error(
+                        "[ElevenLabs] Error saving transcript summary to DB:",
+                        dbError
+                      );
+                    }
+                  }
+                  break;
+
+                case "data_collection_results":
+                  console.log("=".repeat(80));
+                  console.log(
+                    "📊 [DATA COLLECTION] Data Collection Results Received"
+                  );
+                  console.log("=".repeat(80));
+                  console.log("📋 Collection Details:");
+                  console.log(`   • Call SID: ${callSid}`);
+                  console.log(
+                    `   • Lead: ${customParameters?.client_name || "N/A"}`
+                  );
+                  console.log(
+                    `   • Phone: ${customParameters?.client_phone || "N/A"}`
+                  );
+                  console.log("");
+                  console.log("📊 Collected Data:");
+                  if (message.data_collection_results_event?.collected_data) {
+                    const collectedData =
+                      message.data_collection_results_event.collected_data;
+                    Object.keys(collectedData).forEach((key) => {
+                      console.log(`   • ${key}: ${collectedData[key]}`);
+                    });
+                  } else {
+                    console.log("   • No data collected");
+                  }
+                  console.log("");
+                  console.log("📈 Collection Status:");
+                  console.log(
+                    `   • Success: ${
+                      message.data_collection_results_event?.success || "N/A"
+                    }`
+                  );
+                  console.log(
+                    `   • Error: ${
+                      message.data_collection_results_event?.error || "None"
+                    }`
+                  );
+                  console.log("=".repeat(80));
+
+                  // Save data collection results to database
+                  if (callSid) {
+                    try {
+                      const { error: updateError } = await supabase
+                        .from("calls")
+                        .update({
+                          data_collection_results:
+                            message.data_collection_results_event
+                              ?.collected_data,
+                          data_collection_success:
+                            message.data_collection_results_event?.success,
+                          data_collection_error:
+                            message.data_collection_results_event?.error,
+                          updated_at: new Date().toISOString(),
+                        })
+                        .eq("call_sid", callSid);
+
+                      if (updateError) {
+                        console.error(
+                          "[ElevenLabs] Error saving data collection results:",
+                          updateError
+                        );
+                      } else {
+                        console.log(
+                          "[ElevenLabs] Data collection results saved to database"
+                        );
+                      }
+                    } catch (dbError) {
+                      console.error(
+                        "[ElevenLabs] Error saving data collection results to DB:",
+                        dbError
+                      );
+                    }
+                  }
+                  break;
+
+                case "conversation_ended":
+                  console.log("=".repeat(80));
+                  console.log("🔚 [CONVERSATION ENDED] Conversation Summary");
+                  console.log("=".repeat(80));
+                  console.log("📋 End Details:");
+                  console.log(`   • Call SID: ${callSid}`);
+                  console.log(
+                    `   • Lead: ${customParameters?.client_name || "N/A"}`
+                  );
+                  console.log(
+                    `   • Phone: ${customParameters?.client_phone || "N/A"}`
+                  );
+                  console.log(
+                    `   • Reason: ${
+                      message.conversation_ended_event?.reason || "N/A"
+                    }`
+                  );
+                  console.log(
+                    `   • Duration: ${
+                      message.conversation_ended_event?.conversation_duration ||
+                      "N/A"
+                    }`
+                  );
+                  console.log("=".repeat(80));
+                  break;
+
                 default:
                   if (message.type !== "ping") {
                     console.log(
@@ -1191,6 +1364,76 @@ fastify.post("/api/integration/leads", async (request, reply) => {
     }
   } catch (error) {
     console.error("[API] Error en API de leads:", error);
+    return reply.code(500).send({ error: "Error interno del servidor" });
+  }
+});
+
+// Endpoint to get call details including transcript and data collection
+fastify.get("/api/calls/:callSid", async (request, reply) => {
+  try {
+    const { callSid } = request.params;
+    const apiKey =
+      request.headers["x-api-key"] ||
+      request.headers["authorization"]?.replace("Bearer ", "");
+
+    if (!apiKey) {
+      return reply.code(401).send({ error: "API key requerida" });
+    }
+
+    const { data: keyData, error: keyError } = await supabase
+      .from("api_keys")
+      .select("user_id, is_active")
+      .eq("api_key", apiKey)
+      .single();
+
+    if (keyError || !keyData || !keyData.is_active) {
+      return reply.code(401).send({ error: "API key inválida" });
+    }
+
+    const { data: call, error: callError } = await supabase
+      .from("calls")
+      .select(
+        `
+        *,
+        lead:leads (
+          name,
+          phone,
+          email
+        ),
+        user:users (
+          email
+        )
+      `
+      )
+      .eq("call_sid", callSid)
+      .eq("user_id", keyData.user_id)
+      .single();
+
+    if (callError) {
+      return reply.code(404).send({ error: "Call not found" });
+    }
+
+    return reply.send({
+      success: true,
+      data: {
+        call_sid: call.call_sid,
+        status: call.status,
+        duration: call.duration,
+        result: call.result,
+        created_at: call.created_at,
+        updated_at: call.updated_at,
+        transcript_summary: call.transcript_summary,
+        conversation_duration: call.conversation_duration,
+        turn_count: call.turn_count,
+        data_collection_results: call.data_collection_results,
+        data_collection_success: call.data_collection_success,
+        data_collection_error: call.data_collection_error,
+        lead: call.lead,
+        user: call.user,
+      },
+    });
+  } catch (error) {
+    console.error("[API] Error getting call details:", error);
     return reply.code(500).send({ error: "Error interno del servidor" });
   }
 });
