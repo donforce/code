@@ -747,10 +747,10 @@ fastify.register(async (fastifyInstance) => {
                 keep_alive: true,
                 interruption_settings: {
                   enabled: true,
-                  sensitivity: "very_high", // Changed to very_high for maximum sensitivity
-                  min_duration: 0.05, // Reduced to 0.05 seconds for ultra-fast response
-                  max_duration: 10.0, // Increased to 10 seconds for longer interruptions
-                  cooldown_period: 0.1, // Reduced to 0.1 seconds for faster recovery
+                  sensitivity: "medium", // Back to default medium sensitivity
+                  min_duration: 0.5, // Back to default 0.5 seconds
+                  max_duration: 5.0, // Back to default 5 seconds
+                  cooldown_period: 1.0, // Back to default 1 second
                 },
               },
               dynamic_variables: {
@@ -774,10 +774,10 @@ fastify.register(async (fastifyInstance) => {
             );
             console.log("🎯 Interruption Settings:");
             console.log("   • Enabled: true");
-            console.log("   • Sensitivity: very_high");
-            console.log("   • Min Duration: 0.05s");
-            console.log("   • Max Duration: 10.0s");
-            console.log("   • Cooldown: 0.1s");
+            console.log("   • Sensitivity: medium");
+            console.log("   • Min Duration: 0.5s");
+            console.log("   • Max Duration: 5.0s");
+            console.log("   • Cooldown: 1.0s");
             console.log(JSON.stringify(initialConfig, null, 2));
             elevenLabsWs.send(JSON.stringify(initialConfig));
 
@@ -853,12 +853,6 @@ fastify.register(async (fastifyInstance) => {
 
                 case "agent_response":
                   console.log("🤖 [AGENT] Speaking");
-                  // Clear user speaking timer when agent starts speaking
-                  if (userSpeakingTimer) {
-                    clearTimeout(userSpeakingTimer);
-                    userSpeakingTimer = null;
-                  }
-                  userSpeakingStartTime = null;
                   break;
 
                 case "user_speaking":
@@ -871,54 +865,7 @@ fastify.register(async (fastifyInstance) => {
                     `🎤 [USER] Speaking - Duration: ${speakingDuration}s, Should Interrupt: ${shouldInterrupt}`
                   );
 
-                  // Start tracking user speaking time
-                  if (!userSpeakingStartTime) {
-                    userSpeakingStartTime = Date.now();
-                    console.log(
-                      "⏱️ [TIMER] Started tracking user speaking time"
-                    );
-                  }
-
-                  // Clear any existing timer
-                  if (userSpeakingTimer) {
-                    clearTimeout(userSpeakingTimer);
-                  }
-
-                  // Set fallback timer for 1 second
-                  userSpeakingTimer = setTimeout(() => {
-                    console.log(
-                      "⏰ [TIMER] Fallback interruption triggered after 1s of user speaking"
-                    );
-                    if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                      elevenLabsWs.send(
-                        JSON.stringify({
-                          type: "interrupt_agent",
-                        })
-                      );
-                      console.log(
-                        "🛑 [TIMER] Sent fallback interrupt_agent command"
-                      );
-                    }
-                  }, 1000);
-
-                  // Force interruption after 0.5 seconds of user speaking
-                  if (speakingDuration > 0.5) {
-                    console.log(
-                      "🚨 [INTERRUPTION] User speaking for >0.5s - forcing interruption"
-                    );
-
-                    // Send interruption command to ElevenLabs
-                    if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                      elevenLabsWs.send(
-                        JSON.stringify({
-                          type: "interrupt_agent",
-                        })
-                      );
-                      console.log(
-                        "🛑 [INTERRUPTION] Sent interrupt_agent command"
-                      );
-                    }
-                  } else if (shouldInterrupt) {
+                  if (shouldInterrupt) {
                     console.log(
                       "🚨 [INTERRUPTION] ElevenLabs detected should_interrupt=true"
                     );
@@ -1069,12 +1016,6 @@ fastify.register(async (fastifyInstance) => {
 
                 case "conversation_ended":
                   console.log("🔚 [END] Conversation ended");
-                  // Clear user speaking timer
-                  if (userSpeakingTimer) {
-                    clearTimeout(userSpeakingTimer);
-                    userSpeakingTimer = null;
-                  }
-                  userSpeakingStartTime = null;
                   break;
 
                 default:
@@ -1094,13 +1035,6 @@ fastify.register(async (fastifyInstance) => {
 
           elevenLabsWs.on("close", async () => {
             console.log("[ElevenLabs] Disconnected");
-
-            // Clear user speaking timer
-            if (userSpeakingTimer) {
-              clearTimeout(userSpeakingTimer);
-              userSpeakingTimer = null;
-            }
-            userSpeakingStartTime = null;
 
             if (callSid) {
               try {
@@ -1166,13 +1100,6 @@ fastify.register(async (fastifyInstance) => {
       });
 
       ws.on("close", () => {
-        // Clear user speaking timer
-        if (userSpeakingTimer) {
-          clearTimeout(userSpeakingTimer);
-          userSpeakingTimer = null;
-        }
-        userSpeakingStartTime = null;
-
         if (elevenLabsWs?.readyState === WebSocket.OPEN) {
           elevenLabsWs.close();
         }
