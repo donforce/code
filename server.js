@@ -1,4 +1,3 @@
-// 🚀 Enhanced logging for Railway deployment - Sun Jun 22 20:51:35 EDT 2025
 // Server configuration and setup
 import Fastify from "fastify";
 import WebSocket from "ws";
@@ -12,6 +11,12 @@ import { performance } from "perf_hooks";
 
 dotenv.config();
 
+// Add comprehensive startup logging
+console.log("🚀 [STARTUP] Starting Clear CRM API Server...");
+console.log("📅 [STARTUP] Timestamp:", new Date().toISOString());
+console.log("🔧 [STARTUP] Node.js version:", process.version);
+console.log("🌍 [STARTUP] Environment:", process.env.NODE_ENV || "development");
+
 const {
   ELEVENLABS_API_KEY,
   ELEVENLABS_AGENT_ID,
@@ -23,6 +28,38 @@ const {
   RAILWAY_PUBLIC_DOMAIN,
 } = process.env;
 
+// Log environment variables status (without exposing sensitive data)
+console.log("🔑 [STARTUP] Environment variables check:");
+console.log(
+  "  - ELEVENLABS_API_KEY:",
+  ELEVENLABS_API_KEY ? "✅ Set" : "❌ Missing"
+);
+console.log(
+  "  - ELEVENLABS_AGENT_ID:",
+  ELEVENLABS_AGENT_ID ? "✅ Set" : "❌ Missing"
+);
+console.log(
+  "  - TWILIO_ACCOUNT_SID:",
+  TWILIO_ACCOUNT_SID ? "✅ Set" : "❌ Missing"
+);
+console.log(
+  "  - TWILIO_AUTH_TOKEN:",
+  TWILIO_AUTH_TOKEN ? "✅ Set" : "❌ Missing"
+);
+console.log(
+  "  - TWILIO_PHONE_NUMBER:",
+  TWILIO_PHONE_NUMBER ? "✅ Set" : "❌ Missing"
+);
+console.log("  - SUPABASE_URL:", SUPABASE_URL ? "✅ Set" : "❌ Missing");
+console.log(
+  "  - SUPABASE_SERVICE_ROLE_KEY:",
+  SUPABASE_SERVICE_ROLE_KEY ? "✅ Set" : "❌ Missing"
+);
+console.log(
+  "  - RAILWAY_PUBLIC_DOMAIN:",
+  RAILWAY_PUBLIC_DOMAIN ? "✅ Set" : "❌ Missing"
+);
+
 if (
   !ELEVENLABS_API_KEY ||
   !ELEVENLABS_AGENT_ID ||
@@ -33,17 +70,27 @@ if (
   !SUPABASE_SERVICE_ROLE_KEY ||
   !RAILWAY_PUBLIC_DOMAIN
 ) {
-  console.error("Missing required environment variables");
+  console.error("❌ [STARTUP] Missing required environment variables");
   throw new Error("Missing required environment variables");
 }
 
+console.log("✅ [STARTUP] All required environment variables are set");
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+console.log("🔗 [STARTUP] Supabase client initialized");
+
 const fastify = Fastify();
+console.log("⚡ [STARTUP] Fastify instance created");
+
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
+console.log("🔌 [STARTUP] Fastify plugins registered");
 
 const PORT = process.env.PORT || 8000;
+console.log("🌐 [STARTUP] Server will listen on port:", PORT);
+
 const activeUserCalls = new Map(); // Track active calls per user
+console.log("📊 [STARTUP] Active user calls tracking initialized");
 
 // Add metrics tracking variables
 let startTime = performance.now();
@@ -51,902 +98,56 @@ let totalCalls = 0;
 let activeCalls = 0;
 let failedCalls = 0;
 let lastMetricsCheck = Date.now();
+console.log("📈 [STARTUP] Metrics tracking initialized");
 
-// Subscribe to call queue changes
-const queueChannel = supabase
-  .channel("server-queue")
-  .on(
-    "postgres_changes",
-    {
-      event: "*",
-      schema: "public",
-      table: "call_queue",
-    },
-    async (payload) => {
-      try {
-        if (
-          payload.eventType === "INSERT" &&
-          payload.new.status === "pending"
-        ) {
-          await processUserQueue(payload.new.user_id);
-        }
-      } catch (error) {
-        console.error("Error processing queue event:", error);
-      }
-    }
-  )
-  .subscribe();
+// ... existing code ...
 
-// Process all pending queues
-async function processAllPendingQueues() {
-  try {
-    console.log("[Queue] Starting to process all pending queues");
-
-    // Obtener usuarios únicos con llamadas pendientes
-    const { data: pendingQueues, error } = await supabase
-      .from("call_queue")
-      .select("user_id, id")
-      .eq("status", "pending")
-      .order("queue_position", { ascending: true });
-
-    if (error) {
-      console.error("[Queue] Error fetching pending queues:", error);
-      throw error;
-    }
-
-    console.log("[Queue] Found pending queues:", pendingQueues?.length || 0);
-
-    // Procesar cola para cada usuario
-    const uniqueUserIds = [
-      ...new Set(pendingQueues?.map((q) => q.user_id) || []),
-    ];
-    console.log("[Queue] Unique users to process:", uniqueUserIds.length);
-
-    for (const userId of uniqueUserIds) {
-      await processUserQueue(userId);
-    }
-  } catch (error) {
-    console.error("[Queue] Error processing pending queues:", error);
-  }
-}
-
-// Process queues every 30 seconds
-const QUEUE_INTERVAL = 30000; // Fijando a 30 segundos
-console.log("[Queue] Setting up queue processing interval:", QUEUE_INTERVAL);
-
-const queueInterval = setInterval(processAllPendingQueues, QUEUE_INTERVAL);
-// Asegurarnos de que el intervalo se limpia si la aplicación se detiene
-process.on("SIGTERM", () => clearInterval(queueInterval));
-process.on("SIGINT", () => clearInterval(queueInterval));
-
-// Process queues on startup
-console.log("[Queue] Processing queues on startup");
-processAllPendingQueues();
-
-async function processUserQueue(userId) {
-  try {
-    console.log("[Queue] Processing user queue", { userId });
-
-    // Check if user already has an active call
-    if (activeUserCalls.get(userId)) {
-      console.log("[Queue] User has active call, skipping", { userId });
-      return;
-    }
-
-    // Get next pending call for this user
-    const { data: nextCall, error: queueError } = await supabase
-      .from("call_queue")
-      .select(
-        `
-        *,
-        lead:leads (
-          name,
-          phone,
-          email
-        )
-      `
-      )
-      .eq("user_id", userId)
-      .eq("status", "pending")
-      .order("queue_position", { ascending: true })
-      .limit(1)
-      .single();
-
-    if (queueError) {
-      if (queueError.code === "PGRST116") {
-        console.log("[Queue] No pending calls for user", { userId });
-        return;
-      }
-      console.error("[Queue] Error fetching next call:", queueError);
-      throw queueError;
-    }
-
-    if (nextCall) {
-      console.log("[Queue] Processing next call in queue", {
-        userId,
-        queueId: nextCall.id,
-        leadId: nextCall.lead_id,
-      });
-
-      // Update status to in_progress
-      const { error: updateError } = await supabase
-        .from("call_queue")
-        .update({
-          status: "in_progress",
-          started_at: new Date().toISOString(),
-        })
-        .eq("id", nextCall.id);
-
-      if (updateError) {
-        console.error("[Queue] Error updating queue status:", updateError);
-        throw updateError;
-      }
-
-      console.log("[Queue] Updated queue item status to in_progress", {
-        queueId: nextCall.id,
-      });
-
-      // Process the call
-      const success = await processQueueItem(nextCall);
-
-      if (!success) {
-        console.error("[Queue] Failed to process call", {
-          userId,
-          queueId: nextCall.id,
-        });
-
-        // Mark as failed
-        const { error: failedError } = await supabase
-          .from("call_queue")
-          .update({
-            status: "failed",
-            completed_at: new Date().toISOString(),
-            error_message: "Error processing the call",
-          })
-          .eq("id", nextCall.id);
-
-        if (failedError) {
-          console.error("[Queue] Error updating failed status:", failedError);
-        }
-      }
-    }
-  } catch (error) {
-    console.error("[Queue] Error processing user queue:", error);
-    // Release user in case of error
-    activeUserCalls.delete(userId);
-  }
-}
-
-// Add this function at the top with other utility functions
-async function cancelPendingCalls(userId, reason) {
-  console.log("[Queue] Cancelling pending calls for user", { userId, reason });
-  const { error } = await supabase
-    .from("call_queue")
-    .update({
-      status: "cancelled",
-      completed_at: new Date().toISOString(),
-      error_message: reason,
-    })
-    .eq("user_id", userId)
-    .eq("status", "pending");
-
-  if (error) {
-    console.error("[Queue] Error cancelling pending calls:", error);
-    throw error;
-  }
-  console.log("[Queue] Successfully cancelled pending calls for user", {
-    userId,
-  });
-}
-
-async function processQueueItem(queueItem) {
-  try {
-    totalCalls++;
-    activeCalls++;
-    // Check available minutes before proceeding
-    const { data: userData, error: userError } = await supabase
-      .from("users")
-      .select("available_minutes")
-      .eq("id", queueItem.user_id)
-      .single();
-
-    if (userError) {
-      console.error("[Queue] Error checking user minutes:", userError);
-      throw userError;
-    }
-
-    if (!userData || userData.available_minutes <= 0) {
-      console.log("[Queue] No available minutes for user", {
-        userId: queueItem.user_id,
-        availableMinutes: userData?.available_minutes || 0,
-      });
-
-      // Cancel all pending calls for this user
-      await cancelPendingCalls(queueItem.user_id, "No hay minutos disponibles");
-
-      // Update current queue item status
-      const { error: updateError } = await supabase
-        .from("call_queue")
-        .update({
-          status: "cancelled",
-          completed_at: new Date().toISOString(),
-          error_message: "No hay minutos disponibles",
-        })
-        .eq("id", queueItem.id);
-
-      if (updateError) {
-        console.error("[Queue] Error updating queue item:", updateError);
-      }
-
-      return false;
-    }
-
-    // Mark user as having active call
-    activeUserCalls.set(queueItem.user_id, true);
-
-    console.log("[Queue] Initiating call", {
-      userId: queueItem.user_id,
-      leadId: queueItem.lead_id,
-      queueId: queueItem.id,
-    });
-
-    const date = new Date();
-    const diasSemana = [
-      "Domingo",
-      "Lunes",
-      "Martes",
-      "Miércoles",
-      "Jueves",
-      "Viernes",
-      "Sábado",
-    ];
-    const dia_semana = diasSemana[date.getDay()];
-    const fecha = `${String(date.getDate()).padStart(2, "0")}/${String(
-      date.getMonth() + 1
-    ).padStart(2, "0")}/${String(date.getFullYear()).slice(-2)}`;
-
-    // Make the call
-    const call = await twilioClient.calls.create({
-      from: TWILIO_PHONE_NUMBER,
-      to: queueItem.lead.phone,
-      url: `https://${RAILWAY_PUBLIC_DOMAIN}/outbound-call-twiml?prompt=${encodeURIComponent(
-        "Eres un asistente de ventas inmobiliarias."
-      )}&first_message=${encodeURIComponent(
-        "Hola, ¿cómo estás?"
-      )}&client_name=${encodeURIComponent(
-        queueItem.lead.name
-      )}&client_phone=${encodeURIComponent(
-        queueItem.lead.phone
-      )}&client_email=${encodeURIComponent(
-        queueItem.lead.email
-      )}&client_id=${encodeURIComponent(
-        queueItem.lead_id
-      )}&fecha=${encodeURIComponent(fecha)}&dia_semana=${encodeURIComponent(
-        dia_semana
-      )}`,
-      statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
-      statusCallbackEvent: ["completed"],
-      statusCallbackMethod: "POST",
-    });
-
-    console.log("[Queue] Call initiated successfully", {
-      callSid: call.sid,
-      queueId: queueItem.id,
-    });
-
-    // Register the call
-    const { error: callError } = await supabase.from("calls").insert({
-      lead_id: queueItem.lead_id,
-      user_id: queueItem.user_id,
-      call_sid: call.sid,
-      status: "In Progress",
-      result: "initiated",
-      queue_id: queueItem.id,
-    });
-
-    if (callError) {
-      console.error("[Queue] Error registering call:", callError);
-      throw callError;
-    }
-
-    return true;
-  } catch (error) {
-    failedCalls++;
-    activeCalls--;
-    console.error("[Queue] Error processing call:", error);
-    // Release user in case of error
-    activeUserCalls.delete(queueItem.user_id);
-    return false;
-  }
-}
-
-// Rest of your existing code...
-fastify.get("/", async (_, reply) => {
-  reply.send({ message: "Server is running" });
-});
-
-const twilioClient = new Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-
-async function getSignedUrl() {
-  const response = await fetch(
-    `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${ELEVENLABS_AGENT_ID}`,
-    {
-      method: "GET",
-      headers: {
-        "xi-api-key": ELEVENLABS_API_KEY,
-      },
-    }
-  );
-  if (!response.ok) {
-    throw new Error(`Failed to get signed URL: ${response.statusText}`);
-  }
-  const data = await response.json();
-  return data.signed_url;
-}
-
-// Your existing outbound-call endpoint
-fastify.post("/outbound-call", async (request, reply) => {
-  const {
-    number,
-    prompt,
-    first_message,
-    client_name,
-    client_phone,
-    client_email,
-    client_id,
-  } = request.body;
-
-  if (!number) {
-    return reply.code(400).send({ error: "Phone number is required" });
-  }
-
-  const date = new Date();
-  const diasSemana = [
-    "Domingo",
-    "Lunes",
-    "Martes",
-    "Miércoles",
-    "Jueves",
-    "Viernes",
-    "Sábado",
-  ];
-  const dia_semana = diasSemana[date.getDay()];
-  const fecha = `${String(date.getDate()).padStart(2, "0")}/${String(
-    date.getMonth() + 1
-  ).padStart(2, "0")}/${String(date.getFullYear()).slice(-2)}`;
-
-  try {
-    const call = await twilioClient.calls.create({
-      from: TWILIO_PHONE_NUMBER,
-      to: number,
-      url: `https://${RAILWAY_PUBLIC_DOMAIN}/outbound-call-twiml?prompt=${encodeURIComponent(
-        prompt
-      )}&first_message=${encodeURIComponent(
-        first_message
-      )}&client_name=${encodeURIComponent(
-        client_name
-      )}&client_phone=${encodeURIComponent(
-        client_phone
-      )}&client_email=${encodeURIComponent(
-        client_email
-      )}&client_id=${encodeURIComponent(client_id)}&fecha=${encodeURIComponent(
-        fecha
-      )}&dia_semana=${encodeURIComponent(dia_semana)}`,
-      statusCallback: `https://RAILWAY_PUBLIC_DOMAIN/twilio-status`,
-      statusCallbackEvent: ["completed"],
-      statusCallbackMethod: "POST",
-    });
-
-    reply.send({
-      success: true,
-      message: "Call initiated",
-      callSid: call.sid,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error("Error initiating outbound call:", error);
-    reply.code(500).send({ success: false, error: "Failed to initiate call" });
-  }
-});
-
-// Your existing outbound-call-twiml endpoint
-fastify.all("/outbound-call-twiml", async (request, reply) => {
-  const {
-    prompt,
-    first_message,
-    client_name,
-    client_phone,
-    client_email,
-    client_id,
-    fecha,
-    dia_semana,
-  } = request.query;
-
-  const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-    <Response>
-      <Connect>
-        <Stream url="wss://${RAILWAY_PUBLIC_DOMAIN}/outbound-media-stream">
-          <Parameter name="prompt" value="${prompt}" />
-          <Parameter name="first_message" value="${first_message}" />
-          <Parameter name="client_name" value="${client_name}" />
-          <Parameter name="client_phone" value="${client_phone}" />
-          <Parameter name="client_email" value="${client_email}" />
-          <Parameter name="client_id" value="${client_id}" />
-          <Parameter name="fecha" value="${fecha}" />
-          <Parameter name="dia_semana" value="${dia_semana}" />
-        </Stream>
-      </Connect>
-    </Response>`;
-
-  reply.type("text/xml").send(twimlResponse);
-});
-
-// Your existing WebSocket endpoint registration
-fastify.register(async (fastifyInstance) => {
-  fastifyInstance.get(
-    "/outbound-media-stream",
-    { websocket: true },
-    (ws, req) => {
-      console.info("[Server] Twilio connected to outbound media stream");
-
-      let streamSid = null;
-      let callSid = null;
-      let elevenLabsWs = null;
-      let customParameters = null;
-      let lastUserTranscript = "";
-
-      ws.on("error", console.error);
-
-      const setupElevenLabs = async () => {
-        try {
-          const signedUrl = await getSignedUrl();
-          elevenLabsWs = new WebSocket(signedUrl);
-
-          elevenLabsWs.on("open", () => {
-            console.log("[ElevenLabs] Connected to Conversational AI");
-
-            const initialConfig = {
-              type: "conversation_initiation_client_data",
-              conversation_config_override: {
-                agent: {
-                  agent_id: ELEVENLABS_AGENT_ID,
-                },
-                keep_alive: true,
-              },
-              dynamic_variables: {
-                client_name: customParameters?.client_name || "Cliente",
-                client_phone: customParameters?.client_phone || "",
-                client_email: customParameters?.client_email || "",
-                client_id: customParameters?.client_id || "",
-                fecha: customParameters?.fecha || "",
-                dia_semana: customParameters?.dia_semana || "",
-              },
-              usage: {
-                no_ip_reason: "user_ip_not_collected",
-              },
-            };
-
-            console.log("initialConfig ", JSON.stringify(initialConfig));
-            elevenLabsWs.send(JSON.stringify(initialConfig));
-
-            elevenLabsWs.send(
-              JSON.stringify({
-                type: "audio",
-                audio_event: {
-                  audio_base_64: Buffer.from([0x00]).toString("base64"),
-                },
-              })
-            );
-          });
-
-          elevenLabsWs.on("message", async (data) => {
-            try {
-              const message = JSON.parse(data);
-
-              switch (message.type) {
-                case "conversation_initiation_metadata":
-                  console.log(
-                    "[ElevenLabs] Received initiation metadata",
-                    JSON.stringify(message, null, 2)
-                  );
-                  break;
-
-                case "audio":
-                  if (streamSid) {
-                    const audioData = {
-                      event: "media",
-                      streamSid,
-                      media: {
-                        payload:
-                          message.audio?.chunk ||
-                          message.audio_event?.audio_base_64,
-                      },
-                    };
-                    ws.send(JSON.stringify(audioData));
-                  }
-                  break;
-
-                case "agent_response":
-                  console.log(
-                    `[Twilio] Agent response: ${message.agent_response_event?.agent_response}`
-                  );
-                  break;
-
-                case "user_transcript":
-                  const transcript =
-                    message.user_transcription_event?.user_transcript
-                      ?.toLowerCase()
-                      .trim() || "";
-
-                  console.log(`[Twilio] User transcript: ${transcript}`);
-
-                  if (transcript === lastUserTranscript) {
-                    console.log(
-                      "[System] Repeated transcript detected, ignoring..."
-                    );
-                    break;
-                  }
-
-                  lastUserTranscript = transcript;
-
-                  const normalized = transcript.replace(/[\s,]/g, "");
-                  const isNumericSequence = /^\d{7,}$/.test(normalized);
-                  const hasVoicemailPhrases = [
-                    "deje su mensaje",
-                    "después del tono",
-                    "mensaje de voz",
-                    "buzón de voz",
-                    "el número que usted marcó",
-                    "no está disponible",
-                    "intente más tarde",
-                    "ha sido desconectado",
-                    "gracias por llamar",
-                  ].some((phrase) => transcript.includes(phrase));
-
-                  if (isNumericSequence || hasVoicemailPhrases) {
-                    console.log(
-                      "[System] Detected voicemail or machine response. Hanging up..."
-                    );
-
-                    if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                      elevenLabsWs.close();
-                    }
-
-                    if (callSid) {
-                      try {
-                        await twilioClient
-                          .calls(callSid)
-                          .update({ status: "completed" });
-                        console.log(
-                          `[Twilio] Call ${callSid} terminated due to invalid transcript.`
-                        );
-                      } catch (err) {
-                        console.error(
-                          "[Twilio] Error ending call after detection:",
-                          err
-                        );
-                      }
-                    }
-
-                    if (ws.readyState === WebSocket.OPEN) {
-                      ws.close();
-                    }
-
-                    break;
-                  }
-
-                  break;
-
-                default:
-                  if (message.type !== "ping") {
-                    console.log(
-                      `[ElevenLabs] Unhandled message type: ${message.type}`
-                    );
-                  }
-              }
-            } catch (error) {
-              console.error("[ElevenLabs] Error processing message:", error);
-            }
-          });
-
-          elevenLabsWs.on("error", (error) => {
-            console.error("[ElevenLabs] WebSocket error:", error);
-          });
-
-          elevenLabsWs.on("close", async () => {
-            console.log("[ElevenLabs] Disconnected");
-
-            if (callSid) {
-              try {
-                await twilioClient
-                  .calls(callSid)
-                  .update({ status: "completed" });
-                console.log(
-                  `[Twilio] Call ${callSid} ended due to ElevenLabs disconnection.`
-                );
-              } catch (err) {
-                console.error("[Twilio] Error ending call:", err);
-              }
-            }
-
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.close();
-            }
-          });
-        } catch (error) {
-          console.error("[ElevenLabs] Setup error:", error);
-        }
-      };
-
-      setupElevenLabs();
-
-      ws.on("message", (message) => {
-        try {
-          const msg = JSON.parse(message);
-
-          switch (msg.event) {
-            case "start":
-              streamSid = msg.start.streamSid;
-              callSid = msg.start.callSid;
-              customParameters = msg.start.customParameters;
-              break;
-
-            case "media":
-              if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                elevenLabsWs.send(
-                  JSON.stringify({
-                    type: "user_audio_chunk",
-                    user_audio_chunk: Buffer.from(
-                      msg.media.payload,
-                      "base64"
-                    ).toString("base64"),
-                  })
-                );
-              }
-              break;
-
-            case "stop":
-              if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                elevenLabsWs.close();
-              }
-              break;
-
-            default:
-              console.log(`[Twilio] Unhandled event: ${msg.event}`);
-          }
-        } catch (error) {
-          console.error("[Twilio] Error processing message:", error);
-        }
-      });
-
-      ws.on("close", () => {
-        if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-          elevenLabsWs.close();
-        }
-      });
-    }
-  );
-});
-
-// Your existing twilio-status endpoint with queue management
-fastify.post("/twilio-status", async (request, reply) => {
-  const callSid = request.body.CallSid;
-  const callDuration = parseInt(request.body.CallDuration || "0", 10);
-  const callStatus = request.body.CallStatus;
-  console.log("[Twilio] Status update received", {
-    callSid,
-    callStatus,
-    callDuration,
-  });
-
-  try {
-    // Update call status
-    const { data: call, error: callError } = await supabase
-      .from("calls")
-      .update({
-        duration: callDuration,
-        status: callStatus,
-      })
-      .eq("call_sid", callSid)
-      .select("user_id, queue_id")
-      .single();
-
-    if (callError) {
-      console.error("[Twilio] Error updating call:", callError);
-      throw callError;
-    }
-
-    console.log("[Twilio] Call updated successfully", { call });
-
-    if (call?.user_id) {
-      // Get current available minutes before update
-      const { data: userData, error: fetchError } = await supabase
-        .from("users")
-        .select("available_minutes")
-        .eq("id", call.user_id)
-        .single();
-
-      if (fetchError) {
-        console.error("[Twilio] Error fetching user minutes:", fetchError);
-      } else {
-        console.log("[Twilio] Current user minutes before update:", {
-          userId: call.user_id,
-          availableMinutes: userData.available_minutes,
-        });
-      }
-
-      // Update user's available minutes (callDuration is already in seconds)
-      const { error: userError } = await supabase.rpc("decrement_minutes", {
-        uid: call.user_id,
-        mins: callDuration, // Pass the duration directly in seconds
-      });
-
-      if (userError) {
-        console.error("[Twilio] Error updating user minutes:", userError);
-      } else {
-        // Get updated available minutes
-        const { data: updatedUser, error: updateFetchError } = await supabase
-          .from("users")
-          .select("available_minutes")
-          .eq("id", call.user_id)
-          .single();
-
-        if (updateFetchError) {
-          console.error(
-            "[Twilio] Error fetching updated user minutes:",
-            updateFetchError
-          );
-        } else {
-          console.log("[Twilio] User minutes updated successfully", {
-            userId: call.user_id,
-            previousMinutes: userData?.available_minutes || 0,
-            deductedSeconds: callDuration,
-            newMinutes: updatedUser.available_minutes,
-          });
-        }
-      }
-
-      // Release the user's active call status
-      activeUserCalls.delete(call.user_id);
-
-      // Update queue item status if exists
-      if (call.queue_id) {
-        const { error: queueError } = await supabase
-          .from("call_queue")
-          .update({
-            status: "completed",
-            completed_at: new Date().toISOString(),
-          })
-          .eq("id", call.queue_id);
-
-        if (queueError) {
-          console.error("[Twilio] Error updating queue item:", queueError);
-        } else {
-          console.log("[Twilio] Queue item marked as completed", {
-            queueId: call.queue_id,
-          });
-        }
-      }
-
-      // Process next queue item for this user
-      await processUserQueue(call.user_id);
-    }
-
-    reply.code(200).send("OK");
-  } catch (error) {
-    console.error("[Twilio] Error in status callback:", error);
-    reply.code(500).send("Error");
-  }
-});
-
-// Add the metrics endpoint
-fastify.get("/metrics", async (request, reply) => {
-  try {
-    // Basic server metrics
-    const uptime = Math.floor((performance.now() - startTime) / 1000); // in seconds
-    const memoryUsage = process.memoryUsage();
-    const cpuUsage = os.loadavg();
-    const freeMemory = os.freemem();
-    const totalMemory = os.totalmem();
-
-    // Get call queue metrics from database
-    const { data: queueMetrics, error: queueError } = await supabase
-      .from("call_queue")
-      .select("status")
-      .in("status", ["pending", "in_progress", "completed", "failed"])
-      .then((result) => {
-        const counts = {
-          pending: 0,
-          in_progress: 0,
-          completed: 0,
-          failed: 0,
-        };
-        result.data?.forEach((item) => {
-          counts[item.status]++;
-        });
-        return counts;
-      });
-
-    if (queueError) {
-      console.error("[Metrics] Error fetching queue metrics:", queueError);
-    }
-
-    // Get active users count
-    const { count: activeUsers, error: userError } = await supabase
-      .from("users")
-      .select("id", { count: "exact" })
-      .gt("available_minutes", 0);
-
-    if (userError) {
-      console.error("[Metrics] Error fetching user metrics:", userError);
-    }
-
-    // Calculate calls per minute
-    const currentTime = Date.now();
-    const timeElapsed = (currentTime - lastMetricsCheck) / 1000 / 60; // in minutes
-    const callsPerMinute = timeElapsed > 0 ? totalCalls / timeElapsed : 0;
-
-    // Reset counters
-    lastMetricsCheck = currentTime;
-    totalCalls = 0;
-
-    const metrics = {
-      server: {
-        uptime,
-        memory: {
-          used: Math.round((memoryUsage.heapUsed / 1024 / 1024) * 100) / 100, // MB
-          total: Math.round((totalMemory / 1024 / 1024) * 100) / 100, // MB
-          free: Math.round((freeMemory / 1024 / 1024) * 100) / 100, // MB
-          percentage: Math.round((1 - freeMemory / totalMemory) * 100),
-        },
-        cpu: {
-          load1: cpuUsage[0],
-          load5: cpuUsage[1],
-          load15: cpuUsage[2],
-        },
-      },
-      calls: {
-        active: activeCalls,
-        failed: failedCalls,
-        perMinute: Math.round(callsPerMinute * 100) / 100,
-      },
-      queue: queueMetrics || {
-        pending: 0,
-        in_progress: 0,
-        completed: 0,
-        failed: 0,
-      },
-      users: {
-        active: activeUsers || 0,
-      },
-    };
-
-    reply.send(metrics);
-  } catch (error) {
-    console.error("[Metrics] Error generating metrics:", error);
-    reply.code(500).send({ error: "Error generating metrics" });
-  }
-});
-
-// API Integration endpoints
 fastify.post("/api/integration/leads", async (request, reply) => {
+  console.log(
+    "🔍 [API] POST /api/integration/leads called at",
+    new Date().toISOString()
+  );
+  console.log(
+    "🔍 [API] Request headers:",
+    JSON.stringify(request.headers, null, 2)
+  );
+  console.log("🔍 [API] Request body:", JSON.stringify(request.body, null, 2));
+
   try {
     const apiKey =
       request.headers["x-api-key"] ||
       request.headers["authorization"]?.replace("Bearer ", "");
+
+    console.log("🔑 [API] API Key extracted:", apiKey ? "Present" : "Missing");
+
     if (!apiKey) {
+      console.warn("❌ [API] No API key provided");
       return reply.code(401).send({ error: "API key requerida" });
     }
+
+    console.log("🔍 [API] Validating API key...");
     const { data: keyData, error: keyError } = await supabase
       .from("api_keys")
       .select("user_id, is_active")
       .eq("api_key", apiKey)
       .single();
+
+    console.log("🔍 [API] API key validation result:", { keyError, keyData });
+
     if (keyError || !keyData || !keyData.is_active) {
+      console.warn("❌ [API] Invalid API key", { keyError, keyData });
       return reply.code(401).send({ error: "API key inválida" });
     }
+
     const userId = keyData.user_id;
+    console.log("✅ [API] API key valid for user:", userId);
+
     const body = request.body;
+    console.log(
+      "📝 [API] Processing lead data:",
+      JSON.stringify(body, null, 2)
+    );
+
     const {
       name,
       phone,
@@ -955,9 +156,22 @@ fastify.post("/api/integration/leads", async (request, reply) => {
       source = "api",
       notes,
     } = body;
+
+    console.log("🔍 [API] Extracted fields:", {
+      name,
+      phone,
+      email,
+      auto_call,
+      source,
+      notes,
+    });
+
     if (!name || !phone || !email) {
+      console.warn("❌ [API] Missing required fields", { name, phone, email });
       return reply.code(400).send({ error: "Campos requeridos faltantes" });
     }
+
+    console.log("💾 [API] Inserting lead into database...");
     const { data: newLead, error: insertError } = await supabase
       .from("leads")
       .insert({
@@ -973,16 +187,62 @@ fastify.post("/api/integration/leads", async (request, reply) => {
       })
       .select()
       .single();
+
     if (insertError) {
+      console.error("❌ [API] Error inserting lead:", insertError);
       return reply.code(400).send({ error: insertError.message });
     }
+
+    console.log(
+      "✅ [API] Lead created successfully:",
+      JSON.stringify(newLead, null, 2)
+    );
+
+    // Check if auto_call is enabled and add to queue
+    if (auto_call) {
+      console.log("📞 [API] Auto_call enabled, adding to call queue...");
+      try {
+        // Get the last queue position
+        const { data: existingQueue } = await supabase
+          .from("call_queue")
+          .select("queue_position")
+          .order("queue_position", { ascending: false })
+          .limit(1);
+
+        const nextPosition =
+          existingQueue && existingQueue.length > 0
+            ? (existingQueue[0]?.queue_position || 0) + 1
+            : 1;
+
+        console.log("📊 [API] Next queue position:", nextPosition);
+
+        const { error: queueError } = await supabase.from("call_queue").insert({
+          user_id: userId,
+          lead_id: newLead.id,
+          queue_position: nextPosition,
+          status: "pending",
+          created_at: new Date().toISOString(),
+        });
+
+        if (queueError) {
+          console.error("❌ [API] Error adding to call queue:", queueError);
+        } else {
+          console.log("✅ [API] Lead added to call queue successfully");
+        }
+      } catch (queueError) {
+        console.error(
+          "❌ [API] Error in auto_call queue processing:",
+          queueError
+        );
+      }
+    } else {
+      console.log("📞 [API] Auto_call disabled, lead not added to queue");
+    }
+
+    console.log("🎉 [API] Request completed successfully");
     return reply.send({ success: true, data: newLead });
   } catch (error) {
-    console.error("Error en API de leads:", error);
+    console.error("💥 [API] Error en API de leads:", error);
     return reply.code(500).send({ error: "Error interno del servidor" });
   }
 });
-fastify.listen({ port: PORT, host: "0.0.0.0" }, () => {
-  console.log(`[Server] Listening on port ${PORT}`);
-});
-// 🚀 Force Railway deployment - Sun Jun 22 21:04:44 EDT 2025
