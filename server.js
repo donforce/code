@@ -1070,7 +1070,7 @@ fastify.register(async (fastifyInstance) => {
       ws.on("message", (message) => {
         try {
           const msg = JSON.parse(message);
-          console.log("msg.event ", msg.event);
+          // console.log("msg.event ", msg.event);
           switch (msg.event) {
             case "start":
               streamSid = msg.start.streamSid;
