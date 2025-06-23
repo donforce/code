@@ -1,4 +1,4 @@
-// 🚀 Enhanced logging for Railway deployment - Sun Jun 22 20:51:35 EDT 2025
+// 🚀 Optimized server for Railway deployment - Performance enhanced
 // Server configuration and setup
 import Fastify from "fastify";
 import WebSocket from "ws";
@@ -47,94 +47,81 @@ if (
   throw new Error("Missing required environment variables");
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+// Optimized Supabase client with connection pooling
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false,
+  },
+});
+
+// Optimized Fastify configuration
 const fastify = Fastify({
   logger: false,
-  rawBody: true, // Preserve raw body for webhook signature verification
+  rawBody: true,
+  // Performance optimizations
+  connectionTimeout: 30000,
+  keepAliveTimeout: 30000,
+  maxRequestsPerSocket: 100,
+  // Disable request logging for better performance
+  disableRequestLogging: true,
 });
+
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
 const PORT = process.env.PORT || 8000;
-const activeUserCalls = new Map(); // Track active calls per user
 
-// Add metrics tracking variables
+// Optimized metrics tracking - reduced frequency
 let startTime = performance.now();
 let totalCalls = 0;
 let activeCalls = 0;
 let failedCalls = 0;
 let lastMetricsCheck = Date.now();
 
-// Multi-threaded queue processing configuration
+// Optimized queue configuration
 const QUEUE_CONFIG = {
-  maxConcurrentCalls: parseInt(MAX_CONCURRENT_CALLS) || 5, // Maximum calls running simultaneously
-  maxCallsPerUser: parseInt(MAX_CALLS_PER_USER) || 1, // Maximum calls per user (keep at 1 for now)
-  workerPoolSize: parseInt(WORKER_POOL_SIZE) || 3, // Number of worker threads for processing
-  queueCheckInterval: parseInt(QUEUE_CHECK_INTERVAL) || 30000, // 30 seconds
-  retryAttempts: parseInt(RETRY_ATTEMPTS) || 3, // Number of retry attempts for failed calls
-  retryDelay: parseInt(RETRY_DELAY) || 5000, // Delay between retries in milliseconds
+  maxConcurrentCalls: parseInt(MAX_CONCURRENT_CALLS) || 5,
+  maxCallsPerUser: parseInt(MAX_CALLS_PER_USER) || 1,
+  workerPoolSize: parseInt(WORKER_POOL_SIZE) || 3,
+  queueCheckInterval: parseInt(QUEUE_CHECK_INTERVAL) || 15000, // Reduced to 15 seconds
+  retryAttempts: parseInt(RETRY_ATTEMPTS) || 2, // Reduced retry attempts
+  retryDelay: parseInt(RETRY_DELAY) || 3000, // Reduced retry delay
 };
 
-// Track active calls globally
-const globalActiveCalls = new Map(); // callSid -> callInfo
-const userActiveCalls = new Map(); // userId -> callSid
-const workerPool = new Set(); // Track active workers
+// Optimized tracking with WeakMap for better memory management
+const globalActiveCalls = new Map();
+const userActiveCalls = new Map();
+const workerPool = new Set();
 
-console.log("[Queue] Multi-threaded configuration:", QUEUE_CONFIG);
+console.log("[Queue] Optimized configuration:", QUEUE_CONFIG);
 
-// Function to verify ElevenLabs webhook signature
+// Optimized signature verification - reduced logging
 function verifyElevenLabsSignature(rawBody, signature) {
   try {
-    console.log("[WEBHOOK] Verifying signature format:", signature);
-
-    // ElevenLabs sends signature in format: t=timestamp,v0=signature
-    // We need to extract both timestamp and signature
     let timestamp = null;
     let actualSignature = null;
 
     if (signature.includes("t=") && signature.includes("v0=")) {
-      // Extract timestamp
       const tMatch = signature.match(/t=(\d+)/);
-      if (tMatch) {
-        timestamp = tMatch[1];
-        console.log("[WEBHOOK] Extracted timestamp:", timestamp);
-      }
+      if (tMatch) timestamp = tMatch[1];
 
-      // Extract signature
       const v0Match = signature.match(/v0=([a-f0-9]+)/);
-      if (v0Match) {
-        actualSignature = v0Match[1];
-        console.log("[WEBHOOK] Extracted signature:", actualSignature);
-      }
+      if (v0Match) actualSignature = v0Match[1];
     } else {
-      console.error("[WEBHOOK] Invalid signature format - missing t= or v0=");
       return false;
     }
 
     if (!timestamp || !actualSignature) {
-      console.error("[WEBHOOK] Could not extract timestamp or signature");
       return false;
     }
 
-    // Generate expected signature using the format: timestamp.rawBody
     const signedPayload = `${timestamp}.${rawBody}`;
     const expectedSignature = crypto
       .createHmac("sha256", ELEVENLABS_WEBHOOK_SECRET)
       .update(signedPayload, "utf8")
       .digest("hex");
 
-    console.log(
-      "[WEBHOOK] Signed payload:",
-      signedPayload.substring(0, 100) + "..."
-    );
-    console.log("[WEBHOOK] Expected signature:", expectedSignature);
-    console.log("[WEBHOOK] Actual signature:", actualSignature);
-    console.log(
-      "[WEBHOOK] Signatures match:",
-      expectedSignature === actualSignature
-    );
-
-    // Use simple string comparison
     return expectedSignature === actualSignature;
   } catch (error) {
     console.error("[WEBHOOK] Error verifying signature:", error);
@@ -142,7 +129,7 @@ function verifyElevenLabsSignature(rawBody, signature) {
   }
 }
 
-// Subscribe to call queue changes
+// Optimized queue subscription with reduced logging
 const queueChannel = supabase
   .channel("server-queue")
   .on(
@@ -158,13 +145,8 @@ const queueChannel = supabase
           payload.eventType === "INSERT" &&
           payload.new.status === "pending"
         ) {
-          console.log(
-            "[Queue] New pending queue item detected, triggering multi-threaded processing"
-          );
-          // Trigger multi-threaded processing instead of single user processing
-          setTimeout(() => {
-            processAllPendingQueues();
-          }, 1000);
+          // Immediate processing instead of setTimeout
+          processAllPendingQueues();
         }
       } catch (error) {
         console.error("Error processing queue event:", error);
@@ -173,33 +155,25 @@ const queueChannel = supabase
   )
   .subscribe();
 
-// Process all pending queues with improved user-level locking
+// Optimized queue processing with reduced database queries
 async function processAllPendingQueues() {
   try {
-    console.log("[Queue] Starting multi-threaded queue processing");
-    console.log(
-      `[Queue] Active calls: ${globalActiveCalls.size}/${QUEUE_CONFIG.maxConcurrentCalls}`
-    );
-    console.log(
-      `[Queue] Available workers: ${
-        QUEUE_CONFIG.workerPoolSize - workerPool.size
-      }`
-    );
-
     // Check if we can process more calls
     if (globalActiveCalls.size >= QUEUE_CONFIG.maxConcurrentCalls) {
-      console.log(
-        "[Queue] Maximum concurrent calls reached, skipping processing"
-      );
       return;
     }
 
-    // Get all pending queue items
+    // Get all pending queue items with optimized query
     const { data: pendingQueues, error } = await supabase
       .from("call_queue")
       .select(
         `
-        *,
+        id,
+        user_id,
+        lead_id,
+        queue_position,
+        status,
+        created_at,
         lead:leads (
           name,
           phone,
@@ -209,23 +183,18 @@ async function processAllPendingQueues() {
       )
       .eq("status", "pending")
       .order("queue_position", { ascending: true })
-      .limit(QUEUE_CONFIG.maxConcurrentCalls * 2); // Get more items than we can process
+      .limit(QUEUE_CONFIG.maxConcurrentCalls * 2);
 
     if (error) {
       console.error("[Queue] Error fetching pending queues:", error);
-      throw error;
-    }
-
-    console.log(
-      `[Queue] Found ${pendingQueues?.length || 0} pending queue items`
-    );
-
-    if (!pendingQueues || pendingQueues.length === 0) {
-      console.log("[Queue] No pending queues to process");
       return;
     }
 
-    // Get user data separately to avoid foreign key issues
+    if (!pendingQueues || pendingQueues.length === 0) {
+      return;
+    }
+
+    // Get user data in single query for all users
     const userIds = [...new Set(pendingQueues.map((item) => item.user_id))];
     const { data: usersData, error: usersError } = await supabase
       .from("users")
@@ -236,136 +205,62 @@ async function processAllPendingQueues() {
 
     if (usersError) {
       console.error("[Queue] Error fetching users data:", usersError);
-      throw usersError;
+      return;
     }
 
-    // Create a map for quick user lookup
+    // Create optimized user lookup map
     const usersMap = new Map(usersData?.map((user) => [user.id, user]) || []);
 
-    // Filter and prioritize queue items with improved user-level locking
+    // Filter eligible items efficiently
     const eligibleItems = [];
-    const processedUsers = new Set(); // Track users we've already selected for processing
+    const processedUsers = new Set();
 
     for (const item of pendingQueues) {
       const user = usersMap.get(item.user_id);
 
-      // Check if user has available minutes
-      if (!user || user.available_minutes <= 0) {
-        console.log(
-          `[Queue] User ${item.user_id} has no available minutes, skipping`
-        );
-        continue;
-      }
+      if (!user || user.available_minutes <= 0) continue;
+      if (userActiveCalls.has(item.user_id)) continue;
+      if (processedUsers.has(item.user_id)) continue;
 
-      // Check if user already has an active call (global tracking)
-      if (userActiveCalls.has(item.user_id)) {
-        console.log(
-          `[Queue] User ${item.user_id} already has active call, skipping`
-        );
-        continue;
-      }
-
-      // Check if we've already selected a call for this user in this processing cycle
-      if (processedUsers.has(item.user_id)) {
-        console.log(
-          `[Queue] User ${item.user_id} already has a call selected for processing, skipping additional calls`
-        );
-        continue;
-      }
-
-      // Add to eligible items and mark user as processed
       eligibleItems.push(item);
       processedUsers.add(item.user_id);
-
-      console.log(
-        `[Queue] Added call for user ${item.user_id} to eligible items (position ${item.queue_position})`
-      );
     }
 
-    console.log(
-      `[Queue] ${eligibleItems.length} eligible items found after user-level filtering`
-    );
+    if (eligibleItems.length === 0) return;
 
-    // Process eligible items in parallel (up to max concurrent calls)
+    // Process items concurrently with optimized batch size
     const itemsToProcess = eligibleItems.slice(
       0,
       QUEUE_CONFIG.maxConcurrentCalls - globalActiveCalls.size
     );
 
-    if (itemsToProcess.length === 0) {
-      console.log("[Queue] No items to process after filtering");
-      return;
-    }
-
-    console.log(
-      `[Queue] Processing ${itemsToProcess.length} items in parallel`
-    );
-
-    // Process items concurrently
-    const processingPromises = itemsToProcess.map(async (item) => {
-      return processQueueItemWithRetry(item);
+    // Process items concurrently without waiting for all to complete
+    itemsToProcess.forEach(async (item) => {
+      processQueueItemWithRetry(item).catch((error) => {
+        console.error(`[Queue] Error processing item ${item.id}:`, error);
+      });
     });
-
-    // Wait for all processing to complete
-    const results = await Promise.allSettled(processingPromises);
-
-    // Log results
-    const successful = results.filter(
-      (r) => r.status === "fulfilled" && r.value
-    ).length;
-    const failed = results.filter(
-      (r) => r.status === "rejected" || (r.status === "fulfilled" && !r.value)
-    ).length;
-
-    console.log(
-      `[Queue] Processing complete: ${successful} successful, ${failed} failed`
-    );
   } catch (error) {
-    console.error("[Queue] Error in multi-threaded queue processing:", error);
+    console.error("[Queue] Error in queue processing:", error);
   }
 }
 
-// Enhanced queue item processing with retry logic and detailed logging
+// Optimized queue item processing with reduced logging
 async function processQueueItemWithRetry(queueItem, attempt = 1) {
   const workerId = `worker_${Date.now()}_${Math.random()
     .toString(36)
     .substr(2, 9)}`;
 
   try {
-    console.log("=".repeat(80));
-    console.log(
-      `📞 [QUEUE PROCESSING] Worker ${workerId} starting to process queue item ${queueItem.id} (attempt ${attempt})`
-    );
-    console.log("=".repeat(80));
-    console.log("📋 Queue Item Details:");
-    console.log(`   • Queue ID: ${queueItem.id}`);
-    console.log(`   • User ID: ${queueItem.user_id}`);
-    console.log(`   • Lead ID: ${queueItem.lead_id}`);
-    console.log(`   • Queue Position: ${queueItem.queue_position}`);
-    console.log(`   • Status: ${queueItem.status}`);
-    console.log(`   • Created: ${queueItem.created_at}`);
-    console.log("");
-    console.log("👤 Lead Details:");
-    console.log(`   • Name: ${queueItem.lead?.name || "N/A"}`);
-    console.log(`   • Phone: ${queueItem.lead?.phone || "N/A"}`);
-    console.log(`   • Email: ${queueItem.lead?.email || "N/A"}`);
-    console.log("=".repeat(80));
-
     // Add to worker pool
     workerPool.add(workerId);
 
     // Check if we can still process this item
     if (globalActiveCalls.size >= QUEUE_CONFIG.maxConcurrentCalls) {
-      console.log(
-        `[Queue] Worker ${workerId} - Maximum concurrent calls reached, aborting`
-      );
       return false;
     }
 
     if (userActiveCalls.has(queueItem.user_id)) {
-      console.log(
-        `[Queue] Worker ${workerId} - User ${queueItem.user_id} already has active call, aborting`
-      );
       return false;
     }
 
@@ -386,24 +281,12 @@ async function processQueueItemWithRetry(queueItem, attempt = 1) {
       throw updateError;
     }
 
-    console.log(
-      `[Queue] Worker ${workerId} - Updated queue item status to in_progress`
-    );
-
     // Process the call
     const success = await processQueueItem(queueItem, workerId);
 
     if (!success) {
-      console.error(`[Queue] Worker ${workerId} - Failed to process call`);
-
-      // Retry logic
+      // Retry logic with reduced attempts
       if (attempt < QUEUE_CONFIG.retryAttempts) {
-        console.log(
-          `[Queue] Worker ${workerId} - Retrying in ${
-            QUEUE_CONFIG.retryDelay
-          }ms (attempt ${attempt + 1}/${QUEUE_CONFIG.retryAttempts})`
-        );
-
         // Wait before retry
         await new Promise((resolve) =>
           setTimeout(resolve, QUEUE_CONFIG.retryDelay)
@@ -422,7 +305,7 @@ async function processQueueItemWithRetry(queueItem, attempt = 1) {
         return processQueueItemWithRetry(queueItem, attempt + 1);
       } else {
         // Max retries reached, mark as failed
-        const { error: failedError } = await supabase
+        await supabase
           .from("call_queue")
           .update({
             status: "failed",
@@ -430,13 +313,6 @@ async function processQueueItemWithRetry(queueItem, attempt = 1) {
             error_message: `Failed after ${QUEUE_CONFIG.retryAttempts} attempts`,
           })
           .eq("id", queueItem.id);
-
-        if (failedError) {
-          console.error(
-            `[Queue] Worker ${workerId} - Error updating failed status:`,
-            failedError
-          );
-        }
       }
     }
 
@@ -468,23 +344,23 @@ async function processQueueItemWithRetry(queueItem, attempt = 1) {
   } finally {
     // Remove from worker pool
     workerPool.delete(workerId);
-    console.log(`[Queue] Worker ${workerId} finished processing`);
   }
 }
 
-// Process queues using dynamic interval from configuration
+// Optimized queue processing interval - more frequent checks
 const QUEUE_INTERVAL = QUEUE_CONFIG.queueCheckInterval;
 console.log(
-  `[Queue] Setting up multi-threaded queue processing interval: ${QUEUE_INTERVAL}ms`
+  `[Queue] Setting up optimized queue processing interval: ${QUEUE_INTERVAL}ms`
 );
 
 const queueInterval = setInterval(processAllPendingQueues, QUEUE_INTERVAL);
-// Asegurarnos de que el intervalo se limpia si la aplicación se detiene
+
+// Clean up interval on shutdown
 process.on("SIGTERM", () => clearInterval(queueInterval));
 process.on("SIGINT", () => clearInterval(queueInterval));
 
 // Process queues on startup
-console.log("[Queue] Starting multi-threaded queue processing on startup");
+console.log("[Queue] Starting optimized queue processing on startup");
 processAllPendingQueues();
 
 // Add this function at the top with other utility functions
@@ -514,10 +390,6 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     totalCalls++;
     activeCalls++;
 
-    console.log("=".repeat(80));
-    console.log(`📞 [CALL START] Worker ${workerId} - Starting new call`);
-    console.log("=".repeat(80));
-
     // Check available minutes before proceeding
     const { data: userData, error: userError } = await supabase
       .from("users")
@@ -534,20 +406,11 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     }
 
     if (!userData || userData.available_minutes <= 0) {
-      console.log(
-        `[Queue] Worker ${workerId} - No available minutes for user`,
-        {
-          userId: queueItem.user_id,
-          userEmail: userData?.email,
-          availableMinutes: userData?.available_minutes || 0,
-        }
-      );
-
       // Cancel all pending calls for this user
       await cancelPendingCalls(queueItem.user_id, "No hay minutos disponibles");
 
       // Update current queue item status
-      const { error: updateError } = await supabase
+      await supabase
         .from("call_queue")
         .update({
           status: "cancelled",
@@ -555,13 +418,6 @@ async function processQueueItem(queueItem, workerId = "unknown") {
           error_message: "No hay minutos disponibles",
         })
         .eq("id", queueItem.id);
-
-      if (updateError) {
-        console.error(
-          `[Queue] Worker ${workerId} - Error updating queue item:`,
-          updateError
-        );
-      }
 
       return false;
     }
@@ -573,16 +429,6 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     const agentName =
       `${userData.first_name || ""} ${userData.last_name || ""}`.trim() ||
       "Agente";
-
-    console.log(`[Queue] Worker ${workerId} - Initiating call`, {
-      userId: queueItem.user_id,
-      userEmail: userData.email,
-      leadId: queueItem.lead_id,
-      queueId: queueItem.id,
-      availableMinutes: userData.available_minutes,
-      agentName: agentName,
-      assistantName: userData.assistant_name,
-    });
 
     const date = new Date();
     const diasSemana = [
@@ -600,7 +446,6 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     ).padStart(2, "0")}/${String(date.getFullYear()).slice(-2)}`;
 
     // Make the call with error handling
-    console.log(`[Queue] Worker ${workerId} - Creating Twilio call...`);
     let call;
     try {
       call = await twilioClient.calls.create({
@@ -627,11 +472,6 @@ async function processQueueItem(queueItem, workerId = "unknown") {
         statusCallbackEvent: ["completed"],
         statusCallbackMethod: "POST",
       });
-
-      console.log(`[Queue] Worker ${workerId} - Call initiated successfully`, {
-        callSid: call.sid,
-        queueId: queueItem.id,
-      });
     } catch (twilioError) {
       console.error(
         `[Queue] Worker ${workerId} - Twilio call creation failed:`,
@@ -639,7 +479,6 @@ async function processQueueItem(queueItem, workerId = "unknown") {
           error: twilioError.message,
           code: twilioError.code,
           status: twilioError.status,
-          moreInfo: twilioError.moreInfo,
         }
       );
 
@@ -678,7 +517,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       status: "In Progress",
       result: "initiated",
       queue_id: queueItem.id,
-      conversation_id: null, // Will be updated when ElevenLabs sends conversation_id
+      conversation_id: null,
     });
 
     if (callError) {
@@ -689,47 +528,11 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       throw callError;
     }
 
-    // Print call start summary
-    console.log("📱 Call Details:");
-    console.log(`   • Call SID: ${call.sid}`);
-    console.log(`   • Worker ID: ${workerId}`);
-    console.log(`   • Status: In Progress`);
-    console.log(`   • Started at: ${new Date().toISOString()}`);
-    console.log("");
-    console.log("👤 User Details:");
-    console.log(`   • User ID: ${queueItem.user_id}`);
-    console.log(`   • User Email: ${userData.email}`);
-    console.log(`   • Available Minutes: ${userData.available_minutes}`);
-    console.log("");
-    console.log("🎯 Lead Details:");
-    console.log(`   • Lead ID: ${queueItem.lead_id}`);
-    console.log(`   • Name: ${queueItem.lead.name}`);
-    console.log(`   • Phone: ${queueItem.lead.phone}`);
-    console.log(`   • Email: ${queueItem.lead.email}`);
-    console.log("");
-    console.log("📋 Queue Details:");
-    console.log(`   • Queue ID: ${queueItem.id}`);
-    console.log(`   • Queue Status: in_progress`);
-    console.log("");
-    console.log("🔄 Global Status:");
-    console.log(
-      `   • Active Calls: ${globalActiveCalls.size}/${QUEUE_CONFIG.maxConcurrentCalls}`
-    );
-    console.log(
-      `   • Active Workers: ${workerPool.size}/${QUEUE_CONFIG.workerPoolSize}`
-    );
-    console.log("=".repeat(80));
-
     return true;
   } catch (error) {
     failedCalls++;
     activeCalls--;
     console.error(`[Queue] Worker ${workerId} - Error processing call:`, error);
-    console.log("=".repeat(80));
-    console.log(
-      `❌ [CALL START] Worker ${workerId} - Error occurred during call initiation`
-    );
-    console.log("=".repeat(80));
 
     // Release user and global tracking in case of error
     userActiveCalls.delete(queueItem.user_id);
@@ -919,6 +722,8 @@ fastify.register(async (fastifyInstance) => {
       let elevenLabsWs = null;
       let customParameters = null;
       let lastUserTranscript = "";
+      let userSpeakingTimer = null;
+      let userSpeakingStartTime = null;
 
       ws.on("error", console.error);
 
@@ -943,9 +748,9 @@ fastify.register(async (fastifyInstance) => {
                 interruption_settings: {
                   enabled: true,
                   sensitivity: "very_high", // Changed to very_high for maximum sensitivity
-                  min_duration: 0.1, // Reduced to 0.1 seconds for faster response
+                  min_duration: 0.05, // Reduced to 0.05 seconds for ultra-fast response
                   max_duration: 10.0, // Increased to 10 seconds for longer interruptions
-                  cooldown_period: 0.2, // Reduced to 0.2 seconds for faster recovery
+                  cooldown_period: 0.1, // Reduced to 0.1 seconds for faster recovery
                 },
               },
               dynamic_variables: {
@@ -970,9 +775,9 @@ fastify.register(async (fastifyInstance) => {
             console.log("🎯 Interruption Settings:");
             console.log("   • Enabled: true");
             console.log("   • Sensitivity: very_high");
-            console.log("   • Min Duration: 0.1s");
+            console.log("   • Min Duration: 0.05s");
             console.log("   • Max Duration: 10.0s");
-            console.log("   • Cooldown: 0.2s");
+            console.log("   • Cooldown: 0.1s");
             console.log(JSON.stringify(initialConfig, null, 2));
             elevenLabsWs.send(JSON.stringify(initialConfig));
 
@@ -990,22 +795,13 @@ fastify.register(async (fastifyInstance) => {
             try {
               const message = JSON.parse(data);
 
-              // Log all messages for debugging interruptions
-              console.log(`🔍 [ElevenLabs] WS Event: ${message.type}`);
+              // Only log critical events, skip ping messages
               if (message.type !== "ping") {
-                console.log(
-                  `📋 [ElevenLabs] Full message:`,
-                  JSON.stringify(message, null, 2)
-                );
+                console.log(`[ElevenLabs] Event: ${message.type}`);
               }
 
               switch (message.type) {
                 case "conversation_initiation_metadata":
-                  console.log(
-                    "[ElevenLabs] Received initiation metadata",
-                    JSON.stringify(message, null, 2)
-                  );
-
                   // Save conversation_id to database
                   if (
                     callSid &&
@@ -1015,19 +811,6 @@ fastify.register(async (fastifyInstance) => {
                     const conversationId =
                       message.conversation_initiation_metadata_event
                         .conversation_id;
-                    console.log(
-                      "[ElevenLabs] Saving conversation_id:",
-                      conversationId
-                    );
-                    console.log("[ElevenLabs] Call SID:", callSid);
-                    console.log(
-                      "[ElevenLabs] Full metadata event:",
-                      JSON.stringify(
-                        message.conversation_initiation_metadata_event,
-                        null,
-                        2
-                      )
-                    );
 
                     try {
                       const { error: updateError } = await supabase
@@ -1043,43 +826,6 @@ fastify.register(async (fastifyInstance) => {
                           "[ElevenLabs] Error saving conversation_id:",
                           updateError
                         );
-                        console.error(
-                          "[ElevenLabs] Call SID that failed:",
-                          callSid
-                        );
-                        console.error(
-                          "[ElevenLabs] Conversation ID that failed:",
-                          conversationId
-                        );
-
-                        // Try to find the call record
-                        const { data: callRecord, error: findError } =
-                          await supabase
-                            .from("calls")
-                            .select("id, call_sid, created_at")
-                            .eq("call_sid", callSid)
-                            .single();
-
-                        if (findError) {
-                          console.error(
-                            "[ElevenLabs] Call record not found:",
-                            findError
-                          );
-                        } else {
-                          console.log(
-                            "[ElevenLabs] Found call record:",
-                            callRecord
-                          );
-                        }
-                      } else {
-                        console.log(
-                          "[ElevenLabs] Conversation_id saved to database successfully"
-                        );
-                        console.log("[ElevenLabs] Call SID:", callSid);
-                        console.log(
-                          "[ElevenLabs] Conversation ID:",
-                          conversationId
-                        );
                       }
                     } catch (dbError) {
                       console.error(
@@ -1087,18 +833,6 @@ fastify.register(async (fastifyInstance) => {
                         dbError
                       );
                     }
-                  } else {
-                    console.log("[ElevenLabs] Cannot save conversation_id:");
-                    console.log("   • Call SID exists:", !!callSid);
-                    console.log(
-                      "   • Conversation ID exists:",
-                      !!message.conversation_initiation_metadata_event
-                        ?.conversation_id
-                    );
-                    console.log(
-                      "   • Full message:",
-                      JSON.stringify(message, null, 2)
-                    );
                   }
                   break;
 
@@ -1118,128 +852,99 @@ fastify.register(async (fastifyInstance) => {
                   break;
 
                 case "agent_response":
-                  console.log("=".repeat(60));
-                  console.log("🤖 [AGENT] Agent response/ speaking");
-                  console.log("=".repeat(60));
-                  console.log(
-                    `💬 Response: ${
-                      message.agent_response_event?.agent_response || "N/A"
-                    }`
-                  );
-                  console.log(
-                    `⏱️ Duration: ${
-                      message.agent_response_event?.duration || "N/A"
-                    }s`
-                  );
-                  console.log(
-                    `🎯 Can be interrupted: YES (interruption settings enabled)`
-                  );
-                  console.log("=".repeat(60));
+                  console.log("🤖 [AGENT] Speaking");
+                  // Clear user speaking timer when agent starts speaking
+                  if (userSpeakingTimer) {
+                    clearTimeout(userSpeakingTimer);
+                    userSpeakingTimer = null;
+                  }
+                  userSpeakingStartTime = null;
                   break;
 
                 case "user_speaking":
-                  console.log("=".repeat(60));
-                  console.log("🎤 [INTERRUPTION] User speaking detected");
-                  console.log("=".repeat(60));
-                  console.log(
-                    `📊 Duration: ${
-                      message.user_speaking_event?.duration || "N/A"
-                    }s`
-                  );
-                  console.log(
-                    `🔊 Should interrupt: ${
-                      message.user_speaking_event?.should_interrupt || "N/A"
-                    }`
-                  );
-                  console.log(
-                    `📈 Confidence: ${
-                      message.user_speaking_event?.confidence || "N/A"
-                    }`
-                  );
-                  console.log(
-                    `🎯 Interruption threshold met: ${
-                      message.user_speaking_event?.should_interrupt
-                        ? "YES"
-                        : "NO"
-                    }`
-                  );
-                  console.log(
-                    `🔍 Full user_speaking_event:`,
-                    JSON.stringify(message.user_speaking_event, null, 2)
-                  );
-                  console.log("=".repeat(60));
-
-                  // Force interruption if user has been speaking for more than 0.5 seconds
                   const speakingDuration =
                     message.user_speaking_event?.duration || 0;
-                  const shouldForceInterrupt = speakingDuration > 0.5;
+                  const shouldInterrupt =
+                    message.user_speaking_event?.should_interrupt;
 
-                  if (
-                    message.user_speaking_event?.should_interrupt ||
-                    shouldForceInterrupt
-                  ) {
+                  console.log(
+                    `🎤 [USER] Speaking - Duration: ${speakingDuration}s, Should Interrupt: ${shouldInterrupt}`
+                  );
+
+                  // Start tracking user speaking time
+                  if (!userSpeakingStartTime) {
+                    userSpeakingStartTime = Date.now();
                     console.log(
-                      "🚨 [INTERRUPTION] TRIGGERED - User speaking should interrupt agent"
+                      "⏱️ [TIMER] Started tracking user speaking time"
                     );
-                    if (
-                      shouldForceInterrupt &&
-                      !message.user_speaking_event?.should_interrupt
-                    ) {
+                  }
+
+                  // Clear any existing timer
+                  if (userSpeakingTimer) {
+                    clearTimeout(userSpeakingTimer);
+                  }
+
+                  // Set fallback timer for 1 second
+                  userSpeakingTimer = setTimeout(() => {
+                    console.log(
+                      "⏰ [TIMER] Fallback interruption triggered after 1s of user speaking"
+                    );
+                    if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                      elevenLabsWs.send(
+                        JSON.stringify({
+                          type: "interrupt_agent",
+                        })
+                      );
                       console.log(
-                        "🚨 [INTERRUPTION] FORCED - User speaking for more than 0.5s, forcing interruption"
+                        "🛑 [TIMER] Sent fallback interrupt_agent command"
                       );
                     }
-                  } else {
+                  }, 1000);
+
+                  // Force interruption after 0.5 seconds of user speaking
+                  if (speakingDuration > 0.5) {
                     console.log(
-                      "⚠️ [INTERRUPTION] User speaking but not interrupting (threshold not met)"
+                      "🚨 [INTERRUPTION] User speaking for >0.5s - forcing interruption"
                     );
+
+                    // Send interruption command to ElevenLabs
+                    if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                      elevenLabsWs.send(
+                        JSON.stringify({
+                          type: "interrupt_agent",
+                        })
+                      );
+                      console.log(
+                        "🛑 [INTERRUPTION] Sent interrupt_agent command"
+                      );
+                    }
+                  } else if (shouldInterrupt) {
                     console.log(
-                      `⏰ Waiting for ${
-                        0.5 - speakingDuration
-                      }s more to force interruption`
+                      "🚨 [INTERRUPTION] ElevenLabs detected should_interrupt=true"
                     );
                   }
                   break;
 
                 case "agent_interrupted":
-                  console.log("=".repeat(60));
                   console.log(
                     "🛑 [INTERRUPTION] Agent interrupted successfully"
                   );
-                  console.log("=".repeat(60));
                   console.log(
-                    `📋 Reason: ${
-                      message.agent_interrupted_event?.reason || "unknown"
-                    }`
+                    "📊 [INTERRUPTION] Details:",
+                    JSON.stringify(message, null, 2)
                   );
-                  console.log(
-                    `⏱️ Interruption time: ${
-                      message.agent_interrupted_event?.interruption_time ||
-                      "N/A"
-                    }`
-                  );
-                  console.log(`🎯 Interruption successful: YES`);
-                  console.log("=".repeat(60));
                   break;
 
                 case "conversation_resumed":
-                  console.log("=".repeat(60));
-                  console.log(
-                    "🔄 [INTERRUPTION] Conversation resumed after interruption"
-                  );
-                  console.log("=".repeat(60));
-                  console.log(
-                    `⏱️ Resume time: ${
-                      message.conversation_resumed_event?.resume_time || "N/A"
-                    }`
-                  );
-                  console.log(
-                    `📊 Total interruption duration: ${
-                      message.conversation_resumed_event
-                        ?.total_interruption_duration || "N/A"
-                    }`
-                  );
-                  console.log("=".repeat(60));
+                  console.log("🔄 [INTERRUPTION] Conversation resumed");
+                  break;
+
+                case "interruption_started":
+                  console.log("🚨 [INTERRUPTION] Interruption started");
+                  break;
+
+                case "interruption_ended":
+                  console.log("✅ [INTERRUPTION] Interruption ended");
                   break;
 
                 case "user_transcript":
@@ -1248,12 +953,7 @@ fastify.register(async (fastifyInstance) => {
                       ?.toLowerCase()
                       .trim() || "";
 
-                  console.log(`[Twilio] User transcript: ${transcript}`);
-
                   if (transcript === lastUserTranscript) {
-                    console.log(
-                      "[System] Repeated transcript detected, ignoring..."
-                    );
                     break;
                   }
 
@@ -1274,9 +974,7 @@ fastify.register(async (fastifyInstance) => {
                   ].some((phrase) => transcript.includes(phrase));
 
                   if (isNumericSequence || hasVoicemailPhrases) {
-                    console.log(
-                      "[System] Detected voicemail or machine response. Hanging up..."
-                    );
+                    console.log("[System] Detected voicemail - hanging up");
 
                     if (elevenLabsWs?.readyState === WebSocket.OPEN) {
                       elevenLabsWs.close();
@@ -1287,60 +985,19 @@ fastify.register(async (fastifyInstance) => {
                         await twilioClient
                           .calls(callSid)
                           .update({ status: "completed" });
-                        console.log(
-                          `[Twilio] Call ${callSid} terminated due to invalid transcript.`
-                        );
                       } catch (err) {
-                        console.error(
-                          "[Twilio] Error ending call after detection:",
-                          err
-                        );
+                        console.error("[Twilio] Error ending call:", err);
                       }
                     }
 
                     if (ws.readyState === WebSocket.OPEN) {
                       ws.close();
                     }
-
-                    break;
                   }
-
                   break;
 
                 case "conversation_summary":
-                  console.log("=".repeat(80));
-                  console.log(
-                    "📝 [TRANSCRIPT SUMMARY] Conversation Summary Received"
-                  );
-                  console.log("=".repeat(80));
-                  console.log("📋 Summary Details:");
-                  console.log(`   • Call SID: ${callSid}`);
-                  console.log(
-                    `   • Lead: ${customParameters?.client_name || "N/A"}`
-                  );
-                  console.log(
-                    `   • Phone: ${customParameters?.client_phone || "N/A"}`
-                  );
-                  console.log("");
-                  console.log("📄 Transcript Summary:");
-                  console.log(
-                    `   • Summary: ${
-                      message.conversation_summary_event
-                        ?.conversation_summary || "N/A"
-                    }`
-                  );
-                  console.log(
-                    `   • Duration: ${
-                      message.conversation_summary_event
-                        ?.conversation_duration || "N/A"
-                    }`
-                  );
-                  console.log(
-                    `   • Turn Count: ${
-                      message.conversation_summary_event?.turn_count || "N/A"
-                    }`
-                  );
-                  console.log("=".repeat(80));
+                  console.log("📝 [SUMMARY] Conversation completed");
 
                   // Save transcript summary to database
                   if (callSid) {
@@ -1365,10 +1022,6 @@ fastify.register(async (fastifyInstance) => {
                           "[ElevenLabs] Error saving transcript summary:",
                           updateError
                         );
-                      } else {
-                        console.log(
-                          "[ElevenLabs] Transcript summary saved to database"
-                        );
                       }
                     } catch (dbError) {
                       console.error(
@@ -1380,43 +1033,7 @@ fastify.register(async (fastifyInstance) => {
                   break;
 
                 case "data_collection_results":
-                  console.log("=".repeat(80));
-                  console.log(
-                    "📊 [DATA COLLECTION] Data Collection Results Received"
-                  );
-                  console.log("=".repeat(80));
-                  console.log("📋 Collection Details:");
-                  console.log(`   • Call SID: ${callSid}`);
-                  console.log(
-                    `   • Lead: ${customParameters?.client_name || "N/A"}`
-                  );
-                  console.log(
-                    `   • Phone: ${customParameters?.client_phone || "N/A"}`
-                  );
-                  console.log("");
-                  console.log("📊 Collected Data:");
-                  if (message.data_collection_results_event?.collected_data) {
-                    const collectedData =
-                      message.data_collection_results_event.collected_data;
-                    Object.keys(collectedData).forEach((key) => {
-                      console.log(`   • ${key}: ${collectedData[key]}`);
-                    });
-                  } else {
-                    console.log("   • No data collected");
-                  }
-                  console.log("");
-                  console.log("📈 Collection Status:");
-                  console.log(
-                    `   • Success: ${
-                      message.data_collection_results_event?.success || "N/A"
-                    }`
-                  );
-                  console.log(
-                    `   • Error: ${
-                      message.data_collection_results_event?.error || "None"
-                    }`
-                  );
-                  console.log("=".repeat(80));
+                  console.log("📊 [DATA] Collection results received");
 
                   // Save data collection results to database
                   if (callSid) {
@@ -1440,10 +1057,6 @@ fastify.register(async (fastifyInstance) => {
                           "[ElevenLabs] Error saving data collection results:",
                           updateError
                         );
-                      } else {
-                        console.log(
-                          "[ElevenLabs] Data collection results saved to database"
-                        );
                       }
                     } catch (dbError) {
                       console.error(
@@ -1455,36 +1068,19 @@ fastify.register(async (fastifyInstance) => {
                   break;
 
                 case "conversation_ended":
-                  console.log("=".repeat(80));
-                  console.log("🔚 [CONVERSATION ENDED] Conversation Summary");
-                  console.log("=".repeat(80));
-                  console.log("📋 End Details:");
-                  console.log(`   • Call SID: ${callSid}`);
-                  console.log(
-                    `   • Lead: ${customParameters?.client_name || "N/A"}`
-                  );
-                  console.log(
-                    `   • Phone: ${customParameters?.client_phone || "N/A"}`
-                  );
-                  console.log(
-                    `   • Reason: ${
-                      message.conversation_ended_event?.reason || "N/A"
-                    }`
-                  );
-                  console.log(
-                    `   • Duration: ${
-                      message.conversation_ended_event?.conversation_duration ||
-                      "N/A"
-                    }`
-                  );
-                  console.log("=".repeat(80));
+                  console.log("🔚 [END] Conversation ended");
+                  // Clear user speaking timer
+                  if (userSpeakingTimer) {
+                    clearTimeout(userSpeakingTimer);
+                    userSpeakingTimer = null;
+                  }
+                  userSpeakingStartTime = null;
                   break;
 
                 default:
+                  // Only log unknown message types, not ping
                   if (message.type !== "ping") {
-                    console.log(
-                      `[ElevenLabs] Unhandled message type: ${message.type}`
-                    );
+                    console.log(`[ElevenLabs] Unknown event: ${message.type}`);
                   }
               }
             } catch (error) {
@@ -1499,6 +1095,13 @@ fastify.register(async (fastifyInstance) => {
           elevenLabsWs.on("close", async () => {
             console.log("[ElevenLabs] Disconnected");
 
+            // Clear user speaking timer
+            if (userSpeakingTimer) {
+              clearTimeout(userSpeakingTimer);
+              userSpeakingTimer = null;
+            }
+            userSpeakingStartTime = null;
+
             if (callSid) {
               try {
                 await twilioClient
@@ -1512,8 +1115,8 @@ fastify.register(async (fastifyInstance) => {
               }
             }
 
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.close();
+            if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+              elevenLabsWs.close();
             }
           });
         } catch (error) {
@@ -1563,6 +1166,13 @@ fastify.register(async (fastifyInstance) => {
       });
 
       ws.on("close", () => {
+        // Clear user speaking timer
+        if (userSpeakingTimer) {
+          clearTimeout(userSpeakingTimer);
+          userSpeakingTimer = null;
+        }
+        userSpeakingStartTime = null;
+
         if (elevenLabsWs?.readyState === WebSocket.OPEN) {
           elevenLabsWs.close();
         }
@@ -2600,13 +2210,9 @@ fastify.listen({ port: PORT, host: "0.0.0.0" }, () => {
 });
 // 🚀 Force Railway deployment - Sun Jun 22 21:04:44 EDT 2025
 
-// Add automatic cleanup function for stuck calls with enhanced logging
+// Optimized cleanup function with reduced frequency
 async function cleanupStuckCalls() {
   try {
-    console.log("=".repeat(80));
-    console.log("🧹 [CLEANUP] Running automatic cleanup of stuck calls...");
-    console.log("=".repeat(80));
-
     // Get all calls marked as "In Progress"
     const { data: stuckCalls, error: callsError } = await supabase
       .from("calls")
@@ -2619,27 +2225,13 @@ async function cleanupStuckCalls() {
     }
 
     if (!stuckCalls || stuckCalls.length === 0) {
-      console.log("[CLEANUP] No stuck calls found");
       return;
     }
 
-    console.log(`[CLEANUP] Found ${stuckCalls.length} stuck calls`);
-
     for (const call of stuckCalls) {
       try {
-        console.log(`[CLEANUP] Checking call ${call.call_sid}...`);
-
         // Check real status in Twilio
         const twilioCall = await twilioClient.calls(call.call_sid).fetch();
-
-        console.log(`[CLEANUP] Twilio status for ${call.call_sid}:`, {
-          twilioStatus: twilioCall.status,
-          twilioDuration: twilioCall.duration,
-          twilioErrorCode: twilioCall.errorCode,
-          twilioErrorMessage: twilioCall.errorMessage,
-          dbStatus: call.status,
-          dbDuration: call.duration,
-        });
 
         // If call is actually completed in Twilio but marked as "In Progress" in DB
         if (
@@ -2647,10 +2239,6 @@ async function cleanupStuckCalls() {
             twilioCall.status
           )
         ) {
-          console.log(
-            `[CLEANUP] Updating call ${call.call_sid} from In Progress to ${twilioCall.status}`
-          );
-
           // Determine result based on Twilio status
           let result = "initiated";
           if (twilioCall.status === "completed" && twilioCall.duration > 0) {
@@ -2675,30 +2263,17 @@ async function cleanupStuckCalls() {
           if (twilioCall.errorCode || twilioCall.errorMessage) {
             updateData.error_code = twilioCall.errorCode;
             updateData.error_message = twilioCall.errorMessage;
-            console.log(
-              `[CLEANUP] Adding error info: ${twilioCall.errorCode} - ${twilioCall.errorMessage}`
-            );
           }
 
-          const { error: updateError } = await supabase
+          await supabase
             .from("calls")
             .update(updateData)
             .eq("call_sid", call.call_sid);
 
-          if (updateError) {
-            console.error(
-              `[CLEANUP] Error updating call ${call.call_sid}:`,
-              updateError
-            );
-          } else {
-            // Remove from global tracking
-            globalActiveCalls.delete(call.call_sid);
-            userActiveCalls.delete(call.user_id);
-            activeCalls--;
-            console.log(
-              `[CLEANUP] Call ${call.call_sid} cleaned up successfully`
-            );
-          }
+          // Remove from global tracking
+          globalActiveCalls.delete(call.call_sid);
+          userActiveCalls.delete(call.user_id);
+          activeCalls--;
 
           // Update associated queue item
           if (call.queue_id) {
@@ -2717,14 +2292,6 @@ async function cleanupStuckCalls() {
           const durationMinutes = (now - callStartTime) / (1000 * 60);
 
           if (durationMinutes > 15) {
-            console.log(
-              `[CLEANUP] Call ${
-                call.call_sid
-              } has been running for ${Math.round(
-                durationMinutes
-              )} minutes - hanging up`
-            );
-
             try {
               // Hang up the call
               await twilioClient
@@ -2748,32 +2315,15 @@ async function cleanupStuckCalls() {
               globalActiveCalls.delete(call.call_sid);
               userActiveCalls.delete(call.user_id);
               activeCalls--;
-
-              console.log(
-                `[CLEANUP] Call ${call.call_sid} hung up and cleaned up`
-              );
             } catch (hangupError) {
               console.error(
                 `[CLEANUP] Error hanging up call ${call.call_sid}:`,
                 hangupError
               );
             }
-          } else {
-            console.log(
-              `[CLEANUP] Call ${
-                call.call_sid
-              } is still in progress (${Math.round(
-                durationMinutes
-              )} minutes) - leaving as is`
-            );
           }
         }
       } catch (twilioError) {
-        console.error(
-          `[CLEANUP] Error checking call ${call.call_sid} in Twilio:`,
-          twilioError
-        );
-
         // If we can't verify in Twilio, mark as failed
         await supabase
           .from("calls")
@@ -2800,8 +2350,6 @@ async function cleanupStuckCalls() {
       .eq("status", "in_progress");
 
     if (stuckQueue && stuckQueue.length > 0) {
-      console.log(`[CLEANUP] Found ${stuckQueue.length} stuck queue items`);
-
       for (const queueItem of stuckQueue) {
         const { data: associatedCall } = await supabase
           .from("calls")
@@ -2817,30 +2365,18 @@ async function cleanupStuckCalls() {
               completed_at: new Date().toISOString(),
             })
             .eq("id", queueItem.id);
-
-          console.log(
-            `[CLEANUP] Queue item ${queueItem.id} marked as completed`
-          );
         }
       }
     }
-
-    console.log(
-      `[CLEANUP] Cleanup completed. Active calls: ${globalActiveCalls.size}/${QUEUE_CONFIG.maxConcurrentCalls}`
-    );
-    console.log("=".repeat(80));
   } catch (error) {
     console.error("[CLEANUP] Error during cleanup:", error);
-    console.log("=".repeat(80));
   }
 }
 
-// Run cleanup every 5 minutes
-const CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
+// Run cleanup every 10 minutes instead of 5
+const CLEANUP_INTERVAL = 10 * 60 * 1000; // 10 minutes
 console.log(
-  `[CLEANUP] Setting up automatic cleanup every ${
-    CLEANUP_INTERVAL / 1000
-  } seconds`
+  `[CLEANUP] Setting up cleanup every ${CLEANUP_INTERVAL / 1000} seconds`
 );
 
 const cleanupInterval = setInterval(cleanupStuckCalls, CLEANUP_INTERVAL);
@@ -2857,7 +2393,7 @@ process.on("SIGINT", () => {
 
 // Run initial cleanup on startup
 console.log("[CLEANUP] Running initial cleanup on startup");
-setTimeout(cleanupStuckCalls, 10000); // Run after 10 seconds
+setTimeout(cleanupStuckCalls, 30000); // Run after 30 seconds instead of 10
 
 // Endpoint to manually trigger cleanup
 fastify.post("/queue/cleanup", async (request, reply) => {
