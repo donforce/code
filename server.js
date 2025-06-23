@@ -930,7 +930,7 @@ fastify.register(async (fastifyInstance) => {
           elevenLabsWs.on("open", () => {
             console.log("[ElevenLabs] Connected to Conversational AI");
             console.log(
-              "[ElevenLabs] Initializing conversation with interruption settings enabled"
+              "[ElevenLabs] Initializing conversation with ULTRA-AGGRESSIVE interruptions"
             );
 
             const initialConfig = {
@@ -942,10 +942,10 @@ fastify.register(async (fastifyInstance) => {
                 keep_alive: true,
                 interruption_settings: {
                   enabled: true,
-                  sensitivity: "high", // Changed from "medium" to "high"
-                  min_duration: 0.3, // Reduced from 0.5 to 0.3 seconds
-                  max_duration: 5.0, // Increased from 3.0 to 5.0 seconds
-                  cooldown_period: 0.5, // Reduced from 1.0 to 0.5 seconds
+                  sensitivity: "very_high", // Changed to very_high for maximum sensitivity
+                  min_duration: 0.1, // Reduced to 0.1 seconds for faster response
+                  max_duration: 10.0, // Increased to 10 seconds for longer interruptions
+                  cooldown_period: 0.2, // Reduced to 0.2 seconds for faster recovery
                 },
               },
               dynamic_variables: {
@@ -965,8 +965,14 @@ fastify.register(async (fastifyInstance) => {
             };
 
             console.log(
-              "🔧 [ElevenLabs] Initial config with enhanced interruptions:"
+              "🔧 [ElevenLabs] Initial config with ULTRA-AGGRESSIVE interruptions:"
             );
+            console.log("🎯 Interruption Settings:");
+            console.log("   • Enabled: true");
+            console.log("   • Sensitivity: very_high");
+            console.log("   • Min Duration: 0.1s");
+            console.log("   • Max Duration: 10.0s");
+            console.log("   • Cooldown: 0.2s");
             console.log(JSON.stringify(initialConfig, null, 2));
             elevenLabsWs.send(JSON.stringify(initialConfig));
 
@@ -1157,15 +1163,40 @@ fastify.register(async (fastifyInstance) => {
                         : "NO"
                     }`
                   );
+                  console.log(
+                    `🔍 Full user_speaking_event:`,
+                    JSON.stringify(message.user_speaking_event, null, 2)
+                  );
                   console.log("=".repeat(60));
 
-                  if (message.user_speaking_event?.should_interrupt) {
+                  // Force interruption if user has been speaking for more than 0.5 seconds
+                  const speakingDuration =
+                    message.user_speaking_event?.duration || 0;
+                  const shouldForceInterrupt = speakingDuration > 0.5;
+
+                  if (
+                    message.user_speaking_event?.should_interrupt ||
+                    shouldForceInterrupt
+                  ) {
                     console.log(
                       "🚨 [INTERRUPTION] TRIGGERED - User speaking should interrupt agent"
                     );
+                    if (
+                      shouldForceInterrupt &&
+                      !message.user_speaking_event?.should_interrupt
+                    ) {
+                      console.log(
+                        "🚨 [INTERRUPTION] FORCED - User speaking for more than 0.5s, forcing interruption"
+                      );
+                    }
                   } else {
                     console.log(
                       "⚠️ [INTERRUPTION] User speaking but not interrupting (threshold not met)"
+                    );
+                    console.log(
+                      `⏰ Waiting for ${
+                        0.5 - speakingDuration
+                      }s more to force interruption`
                     );
                   }
                   break;
