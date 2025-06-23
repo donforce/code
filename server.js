@@ -929,18 +929,6 @@ fastify.get("/metrics", async (request, reply) => {
 });
 
 // API Integration endpoints
-  console.log("🔍 [API] POST /api/integration/leads called at", new Date().toISOString());
-  console.log("🔍 [API] Request headers:", JSON.stringify(request.headers, null, 2));
-  console.log("🔍 [API] Request body:", JSON.stringify(request.body, null, 2));
-  console.log("🔑 [API] API Key extracted:", apiKey ? "Present" : "Missing");
-  console.log("🔍 [API] Validating API key...");
-  console.log("🔍 [API] API key validation result:", { keyError, keyData });
-  console.log("✅ [API] API key valid for user:", userId);
-  console.log("📝 [API] Processing lead data:", JSON.stringify(body, null, 2));
-  console.log("�� [API] Extracted fields:", { name, phone, email, auto_call, source, notes });
-  console.log("💾 [API] Inserting lead into database...");
-  console.log("✅ [API] Lead created successfully:", JSON.stringify(newLead, null, 2));
-  console.log("🎉 [API] Request completed successfully");
 fastify.post("/api/integration/leads", async (request, reply) => {
   try {
     const apiKey =
