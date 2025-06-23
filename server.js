@@ -931,23 +931,42 @@ fastify.get("/metrics", async (request, reply) => {
 // API Integration endpoints
 fastify.post("/api/integration/leads", async (request, reply) => {
   try {
+    console.log("[API] Integration leads endpoint called");
+    console.log(
+      "[API] Request headers:",
+      JSON.stringify(request.headers, null, 2)
+    );
+
     const apiKey =
       request.headers["x-api-key"] ||
       request.headers["authorization"]?.replace("Bearer ", "");
+
     if (!apiKey) {
+      console.log("[API] No API key provided");
       return reply.code(401).send({ error: "API key requerida" });
     }
+
+    console.log("[API] API key received:", apiKey);
+
     const { data: keyData, error: keyError } = await supabase
       .from("api_keys")
       .select("user_id, is_active")
       .eq("api_key", apiKey)
       .single();
+
     if (keyError || !keyData || !keyData.is_active) {
+      console.log(
+        "[API] Invalid API key:",
+        keyError || "Key not found or inactive"
+      );
       return reply.code(401).send({ error: "API key inválida" });
     }
+
     const userId = keyData.user_id;
     const body = request.body;
-    console.log("🔍 [API] Auto_call value type:", typeof auto_call, "Value:", auto_call);
+
+    console.log("[API] Request body:", JSON.stringify(body, null, 2));
+
     const {
       name,
       phone,
@@ -956,9 +975,24 @@ fastify.post("/api/integration/leads", async (request, reply) => {
       source = "api",
       notes,
     } = body;
+
+    console.log(
+      `[API] Parsed fields: name=${name}, phone=${phone}, email=${email}, auto_call=${auto_call}, source=${source}, notes=${notes}`
+    );
+    console.log(
+      "[API] Parsed auto_call value:",
+      auto_call,
+      "Type:",
+      typeof auto_call
+    );
+
     if (!name || !phone || !email) {
+      console.log("[API] Missing required fields");
       return reply.code(400).send({ error: "Campos requeridos faltantes" });
     }
+
+    // Insert the lead
+    console.log("[API] Inserting lead into DB...");
     const { data: newLead, error: insertError } = await supabase
       .from("leads")
       .insert({
@@ -967,28 +1001,102 @@ fastify.post("/api/integration/leads", async (request, reply) => {
         phone,
         email,
         auto_call,
-    console.log("🔍 [API] Lead auto_call value from DB:", newLead.auto_call);
         source,
         notes,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-    console.log("🔍 [API] Checking auto_call condition...");
-    console.log("🔍 [API] auto_call variable:", auto_call, "Type:", typeof auto_call);
-    console.log("🔍 [API] auto_call === true:", auto_call === true);
-    console.log("🔍 [API] auto_call == true:", auto_call == true);
-    console.log("🔍 [API] Boolean(auto_call):", Boolean(auto_call));
       })
       .select()
       .single();
+
     if (insertError) {
+      console.error("[API] Error inserting lead:", insertError);
       return reply.code(400).send({ error: insertError.message });
     }
-    return reply.send({ success: true, data: newLead });
+
+    console.log("[API] Lead created successfully:", newLead.id);
+    console.log("[API] Lead auto_call value from DB:", newLead.auto_call);
+
+    // Handle auto_call functionality
+    if (auto_call === true || auto_call === "true" || auto_call === 1) {
+      console.log("[API] Auto_call is true, adding to call queue");
+
+      try {
+        // Get the next queue position for this user
+        console.log("[API] Fetching last queue position for user:", userId);
+        const { data: lastQueueItem, error: queueError } = await supabase
+          .from("call_queue")
+          .select("queue_position")
+          .eq("user_id", userId)
+          .order("queue_position", { ascending: false })
+          .limit(1)
+          .single();
+
+        if (queueError) {
+          console.error("[API] Error fetching last queue item:", queueError);
+        }
+
+        const nextPosition = (lastQueueItem?.queue_position || 0) + 1;
+
+        console.log("[API] Next queue position:", nextPosition);
+
+        // Add to call queue
+        console.log("[API] Inserting into call_queue...");
+        const { data: queueItem, error: insertQueueError } = await supabase
+          .from("call_queue")
+          .insert({
+            user_id: userId,
+            lead_id: newLead.id,
+            queue_position: nextPosition,
+            status: "pending",
+            created_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+
+        if (insertQueueError) {
+          console.error("[API] Error adding to call queue:", insertQueueError);
+          return reply.code(500).send({
+            error: "Lead creado pero error al agregar a cola de llamadas",
+            lead: newLead,
+          });
+        }
+
+        console.log("[API] Successfully added to call queue:", queueItem.id);
+
+        // Trigger queue processing
+        console.log("[API] Triggering processUserQueue for user:", userId);
+        setTimeout(() => {
+          processUserQueue(userId);
+        }, 1000);
+
+        return reply.send({
+          success: true,
+          data: newLead,
+          queue_added: true,
+          queue_id: queueItem.id,
+        });
+      } catch (queueError) {
+        console.error("[API] Error in queue processing:", queueError);
+        return reply.code(500).send({
+          error: "Lead creado pero error al procesar cola de llamadas",
+          lead: newLead,
+        });
+      }
+    } else {
+      console.log("[API] Auto_call is false, not adding to queue");
+      return reply.send({
+        success: true,
+        data: newLead,
+        queue_added: false,
+      });
+    }
   } catch (error) {
-    console.error("Error en API de leads:", error);
+    console.error("[API] Error en API de leads:", error);
     return reply.code(500).send({ error: "Error interno del servidor" });
   }
 });
+
 fastify.listen({ port: PORT, host: "0.0.0.0" }, () => {
   console.log(`[Server] Listening on port ${PORT}`);
 });
