@@ -598,6 +598,9 @@ fastify.register(async (fastifyInstance) => {
 
           elevenLabsWs.on("open", () => {
             console.log("[ElevenLabs] Connected to Conversational AI");
+            console.log(
+              "[ElevenLabs] Initializing conversation with interruption settings enabled"
+            );
 
             const initialConfig = {
               type: "conversation_initiation_client_data",
@@ -606,6 +609,13 @@ fastify.register(async (fastifyInstance) => {
                   agent_id: ELEVENLABS_AGENT_ID,
                 },
                 keep_alive: true,
+                interruption_settings: {
+                  enabled: true,
+                  sensitivity: "medium",
+                  min_duration: 0.5,
+                  max_duration: 3.0,
+                  cooldown_period: 1.0,
+                },
               },
               dynamic_variables: {
                 client_name: customParameters?.client_name || "Cliente",
@@ -707,6 +717,33 @@ fastify.register(async (fastifyInstance) => {
                 case "agent_response":
                   console.log(
                     `[Twilio] Agent response: ${message.agent_response_event?.agent_response}`
+                  );
+                  break;
+
+                case "user_speaking":
+                  console.log(
+                    `[ElevenLabs] User speaking detected - duration: ${
+                      message.user_speaking_event?.duration || "N/A"
+                    }s`
+                  );
+                  if (message.user_speaking_event?.should_interrupt) {
+                    console.log(
+                      "[ElevenLabs] Interruption triggered - user speaking"
+                    );
+                  }
+                  break;
+
+                case "agent_interrupted":
+                  console.log(
+                    `[ElevenLabs] Agent interrupted - reason: ${
+                      message.agent_interrupted_event?.reason || "unknown"
+                    }`
+                  );
+                  break;
+
+                case "conversation_resumed":
+                  console.log(
+                    "[ElevenLabs] Conversation resumed after interruption"
                   );
                   break;
 
