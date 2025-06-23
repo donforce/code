@@ -882,6 +882,14 @@ fastify.register(async (fastifyInstance) => {
                   );
                   break;
 
+                case "interruption":
+                  console.log("🚨 [INTERRUPTION] Interruption event received");
+                  console.log(
+                    "📊 [INTERRUPTION] Details:",
+                    JSON.stringify(message, null, 2)
+                  );
+                  break;
+
                 case "conversation_resumed":
                   console.log("🔄 [INTERRUPTION] Conversation resumed");
                   break;
