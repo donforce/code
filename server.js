@@ -794,6 +794,7 @@ fastify.register(async (fastifyInstance) => {
           elevenLabsWs.on("message", async (data) => {
             try {
               const message = JSON.parse(data);
+              console.log(`[ElevenLabs] Event Type: ${message}`);
               console.log(`[ElevenLabs] Event Type: ${message.type}`);
               // Only log critical events, skip ping messages
               if (message.type !== "ping") {
