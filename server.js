@@ -930,7 +930,9 @@ fastify.get("/metrics", async (request, reply) => {
 // API Integration endpoints
 fastify.post("/api/integration/leads", async (request, reply) => {
   try {
-    const apiKey = request.headers["x-api-key"] || request.headers["authorization"]?.replace("Bearer ", "");
+    const apiKey =
+      request.headers["x-api-key"] ||
+      request.headers["authorization"]?.replace("Bearer ", "");
     if (!apiKey) {
       return reply.code(401).send({ error: "API key requerida" });
     }
@@ -944,7 +946,14 @@ fastify.post("/api/integration/leads", async (request, reply) => {
     }
     const userId = keyData.user_id;
     const body = request.body;
-    const { name, phone, email, auto_call = false, source = "api", notes } = body;
+    const {
+      name,
+      phone,
+      email,
+      auto_call = false,
+      source = "api",
+      notes,
+    } = body;
     if (!name || !phone || !email) {
       return reply.code(400).send({ error: "Campos requeridos faltantes" });
     }
@@ -959,7 +968,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
         source,
         notes,
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
       })
       .select()
       .single();
