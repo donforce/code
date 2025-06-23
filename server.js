@@ -274,7 +274,7 @@ async function processQueueItem(queueItem) {
     // Check available minutes before proceeding
     const { data: userData, error: userError } = await supabase
       .from("users")
-      .select("available_minutes, email")
+      .select("available_minutes, email, first_name, last_name, assistant_name")
       .eq("id", queueItem.user_id)
       .single();
 
@@ -313,12 +313,19 @@ async function processQueueItem(queueItem) {
     // Mark user as having active call
     activeUserCalls.set(queueItem.user_id, true);
 
+    // Create agent_name from first_name and last_name
+    const agentName =
+      `${userData.first_name || ""} ${userData.last_name || ""}`.trim() ||
+      "Agente";
+
     console.log("[Queue] Initiating call", {
       userId: queueItem.user_id,
       userEmail: userData.email,
       leadId: queueItem.lead_id,
       queueId: queueItem.id,
       availableMinutes: userData.available_minutes,
+      agentName: agentName,
+      assistantName: userData.assistant_name,
     });
 
     const date = new Date();
@@ -354,7 +361,9 @@ async function processQueueItem(queueItem) {
         queueItem.lead_id
       )}&fecha=${encodeURIComponent(fecha)}&dia_semana=${encodeURIComponent(
         dia_semana
-      )}`,
+      )}&agent_name=${encodeURIComponent(
+        agentName
+      )}&assistant_name=${encodeURIComponent(userData.assistant_name)}`,
       statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
       statusCallbackEvent: ["completed"],
       statusCallbackMethod: "POST",
@@ -451,11 +460,33 @@ fastify.post("/outbound-call", async (request, reply) => {
     client_phone,
     client_email,
     client_id,
+    user_id,
   } = request.body;
 
   if (!number) {
     return reply.code(400).send({ error: "Phone number is required" });
   }
+
+  if (!user_id) {
+    return reply.code(400).send({ error: "User ID is required" });
+  }
+
+  // Get user configuration
+  const { data: userData, error: userError } = await supabase
+    .from("users")
+    .select("first_name, last_name, assistant_name")
+    .eq("id", user_id)
+    .single();
+
+  if (userError || !userData) {
+    console.error("[API] Error fetching user data:", userError);
+    return reply.code(400).send({ error: "User not found" });
+  }
+
+  // Create agent_name from first_name and last_name
+  const agentName =
+    `${userData.first_name || ""} ${userData.last_name || ""}`.trim() ||
+    "Agente";
 
   const date = new Date();
   const diasSemana = [
@@ -488,8 +519,12 @@ fastify.post("/outbound-call", async (request, reply) => {
         client_email
       )}&client_id=${encodeURIComponent(client_id)}&fecha=${encodeURIComponent(
         fecha
-      )}&dia_semana=${encodeURIComponent(dia_semana)}`,
-      statusCallback: `https://RAILWAY_PUBLIC_DOMAIN/twilio-status`,
+      )}&dia_semana=${encodeURIComponent(
+        dia_semana
+      )}&agent_name=${encodeURIComponent(
+        agentName
+      )}&assistant_name=${encodeURIComponent(userData.assistant_name)}`,
+      statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
       statusCallbackEvent: ["completed"],
       statusCallbackMethod: "POST",
     });
@@ -517,6 +552,8 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     client_id,
     fecha,
     dia_semana,
+    agent_name,
+    assistant_name,
   } = request.query;
 
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
@@ -531,6 +568,8 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
           <Parameter name="client_id" value="${client_id}" />
           <Parameter name="fecha" value="${fecha}" />
           <Parameter name="dia_semana" value="${dia_semana}" />
+          <Parameter name="agent_name" value="${agent_name}" />
+          <Parameter name="assistant_name" value="${assistant_name}" />
         </Stream>
       </Connect>
     </Response>`;
@@ -577,6 +616,9 @@ fastify.register(async (fastifyInstance) => {
                 client_id: customParameters?.client_id || "",
                 fecha: customParameters?.fecha || "",
                 dia_semana: customParameters?.dia_semana || "",
+                agent_name: customParameters?.agent_name || "Daniela",
+                assistant_name:
+                  customParameters?.assistant_name || "Asistente de Ventas",
               },
               usage: {
                 no_ip_reason: "user_ip_not_collected",
@@ -1649,6 +1691,154 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     console.error("[WEBHOOK] Error processing webhook:", error);
     console.log("=".repeat(80));
     return reply.code(500).send({ error: "Internal server error" });
+  }
+});
+
+// Endpoint to update user agent configuration
+fastify.put("/api/user/agent-config", async (request, reply) => {
+  try {
+    console.log("[API] Update agent config endpoint called");
+    console.log("[API] Request body:", JSON.stringify(request.body, null, 2));
+
+    const apiKey =
+      request.headers["x-api-key"] ||
+      request.headers["authorization"]?.replace("Bearer ", "");
+
+    if (!apiKey) {
+      console.log("[API] No API key provided");
+      return reply.code(401).send({ error: "API key requerida" });
+    }
+
+    console.log("[API] API key received:", apiKey);
+
+    const { data: keyData, error: keyError } = await supabase
+      .from("api_keys")
+      .select("user_id, is_active")
+      .eq("api_key", apiKey)
+      .single();
+
+    if (keyError || !keyData || !keyData.is_active) {
+      console.log(
+        "[API] Invalid API key:",
+        keyError || "Key not found or inactive"
+      );
+      return reply.code(401).send({ error: "API key inválida" });
+    }
+
+    const userId = keyData.user_id;
+    const { assistant_name } = request.body;
+
+    console.log(
+      `[API] Updating assistant config for user ${userId}: assistant_name=${assistant_name}`
+    );
+
+    if (!assistant_name) {
+      return reply.code(400).send({
+        error: "El campo assistant_name es requerido",
+      });
+    }
+
+    // Update user configuration
+    const { data: updatedUser, error: updateError } = await supabase
+      .from("users")
+      .update({
+        assistant_name: assistant_name,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", userId)
+      .select("first_name, last_name, assistant_name")
+      .single();
+
+    if (updateError) {
+      console.error("[API] Error updating user assistant config:", updateError);
+      return reply
+        .code(500)
+        .send({ error: "Error actualizando configuración" });
+    }
+
+    console.log("[API] Assistant config updated successfully:", updatedUser);
+
+    // Create agent_name from first_name and last_name
+    const agentName =
+      `${updatedUser.first_name || ""} ${updatedUser.last_name || ""}`.trim() ||
+      "Agente";
+
+    return reply.send({
+      success: true,
+      data: {
+        agent_name: agentName,
+        assistant_name: updatedUser.assistant_name,
+      },
+      message: "Configuración de asistente actualizada exitosamente",
+    });
+  } catch (error) {
+    console.error("[API] Error updating assistant config:", error);
+    return reply.code(500).send({ error: "Error interno del servidor" });
+  }
+});
+
+// Endpoint to get user agent configuration
+fastify.get("/api/user/agent-config", async (request, reply) => {
+  try {
+    console.log("[API] Get agent config endpoint called");
+
+    const apiKey =
+      request.headers["x-api-key"] ||
+      request.headers["authorization"]?.replace("Bearer ", "");
+
+    if (!apiKey) {
+      console.log("[API] No API key provided");
+      return reply.code(401).send({ error: "API key requerida" });
+    }
+
+    console.log("[API] API key received:", apiKey);
+
+    const { data: keyData, error: keyError } = await supabase
+      .from("api_keys")
+      .select("user_id, is_active")
+      .eq("api_key", apiKey)
+      .single();
+
+    if (keyError || !keyData || !keyData.is_active) {
+      console.log(
+        "[API] Invalid API key:",
+        keyError || "Key not found or inactive"
+      );
+      return reply.code(401).send({ error: "API key inválida" });
+    }
+
+    const userId = keyData.user_id;
+
+    console.log(`[API] Getting agent config for user ${userId}`);
+
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select("first_name, last_name, assistant_name")
+      .eq("id", userId)
+      .single();
+
+    if (userError) {
+      console.error("[API] Error fetching user agent config:", userError);
+      return reply.code(500).send({ error: "Error obteniendo configuración" });
+    }
+
+    console.log("[API] Agent config retrieved successfully:", userData);
+
+    // Create agent_name from first_name and last_name
+    const agentName =
+      `${userData.first_name || ""} ${userData.last_name || ""}`.trim() ||
+      "Agente";
+
+    return reply.send({
+      success: true,
+      data: {
+        agent_name: agentName,
+        assistant_name: userData.assistant_name,
+      },
+    });
+  } catch (error) {
+    console.error("[API] Error getting agent config:", error);
+    return reply.code(500).send({ error: "Error interno del servidor" });
   }
 });
 
