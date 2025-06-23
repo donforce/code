@@ -16,6 +16,7 @@ dotenv.config();
 const {
   ELEVENLABS_API_KEY,
   ELEVENLABS_AGENT_ID,
+  ELEVENLABS_WEBHOOK_SECRET,
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
   TWILIO_PHONE_NUMBER,
@@ -27,6 +28,7 @@ const {
 if (
   !ELEVENLABS_API_KEY ||
   !ELEVENLABS_AGENT_ID ||
+  !ELEVENLABS_WEBHOOK_SECRET ||
   !TWILIO_ACCOUNT_SID ||
   !TWILIO_AUTH_TOKEN ||
   !TWILIO_PHONE_NUMBER ||
@@ -45,10 +47,6 @@ fastify.register(fastifyWs);
 
 const PORT = process.env.PORT || 8000;
 const activeUserCalls = new Map(); // Track active calls per user
-
-// ElevenLabs webhook secret
-const ELEVENLABS_WEBHOOK_SECRET =
-  "wsec_aa13b4b7bba3044aa6c9c231cfe02e13cac62a418c56e075c4bc614cebe4602a";
 
 // Function to verify ElevenLabs webhook signature
 function verifyElevenLabsSignature(payload, signature) {
