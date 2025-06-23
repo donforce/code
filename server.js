@@ -23,6 +23,13 @@ const {
   SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY,
   RAILWAY_PUBLIC_DOMAIN,
+  // Multi-threading configuration
+  MAX_CONCURRENT_CALLS,
+  MAX_CALLS_PER_USER,
+  WORKER_POOL_SIZE,
+  QUEUE_CHECK_INTERVAL,
+  RETRY_ATTEMPTS,
+  RETRY_DELAY,
 } = process.env;
 
 if (
@@ -47,6 +54,30 @@ fastify.register(fastifyWs);
 
 const PORT = process.env.PORT || 8000;
 const activeUserCalls = new Map(); // Track active calls per user
+
+// Add metrics tracking variables
+let startTime = performance.now();
+let totalCalls = 0;
+let activeCalls = 0;
+let failedCalls = 0;
+let lastMetricsCheck = Date.now();
+
+// Multi-threaded queue processing configuration
+const QUEUE_CONFIG = {
+  maxConcurrentCalls: parseInt(MAX_CONCURRENT_CALLS) || 5, // Maximum calls running simultaneously
+  maxCallsPerUser: parseInt(MAX_CALLS_PER_USER) || 1, // Maximum calls per user (keep at 1 for now)
+  workerPoolSize: parseInt(WORKER_POOL_SIZE) || 3, // Number of worker threads for processing
+  queueCheckInterval: parseInt(QUEUE_CHECK_INTERVAL) || 30000, // 30 seconds
+  retryAttempts: parseInt(RETRY_ATTEMPTS) || 3, // Number of retry attempts for failed calls
+  retryDelay: parseInt(RETRY_DELAY) || 5000, // Delay between retries in milliseconds
+};
+
+// Track active calls globally
+const globalActiveCalls = new Map(); // callSid -> callInfo
+const userActiveCalls = new Map(); // userId -> callSid
+const workerPool = new Set(); // Track active workers
+
+console.log("[Queue] Multi-threaded configuration:", QUEUE_CONFIG);
 
 // Function to verify ElevenLabs webhook signature
 function verifyElevenLabsSignature(payload, signature) {
@@ -93,13 +124,6 @@ function verifyElevenLabsSignature(payload, signature) {
   }
 }
 
-// Add metrics tracking variables
-let startTime = performance.now();
-let totalCalls = 0;
-let activeCalls = 0;
-let failedCalls = 0;
-let lastMetricsCheck = Date.now();
-
 // Subscribe to call queue changes
 const queueChannel = supabase
   .channel("server-queue")
@@ -116,7 +140,13 @@ const queueChannel = supabase
           payload.eventType === "INSERT" &&
           payload.new.status === "pending"
         ) {
-          await processUserQueue(payload.new.user_id);
+          console.log(
+            "[Queue] New pending queue item detected, triggering multi-threaded processing"
+          );
+          // Trigger multi-threaded processing instead of single user processing
+          setTimeout(() => {
+            processAllPendingQueues();
+          }, 1000);
         }
       } catch (error) {
         console.error("Error processing queue event:", error);
@@ -128,61 +158,26 @@ const queueChannel = supabase
 // Process all pending queues
 async function processAllPendingQueues() {
   try {
-    console.log("[Queue] Starting to process all pending queues");
+    console.log("[Queue] Starting multi-threaded queue processing");
+    console.log(
+      `[Queue] Active calls: ${globalActiveCalls.size}/${QUEUE_CONFIG.maxConcurrentCalls}`
+    );
+    console.log(
+      `[Queue] Available workers: ${
+        QUEUE_CONFIG.workerPoolSize - workerPool.size
+      }`
+    );
 
-    // Obtener usuarios únicos con llamadas pendientes
-    const { data: pendingQueues, error } = await supabase
-      .from("call_queue")
-      .select("user_id, id")
-      .eq("status", "pending")
-      .order("queue_position", { ascending: true });
-
-    if (error) {
-      console.error("[Queue] Error fetching pending queues:", error);
-      throw error;
-    }
-
-    console.log("[Queue] Found pending queues:", pendingQueues?.length || 0);
-
-    // Procesar cola para cada usuario
-    const uniqueUserIds = [
-      ...new Set(pendingQueues?.map((q) => q.user_id) || []),
-    ];
-    console.log("[Queue] Unique users to process:", uniqueUserIds.length);
-
-    for (const userId of uniqueUserIds) {
-      await processUserQueue(userId);
-    }
-  } catch (error) {
-    console.error("[Queue] Error processing pending queues:", error);
-  }
-}
-
-// Process queues every 30 seconds
-const QUEUE_INTERVAL = 30000; // Fijando a 30 segundos
-console.log("[Queue] Setting up queue processing interval:", QUEUE_INTERVAL);
-
-const queueInterval = setInterval(processAllPendingQueues, QUEUE_INTERVAL);
-// Asegurarnos de que el intervalo se limpia si la aplicación se detiene
-process.on("SIGTERM", () => clearInterval(queueInterval));
-process.on("SIGINT", () => clearInterval(queueInterval));
-
-// Process queues on startup
-console.log("[Queue] Processing queues on startup");
-processAllPendingQueues();
-
-async function processUserQueue(userId) {
-  try {
-    console.log("[Queue] Processing user queue", { userId });
-
-    // Check if user already has an active call
-    if (activeUserCalls.get(userId)) {
-      console.log("[Queue] User has active call, skipping", { userId });
+    // Check if we can process more calls
+    if (globalActiveCalls.size >= QUEUE_CONFIG.maxConcurrentCalls) {
+      console.log(
+        "[Queue] Maximum concurrent calls reached, skipping processing"
+      );
       return;
     }
 
-    // Get next pending call for this user
-    const { data: nextCall, error: queueError } = await supabase
+    // Get all pending queue items
+    const { data: pendingQueues, error } = await supabase
       .from("call_queue")
       .select(
         `
@@ -191,79 +186,241 @@ async function processUserQueue(userId) {
           name,
           phone,
           email
+        ),
+        user:users (
+          available_minutes,
+          email,
+          first_name,
+          last_name,
+          assistant_name
         )
       `
       )
-      .eq("user_id", userId)
       .eq("status", "pending")
       .order("queue_position", { ascending: true })
-      .limit(1)
-      .single();
+      .limit(QUEUE_CONFIG.maxConcurrentCalls * 2); // Get more items than we can process
 
-    if (queueError) {
-      if (queueError.code === "PGRST116") {
-        console.log("[Queue] No pending calls for user", { userId });
-        return;
-      }
-      console.error("[Queue] Error fetching next call:", queueError);
-      throw queueError;
+    if (error) {
+      console.error("[Queue] Error fetching pending queues:", error);
+      throw error;
     }
 
-    if (nextCall) {
-      console.log("[Queue] Processing next call in queue", {
-        userId,
-        queueId: nextCall.id,
-        leadId: nextCall.lead_id,
-      });
+    console.log(
+      `[Queue] Found ${pendingQueues?.length || 0} pending queue items`
+    );
 
-      // Update status to in_progress
-      const { error: updateError } = await supabase
-        .from("call_queue")
-        .update({
-          status: "in_progress",
-          started_at: new Date().toISOString(),
-        })
-        .eq("id", nextCall.id);
+    if (!pendingQueues || pendingQueues.length === 0) {
+      console.log("[Queue] No pending queues to process");
+      return;
+    }
 
-      if (updateError) {
-        console.error("[Queue] Error updating queue status:", updateError);
-        throw updateError;
+    // Filter and prioritize queue items
+    const eligibleItems = pendingQueues.filter((item) => {
+      // Check if user has available minutes
+      if (!item.user || item.user.available_minutes <= 0) {
+        console.log(
+          `[Queue] User ${item.user_id} has no available minutes, skipping`
+        );
+        return false;
       }
 
-      console.log("[Queue] Updated queue item status to in_progress", {
-        queueId: nextCall.id,
-      });
+      // Check if user already has an active call
+      if (userActiveCalls.has(item.user_id)) {
+        console.log(
+          `[Queue] User ${item.user_id} already has active call, skipping`
+        );
+        return false;
+      }
 
-      // Process the call
-      const success = await processQueueItem(nextCall);
+      return true;
+    });
 
-      if (!success) {
-        console.error("[Queue] Failed to process call", {
-          userId,
-          queueId: nextCall.id,
-        });
+    console.log(`[Queue] ${eligibleItems.length} eligible items found`);
 
-        // Mark as failed
+    // Process eligible items in parallel (up to max concurrent calls)
+    const itemsToProcess = eligibleItems.slice(
+      0,
+      QUEUE_CONFIG.maxConcurrentCalls - globalActiveCalls.size
+    );
+
+    if (itemsToProcess.length === 0) {
+      console.log("[Queue] No items to process after filtering");
+      return;
+    }
+
+    console.log(
+      `[Queue] Processing ${itemsToProcess.length} items in parallel`
+    );
+
+    // Process items concurrently
+    const processingPromises = itemsToProcess.map(async (item) => {
+      return processQueueItemWithRetry(item);
+    });
+
+    // Wait for all processing to complete
+    const results = await Promise.allSettled(processingPromises);
+
+    // Log results
+    const successful = results.filter(
+      (r) => r.status === "fulfilled" && r.value
+    ).length;
+    const failed = results.filter(
+      (r) => r.status === "rejected" || (r.status === "fulfilled" && !r.value)
+    ).length;
+
+    console.log(
+      `[Queue] Processing complete: ${successful} successful, ${failed} failed`
+    );
+  } catch (error) {
+    console.error("[Queue] Error in multi-threaded queue processing:", error);
+  }
+}
+
+// Enhanced queue item processing with retry logic
+async function processQueueItemWithRetry(queueItem, attempt = 1) {
+  const workerId = `worker_${Date.now()}_${Math.random()
+    .toString(36)
+    .substr(2, 9)}`;
+
+  try {
+    console.log(
+      `[Queue] Worker ${workerId} starting to process queue item ${queueItem.id} (attempt ${attempt})`
+    );
+
+    // Add to worker pool
+    workerPool.add(workerId);
+
+    // Check if we can still process this item
+    if (globalActiveCalls.size >= QUEUE_CONFIG.maxConcurrentCalls) {
+      console.log(
+        `[Queue] Worker ${workerId} - Maximum concurrent calls reached, aborting`
+      );
+      return false;
+    }
+
+    if (userActiveCalls.has(queueItem.user_id)) {
+      console.log(
+        `[Queue] Worker ${workerId} - User ${queueItem.user_id} already has active call, aborting`
+      );
+      return false;
+    }
+
+    // Update queue status to in_progress
+    const { error: updateError } = await supabase
+      .from("call_queue")
+      .update({
+        status: "in_progress",
+        started_at: new Date().toISOString(),
+      })
+      .eq("id", queueItem.id);
+
+    if (updateError) {
+      console.error(
+        `[Queue] Worker ${workerId} - Error updating queue status:`,
+        updateError
+      );
+      throw updateError;
+    }
+
+    console.log(
+      `[Queue] Worker ${workerId} - Updated queue item status to in_progress`
+    );
+
+    // Process the call
+    const success = await processQueueItem(queueItem, workerId);
+
+    if (!success) {
+      console.error(`[Queue] Worker ${workerId} - Failed to process call`);
+
+      // Retry logic
+      if (attempt < QUEUE_CONFIG.retryAttempts) {
+        console.log(
+          `[Queue] Worker ${workerId} - Retrying in ${
+            QUEUE_CONFIG.retryDelay
+          }ms (attempt ${attempt + 1}/${QUEUE_CONFIG.retryAttempts})`
+        );
+
+        // Wait before retry
+        await new Promise((resolve) =>
+          setTimeout(resolve, QUEUE_CONFIG.retryDelay)
+        );
+
+        // Reset queue status to pending for retry
+        await supabase
+          .from("call_queue")
+          .update({
+            status: "pending",
+            started_at: null,
+          })
+          .eq("id", queueItem.id);
+
+        // Retry the call
+        return processQueueItemWithRetry(queueItem, attempt + 1);
+      } else {
+        // Max retries reached, mark as failed
         const { error: failedError } = await supabase
           .from("call_queue")
           .update({
             status: "failed",
             completed_at: new Date().toISOString(),
-            error_message: "Error processing the call",
+            error_message: `Failed after ${QUEUE_CONFIG.retryAttempts} attempts`,
           })
-          .eq("id", nextCall.id);
+          .eq("id", queueItem.id);
 
         if (failedError) {
-          console.error("[Queue] Error updating failed status:", failedError);
+          console.error(
+            `[Queue] Worker ${workerId} - Error updating failed status:`,
+            failedError
+          );
         }
       }
     }
+
+    return success;
   } catch (error) {
-    console.error("[Queue] Error processing user queue:", error);
-    // Release user in case of error
-    activeUserCalls.delete(userId);
+    console.error(
+      `[Queue] Worker ${workerId} - Error processing queue item:`,
+      error
+    );
+
+    // Mark as failed on error
+    try {
+      await supabase
+        .from("call_queue")
+        .update({
+          status: "failed",
+          completed_at: new Date().toISOString(),
+          error_message: error.message,
+        })
+        .eq("id", queueItem.id);
+    } catch (updateError) {
+      console.error(
+        `[Queue] Worker ${workerId} - Error updating failed status:`,
+        updateError
+      );
+    }
+
+    return false;
+  } finally {
+    // Remove from worker pool
+    workerPool.delete(workerId);
   }
 }
+
+// Process queues using dynamic interval from configuration
+const QUEUE_INTERVAL = QUEUE_CONFIG.queueCheckInterval;
+console.log(
+  `[Queue] Setting up multi-threaded queue processing interval: ${QUEUE_INTERVAL}ms`
+);
+
+const queueInterval = setInterval(processAllPendingQueues, QUEUE_INTERVAL);
+// Asegurarnos de que el intervalo se limpia si la aplicación se detiene
+process.on("SIGTERM", () => clearInterval(queueInterval));
+process.on("SIGINT", () => clearInterval(queueInterval));
+
+// Process queues on startup
+console.log("[Queue] Starting multi-threaded queue processing on startup");
+processAllPendingQueues();
 
 // Add this function at the top with other utility functions
 async function cancelPendingCalls(userId, reason) {
@@ -287,13 +444,13 @@ async function cancelPendingCalls(userId, reason) {
   });
 }
 
-async function processQueueItem(queueItem) {
+async function processQueueItem(queueItem, workerId = "unknown") {
   try {
     totalCalls++;
     activeCalls++;
 
     console.log("=".repeat(80));
-    console.log("📞 [CALL START] Starting new call");
+    console.log(`📞 [CALL START] Worker ${workerId} - Starting new call`);
     console.log("=".repeat(80));
 
     // Check available minutes before proceeding
@@ -304,16 +461,22 @@ async function processQueueItem(queueItem) {
       .single();
 
     if (userError) {
-      console.error("[Queue] Error checking user minutes:", userError);
+      console.error(
+        `[Queue] Worker ${workerId} - Error checking user minutes:`,
+        userError
+      );
       throw userError;
     }
 
     if (!userData || userData.available_minutes <= 0) {
-      console.log("[Queue] No available minutes for user", {
-        userId: queueItem.user_id,
-        userEmail: userData?.email,
-        availableMinutes: userData?.available_minutes || 0,
-      });
+      console.log(
+        `[Queue] Worker ${workerId} - No available minutes for user`,
+        {
+          userId: queueItem.user_id,
+          userEmail: userData?.email,
+          availableMinutes: userData?.available_minutes || 0,
+        }
+      );
 
       // Cancel all pending calls for this user
       await cancelPendingCalls(queueItem.user_id, "No hay minutos disponibles");
@@ -329,21 +492,24 @@ async function processQueueItem(queueItem) {
         .eq("id", queueItem.id);
 
       if (updateError) {
-        console.error("[Queue] Error updating queue item:", updateError);
+        console.error(
+          `[Queue] Worker ${workerId} - Error updating queue item:`,
+          updateError
+        );
       }
 
       return false;
     }
 
-    // Mark user as having active call
-    activeUserCalls.set(queueItem.user_id, true);
+    // Mark user as having active call (global tracking)
+    userActiveCalls.set(queueItem.user_id, true);
 
     // Create agent_name from first_name and last_name
     const agentName =
       `${userData.first_name || ""} ${userData.last_name || ""}`.trim() ||
       "Agente";
 
-    console.log("[Queue] Initiating call", {
+    console.log(`[Queue] Worker ${workerId} - Initiating call`, {
       userId: queueItem.user_id,
       userEmail: userData.email,
       leadId: queueItem.lead_id,
@@ -394,9 +560,19 @@ async function processQueueItem(queueItem) {
       statusCallbackMethod: "POST",
     });
 
-    console.log("[Queue] Call initiated successfully", {
+    console.log(`[Queue] Worker ${workerId} - Call initiated successfully`, {
       callSid: call.sid,
       queueId: queueItem.id,
+    });
+
+    // Track the call globally
+    globalActiveCalls.set(call.sid, {
+      userId: queueItem.user_id,
+      queueId: queueItem.id,
+      workerId: workerId,
+      startTime: new Date().toISOString(),
+      leadName: queueItem.lead.name,
+      leadPhone: queueItem.lead.phone,
     });
 
     // Register the call
@@ -411,13 +587,17 @@ async function processQueueItem(queueItem) {
     });
 
     if (callError) {
-      console.error("[Queue] Error registering call:", callError);
+      console.error(
+        `[Queue] Worker ${workerId} - Error registering call:`,
+        callError
+      );
       throw callError;
     }
 
     // Print call start summary
     console.log("📱 Call Details:");
     console.log(`   • Call SID: ${call.sid}`);
+    console.log(`   • Worker ID: ${workerId}`);
     console.log(`   • Status: In Progress`);
     console.log(`   • Started at: ${new Date().toISOString()}`);
     console.log("");
@@ -435,18 +615,30 @@ async function processQueueItem(queueItem) {
     console.log("📋 Queue Details:");
     console.log(`   • Queue ID: ${queueItem.id}`);
     console.log(`   • Queue Status: in_progress`);
+    console.log("");
+    console.log("🔄 Global Status:");
+    console.log(
+      `   • Active Calls: ${globalActiveCalls.size}/${QUEUE_CONFIG.maxConcurrentCalls}`
+    );
+    console.log(
+      `   • Active Workers: ${workerPool.size}/${QUEUE_CONFIG.workerPoolSize}`
+    );
     console.log("=".repeat(80));
 
     return true;
   } catch (error) {
     failedCalls++;
     activeCalls--;
-    console.error("[Queue] Error processing call:", error);
+    console.error(`[Queue] Worker ${workerId} - Error processing call:`, error);
     console.log("=".repeat(80));
-    console.log("❌ [CALL START] Error occurred during call initiation");
+    console.log(
+      `❌ [CALL START] Worker ${workerId} - Error occurred during call initiation`
+    );
     console.log("=".repeat(80));
-    // Release user in case of error
-    activeUserCalls.delete(queueItem.user_id);
+
+    // Release user and global tracking in case of error
+    userActiveCalls.delete(queueItem.user_id);
+
     return false;
   }
 }
@@ -1173,6 +1365,10 @@ fastify.post("/twilio-status", async (request, reply) => {
   });
 
   try {
+    // Get call info from global tracking
+    const callInfo = globalActiveCalls.get(callSid);
+    console.log("[Twilio] Global call info:", callInfo);
+
     // Update call status
     const { data: call, error: callError } = await supabase
       .from("calls")
@@ -1262,8 +1458,14 @@ fastify.post("/twilio-status", async (request, reply) => {
         }
       }
 
-      // Release the user's active call status
-      activeUserCalls.delete(call.user_id);
+      // Release the user's active call status (global tracking)
+      userActiveCalls.delete(call.user_id);
+
+      // Remove from global active calls
+      globalActiveCalls.delete(callSid);
+
+      // Update active calls count
+      activeCalls--;
 
       // Update queue item status if exists
       if (call.queue_id) {
@@ -1284,8 +1486,10 @@ fastify.post("/twilio-status", async (request, reply) => {
         }
       }
 
-      // Process next queue item for this user
-      await processUserQueue(call.user_id);
+      // Trigger queue processing for next items (multi-threaded)
+      setTimeout(() => {
+        processAllPendingQueues();
+      }, 1000);
 
       // Print comprehensive call summary
       console.log("=".repeat(80));
@@ -1293,6 +1497,7 @@ fastify.post("/twilio-status", async (request, reply) => {
       console.log("=".repeat(80));
       console.log("📱 Call Details:");
       console.log(`   • Call SID: ${callSid}`);
+      console.log(`   • Worker ID: ${callInfo?.workerId || "unknown"}`);
       console.log(`   • Status: ${callStatus}`);
       console.log(
         `   • Duration: ${callDuration} seconds (${
@@ -1320,9 +1525,17 @@ fastify.post("/twilio-status", async (request, reply) => {
       console.log(`   • Queue ID: ${call.queue_id || "N/A"}`);
       console.log(`   • Queue Status: completed`);
       console.log("");
+      console.log("🔄 Global Status:");
+      console.log(
+        `   • Active Calls: ${globalActiveCalls.size}/${QUEUE_CONFIG.maxConcurrentCalls}`
+      );
+      console.log(
+        `   • Active Workers: ${workerPool.size}/${QUEUE_CONFIG.workerPoolSize}`
+      );
+      console.log("");
       console.log("🔄 Next Steps:");
       console.log(`   • User released from active calls`);
-      console.log(`   • Processing next queue item for user ${call.user_id}`);
+      console.log(`   • Triggering multi-threaded queue processing`);
       console.log("=".repeat(80));
     }
 
@@ -1422,6 +1635,113 @@ fastify.get("/metrics", async (request, reply) => {
   } catch (error) {
     console.error("[Metrics] Error generating metrics:", error);
     reply.code(500).send({ error: "Error generating metrics" });
+  }
+});
+
+// Multi-threaded queue monitoring endpoint
+fastify.get("/queue/status", async (request, reply) => {
+  try {
+    console.log("[Queue] Status endpoint called");
+
+    // Get current queue status from database
+    const { data: queueStatus, error: queueError } = await supabase
+      .from("call_queue")
+      .select("status, created_at, started_at, completed_at")
+      .order("created_at", { ascending: false })
+      .limit(50);
+
+    if (queueError) {
+      console.error("[Queue] Error fetching queue status:", queueError);
+    }
+
+    // Get active calls details
+    const activeCallsDetails = Array.from(globalActiveCalls.entries()).map(
+      ([callSid, callInfo]) => ({
+        callSid,
+        ...callInfo,
+        duration: Math.floor(
+          (Date.now() - new Date(callInfo.startTime).getTime()) / 1000
+        ),
+      })
+    );
+
+    // Get user active calls
+    const userActiveCallsDetails = Array.from(userActiveCalls.entries()).map(
+      ([userId, callSid]) => ({
+        userId,
+        callSid,
+      })
+    );
+
+    const status = {
+      configuration: {
+        maxConcurrentCalls: QUEUE_CONFIG.maxConcurrentCalls,
+        maxCallsPerUser: QUEUE_CONFIG.maxCallsPerUser,
+        workerPoolSize: QUEUE_CONFIG.workerPoolSize,
+        queueCheckInterval: QUEUE_CONFIG.queueCheckInterval,
+        retryAttempts: QUEUE_CONFIG.retryAttempts,
+        retryDelay: QUEUE_CONFIG.retryDelay,
+      },
+      current: {
+        activeCalls: globalActiveCalls.size,
+        activeWorkers: workerPool.size,
+        userActiveCalls: userActiveCalls.size,
+        maxConcurrentCalls: QUEUE_CONFIG.maxConcurrentCalls,
+        availableSlots:
+          QUEUE_CONFIG.maxConcurrentCalls - globalActiveCalls.size,
+      },
+      performance: {
+        totalCalls,
+        activeCalls,
+        failedCalls,
+        callsPerMinute:
+          Math.round(
+            (totalCalls / Math.floor((Date.now() - startTime) / 1000 / 60)) *
+              100
+          ) / 100,
+      },
+      details: {
+        activeCalls: activeCallsDetails,
+        userActiveCalls: userActiveCallsDetails,
+        recentQueueItems: queueStatus || [],
+      },
+      environment: {
+        maxConcurrentCalls: MAX_CONCURRENT_CALLS || "5 (default)",
+        maxCallsPerUser: MAX_CALLS_PER_USER || "1 (default)",
+        workerPoolSize: WORKER_POOL_SIZE || "3 (default)",
+        queueCheckInterval: QUEUE_CHECK_INTERVAL || "30000 (default)",
+        retryAttempts: RETRY_ATTEMPTS || "3 (default)",
+        retryDelay: RETRY_DELAY || "5000 (default)",
+      },
+    };
+
+    reply.send({
+      success: true,
+      data: status,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("[Queue] Error getting queue status:", error);
+    reply.code(500).send({ error: "Error getting queue status" });
+  }
+});
+
+// Endpoint to manually trigger queue processing
+fastify.post("/queue/process", async (request, reply) => {
+  try {
+    console.log("[Queue] Manual queue processing triggered");
+
+    // Trigger queue processing
+    await processAllPendingQueues();
+
+    reply.send({
+      success: true,
+      message: "Queue processing triggered successfully",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("[Queue] Error triggering queue processing:", error);
+    reply.code(500).send({ error: "Error triggering queue processing" });
   }
 });
 
