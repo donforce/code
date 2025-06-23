@@ -947,6 +947,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
     }
     const userId = keyData.user_id;
     const body = request.body;
+    console.log("🔍 [API] Auto_call value type:", typeof auto_call, "Value:", auto_call);
     const {
       name,
       phone,
@@ -966,10 +967,16 @@ fastify.post("/api/integration/leads", async (request, reply) => {
         phone,
         email,
         auto_call,
+    console.log("🔍 [API] Lead auto_call value from DB:", newLead.auto_call);
         source,
         notes,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
+    console.log("🔍 [API] Checking auto_call condition...");
+    console.log("🔍 [API] auto_call variable:", auto_call, "Type:", typeof auto_call);
+    console.log("🔍 [API] auto_call === true:", auto_call === true);
+    console.log("🔍 [API] auto_call == true:", auto_call == true);
+    console.log("🔍 [API] Boolean(auto_call):", Boolean(auto_call));
       })
       .select()
       .single();
