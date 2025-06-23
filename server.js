@@ -670,6 +670,15 @@ fastify.register(async (fastifyInstance) => {
                       "[ElevenLabs] Saving conversation_id:",
                       conversationId
                     );
+                    console.log("[ElevenLabs] Call SID:", callSid);
+                    console.log(
+                      "[ElevenLabs] Full metadata event:",
+                      JSON.stringify(
+                        message.conversation_initiation_metadata_event,
+                        null,
+                        2
+                      )
+                    );
 
                     try {
                       const { error: updateError } = await supabase
@@ -685,9 +694,42 @@ fastify.register(async (fastifyInstance) => {
                           "[ElevenLabs] Error saving conversation_id:",
                           updateError
                         );
+                        console.error(
+                          "[ElevenLabs] Call SID that failed:",
+                          callSid
+                        );
+                        console.error(
+                          "[ElevenLabs] Conversation ID that failed:",
+                          conversationId
+                        );
+
+                        // Try to find the call record
+                        const { data: callRecord, error: findError } =
+                          await supabase
+                            .from("calls")
+                            .select("id, call_sid, created_at")
+                            .eq("call_sid", callSid)
+                            .single();
+
+                        if (findError) {
+                          console.error(
+                            "[ElevenLabs] Call record not found:",
+                            findError
+                          );
+                        } else {
+                          console.log(
+                            "[ElevenLabs] Found call record:",
+                            callRecord
+                          );
+                        }
                       } else {
                         console.log(
-                          "[ElevenLabs] Conversation_id saved to database"
+                          "[ElevenLabs] Conversation_id saved to database successfully"
+                        );
+                        console.log("[ElevenLabs] Call SID:", callSid);
+                        console.log(
+                          "[ElevenLabs] Conversation ID:",
+                          conversationId
                         );
                       }
                     } catch (dbError) {
@@ -696,6 +738,18 @@ fastify.register(async (fastifyInstance) => {
                         dbError
                       );
                     }
+                  } else {
+                    console.log("[ElevenLabs] Cannot save conversation_id:");
+                    console.log("   • Call SID exists:", !!callSid);
+                    console.log(
+                      "   • Conversation ID exists:",
+                      !!message.conversation_initiation_metadata_event
+                        ?.conversation_id
+                    );
+                    console.log(
+                      "   • Full message:",
+                      JSON.stringify(message, null, 2)
+                    );
                   }
                   break;
 
@@ -1652,13 +1706,24 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     console.log(`   • Has Transcript Summary: ${!!transcriptSummary}`);
     console.log(`   • Has Analysis: ${!!analysis}`);
     console.log(`   • Has Data Collection: ${!!dataCollectionResults}`);
+    console.log(
+      `   • Full webhook data:`,
+      JSON.stringify(webhookData, null, 2)
+    );
 
     if (!conversationId) {
       console.error("[WEBHOOK] Error: Missing conversation_id");
+      console.error(
+        "[WEBHOOK] Full webhook payload:",
+        JSON.stringify(webhookData, null, 2)
+      );
       return reply.code(400).send({ error: "Missing conversation_id" });
     }
 
     // Find the call record by conversation_id
+    console.log(
+      `[WEBHOOK] Searching for call with conversation_id: ${conversationId}`
+    );
     const { data: call, error: callError } = await supabase
       .from("calls")
       .select("*")
@@ -1670,12 +1735,25 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
         "[WEBHOOK] Error finding call by conversation_id:",
         callError
       );
+      console.error("[WEBHOOK] Conversation ID searched:", conversationId);
+
+      // Try to find any calls that might have this conversation_id
+      const { data: allCalls, error: allCallsError } = await supabase
+        .from("calls")
+        .select("id, call_sid, conversation_id, created_at")
+        .limit(10);
+
+      if (!allCallsError) {
+        console.log("[WEBHOOK] Recent calls in database:", allCalls);
+      }
+
       return reply
         .code(404)
         .send({ error: "Call not found for conversation_id" });
     }
 
     console.log("[WEBHOOK] Found call:", call.call_sid);
+    console.log("[WEBHOOK] Call details:", JSON.stringify(call, null, 2));
 
     // Update call record with webhook data
     const updateData = {
@@ -1684,12 +1762,15 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
 
     if (transcriptSummary) {
       updateData.transcript_summary = transcriptSummary;
-      console.log("[WEBHOOK] Added transcript_summary");
+      console.log(
+        "[WEBHOOK] Added transcript_summary:",
+        transcriptSummary.substring(0, 100) + "..."
+      );
     }
 
     if (analysis) {
       updateData.elevenlabs_analysis = analysis;
-      console.log("[WEBHOOK] Added analysis");
+      console.log("[WEBHOOK] Added analysis data");
     }
 
     if (dataCollectionResults) {
@@ -1702,6 +1783,11 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       console.log("[WEBHOOK] Added call_successful:", callSuccessful);
     }
 
+    console.log(
+      "[WEBHOOK] Final update data:",
+      JSON.stringify(updateData, null, 2)
+    );
+
     // Update the call record
     const { error: updateError } = await supabase
       .from("calls")
@@ -1710,6 +1796,10 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
 
     if (updateError) {
       console.error("[WEBHOOK] Error updating call:", updateError);
+      console.error(
+        "[WEBHOOK] Update data that failed:",
+        JSON.stringify(updateData, null, 2)
+      );
       return reply.code(500).send({ error: "Failed to update call" });
     }
 
