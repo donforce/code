@@ -794,7 +794,7 @@ fastify.register(async (fastifyInstance) => {
           elevenLabsWs.on("message", async (data) => {
             try {
               const message = JSON.parse(data);
-              console.log(`[ElevenLabs] Event Type: ${message}`);
+              //console.log(`[ElevenLabs] Event Type: ${message}`);
               console.log(`[ElevenLabs] Event Type: ${message.type}`);
               // Only log critical events, skip ping messages
               if (message.type !== "ping") {
@@ -888,6 +888,14 @@ fastify.register(async (fastifyInstance) => {
                     "📊 [INTERRUPTION] Details:",
                     JSON.stringify(message, null, 2)
                   );
+                  if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                    elevenLabsWs.send(
+                      JSON.stringify({
+                        type: "interrupt_agent",
+                      })
+                    );
+                    console.log("🛑 [MANUAL] Sent interrupt_agent command");
+                  }
                   break;
 
                 case "conversation_resumed":
