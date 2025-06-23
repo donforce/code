@@ -51,15 +51,42 @@ const activeUserCalls = new Map(); // Track active calls per user
 // Function to verify ElevenLabs webhook signature
 function verifyElevenLabsSignature(payload, signature) {
   try {
+    console.log("[WEBHOOK] Verifying signature format:", signature);
+
+    // ElevenLabs sends signature in format: t=timestamp,v0=signature
+    // We need to extract the actual signature from the v0= part
+    let actualSignature = signature;
+
+    if (signature.includes("v0=")) {
+      // Extract the signature from v0= part
+      const v0Match = signature.match(/v0=([a-f0-9]+)/);
+      if (v0Match) {
+        actualSignature = v0Match[1];
+        console.log(
+          "[WEBHOOK] Extracted signature from v0= format:",
+          actualSignature
+        );
+      } else {
+        console.error("[WEBHOOK] Could not extract signature from v0= format");
+        return false;
+      }
+    }
+
+    // Generate expected signature
     const expectedSignature = crypto
       .createHmac("sha256", ELEVENLABS_WEBHOOK_SECRET)
       .update(payload, "utf8")
       .digest("hex");
 
-    return crypto.timingSafeEqual(
-      Buffer.from(signature, "hex"),
-      Buffer.from(expectedSignature, "hex")
+    console.log("[WEBHOOK] Expected signature:", expectedSignature);
+    console.log("[WEBHOOK] Actual signature:", actualSignature);
+    console.log(
+      "[WEBHOOK] Signatures match:",
+      expectedSignature === actualSignature
     );
+
+    // Use simple string comparison instead of timingSafeEqual to avoid buffer length issues
+    return expectedSignature === actualSignature;
   } catch (error) {
     console.error("[WEBHOOK] Error verifying signature:", error);
     return false;
