@@ -85,30 +85,45 @@ function verifyElevenLabsSignature(payload, signature) {
     console.log("[WEBHOOK] Verifying signature format:", signature);
 
     // ElevenLabs sends signature in format: t=timestamp,v0=signature
-    // We need to extract the actual signature from the v0= part
-    let actualSignature = signature;
+    // We need to extract both timestamp and signature
+    let timestamp = null;
+    let actualSignature = null;
 
-    if (signature.includes("v0=")) {
-      // Extract the signature from v0= part
+    if (signature.includes("t=") && signature.includes("v0=")) {
+      // Extract timestamp
+      const tMatch = signature.match(/t=(\d+)/);
+      if (tMatch) {
+        timestamp = tMatch[1];
+        console.log("[WEBHOOK] Extracted timestamp:", timestamp);
+      }
+
+      // Extract signature
       const v0Match = signature.match(/v0=([a-f0-9]+)/);
       if (v0Match) {
         actualSignature = v0Match[1];
-        console.log(
-          "[WEBHOOK] Extracted signature from v0= format:",
-          actualSignature
-        );
-      } else {
-        console.error("[WEBHOOK] Could not extract signature from v0= format");
-        return false;
+        console.log("[WEBHOOK] Extracted signature:", actualSignature);
       }
+    } else {
+      console.error("[WEBHOOK] Invalid signature format - missing t= or v0=");
+      return false;
     }
 
-    // Generate expected signature
+    if (!timestamp || !actualSignature) {
+      console.error("[WEBHOOK] Could not extract timestamp or signature");
+      return false;
+    }
+
+    // Generate expected signature using the format: timestamp.payload
+    const signedPayload = `${timestamp}.${payload}`;
     const expectedSignature = crypto
       .createHmac("sha256", ELEVENLABS_WEBHOOK_SECRET)
-      .update(payload, "utf8")
+      .update(signedPayload, "utf8")
       .digest("hex");
 
+    console.log(
+      "[WEBHOOK] Signed payload:",
+      signedPayload.substring(0, 100) + "..."
+    );
     console.log("[WEBHOOK] Expected signature:", expectedSignature);
     console.log("[WEBHOOK] Actual signature:", actualSignature);
     console.log(
@@ -116,7 +131,7 @@ function verifyElevenLabsSignature(payload, signature) {
       expectedSignature === actualSignature
     );
 
-    // Use simple string comparison instead of timingSafeEqual to avoid buffer length issues
+    // Use simple string comparison
     return expectedSignature === actualSignature;
   } catch (error) {
     console.error("[WEBHOOK] Error verifying signature:", error);
