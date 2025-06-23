@@ -860,10 +860,10 @@ fastify.register(async (fastifyInstance) => {
                 keep_alive: true,
                 interruption_settings: {
                   enabled: true,
-                  sensitivity: "medium",
-                  min_duration: 0.5,
-                  max_duration: 3.0,
-                  cooldown_period: 1.0,
+                  sensitivity: "high", // Changed from "medium" to "high"
+                  min_duration: 0.3, // Reduced from 0.5 to 0.3 seconds
+                  max_duration: 5.0, // Increased from 3.0 to 5.0 seconds
+                  cooldown_period: 0.5, // Reduced from 1.0 to 0.5 seconds
                 },
               },
               dynamic_variables: {
@@ -882,7 +882,10 @@ fastify.register(async (fastifyInstance) => {
               },
             };
 
-            console.log("initialConfig ", JSON.stringify(initialConfig));
+            console.log(
+              "🔧 [ElevenLabs] Initial config with enhanced interruptions:"
+            );
+            console.log(JSON.stringify(initialConfig, null, 2));
             elevenLabsWs.send(JSON.stringify(initialConfig));
 
             elevenLabsWs.send(
@@ -898,6 +901,15 @@ fastify.register(async (fastifyInstance) => {
           elevenLabsWs.on("message", async (data) => {
             try {
               const message = JSON.parse(data);
+
+              // Log all messages for debugging interruptions
+              console.log(`🔍 [ElevenLabs] WS Event: ${message.type}`);
+              if (message.type !== "ping") {
+                console.log(
+                  `📋 [ElevenLabs] Full message:`,
+                  JSON.stringify(message, null, 2)
+                );
+              }
 
               switch (message.type) {
                 case "conversation_initiation_metadata":
@@ -1018,36 +1030,103 @@ fastify.register(async (fastifyInstance) => {
                   break;
 
                 case "agent_response":
+                  console.log("=".repeat(60));
+                  console.log("🤖 [AGENT] Agent response/ speaking");
+                  console.log("=".repeat(60));
                   console.log(
-                    `[Twilio] Agent response: ${message.agent_response_event?.agent_response}`
+                    `💬 Response: ${
+                      message.agent_response_event?.agent_response || "N/A"
+                    }`
                   );
+                  console.log(
+                    `⏱️ Duration: ${
+                      message.agent_response_event?.duration || "N/A"
+                    }s`
+                  );
+                  console.log(
+                    `🎯 Can be interrupted: YES (interruption settings enabled)`
+                  );
+                  console.log("=".repeat(60));
                   break;
 
                 case "user_speaking":
+                  console.log("=".repeat(60));
+                  console.log("🎤 [INTERRUPTION] User speaking detected");
+                  console.log("=".repeat(60));
                   console.log(
-                    `[ElevenLabs] User speaking detected - duration: ${
+                    `📊 Duration: ${
                       message.user_speaking_event?.duration || "N/A"
                     }s`
                   );
+                  console.log(
+                    `🔊 Should interrupt: ${
+                      message.user_speaking_event?.should_interrupt || "N/A"
+                    }`
+                  );
+                  console.log(
+                    `📈 Confidence: ${
+                      message.user_speaking_event?.confidence || "N/A"
+                    }`
+                  );
+                  console.log(
+                    `🎯 Interruption threshold met: ${
+                      message.user_speaking_event?.should_interrupt
+                        ? "YES"
+                        : "NO"
+                    }`
+                  );
+                  console.log("=".repeat(60));
+
                   if (message.user_speaking_event?.should_interrupt) {
                     console.log(
-                      "[ElevenLabs] Interruption triggered - user speaking"
+                      "🚨 [INTERRUPTION] TRIGGERED - User speaking should interrupt agent"
+                    );
+                  } else {
+                    console.log(
+                      "⚠️ [INTERRUPTION] User speaking but not interrupting (threshold not met)"
                     );
                   }
                   break;
 
                 case "agent_interrupted":
+                  console.log("=".repeat(60));
                   console.log(
-                    `[ElevenLabs] Agent interrupted - reason: ${
+                    "🛑 [INTERRUPTION] Agent interrupted successfully"
+                  );
+                  console.log("=".repeat(60));
+                  console.log(
+                    `📋 Reason: ${
                       message.agent_interrupted_event?.reason || "unknown"
                     }`
                   );
+                  console.log(
+                    `⏱️ Interruption time: ${
+                      message.agent_interrupted_event?.interruption_time ||
+                      "N/A"
+                    }`
+                  );
+                  console.log(`🎯 Interruption successful: YES`);
+                  console.log("=".repeat(60));
                   break;
 
                 case "conversation_resumed":
+                  console.log("=".repeat(60));
                   console.log(
-                    "[ElevenLabs] Conversation resumed after interruption"
+                    "🔄 [INTERRUPTION] Conversation resumed after interruption"
                   );
+                  console.log("=".repeat(60));
+                  console.log(
+                    `⏱️ Resume time: ${
+                      message.conversation_resumed_event?.resume_time || "N/A"
+                    }`
+                  );
+                  console.log(
+                    `📊 Total interruption duration: ${
+                      message.conversation_resumed_event
+                        ?.total_interruption_duration || "N/A"
+                    }`
+                  );
+                  console.log("=".repeat(60));
                   break;
 
                 case "user_transcript":
