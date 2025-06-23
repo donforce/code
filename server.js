@@ -1224,6 +1224,9 @@ fastify.post("/twilio-status", async (request, reply) => {
         });
       }
 
+      // Initialize updatedUser variable
+      let updatedUser = null;
+
       // Only deduct minutes if call was successful and has duration
       if (result === "success" && callDuration > 0) {
         console.log("[Twilio] Call was successful, deducting minutes");
@@ -1234,7 +1237,6 @@ fastify.post("/twilio-status", async (request, reply) => {
           mins: callDuration,
         });
 
-        let updatedUser = null;
         if (userError) {
           console.error("[Twilio] Error updating user minutes:", userError);
         } else {
