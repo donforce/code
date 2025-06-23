@@ -722,8 +722,8 @@ fastify.register(async (fastifyInstance) => {
       let elevenLabsWs = null;
       let customParameters = null;
       let lastUserTranscript = "";
-      let userSpeakingTimer = null;
-      let userSpeakingStartTime = null;
+      let audioFlowPaused = false;
+      let interruptionInProgress = false;
 
       ws.on("error", console.error);
 
@@ -794,8 +794,7 @@ fastify.register(async (fastifyInstance) => {
           elevenLabsWs.on("message", async (data) => {
             try {
               const message = JSON.parse(data);
-              //console.log(`[ElevenLabs] Event Type: ${message}`);
-              console.log(`[ElevenLabs] Event Type: ${message.type}`);
+
               // Only log critical events, skip ping messages
               if (message.type !== "ping") {
                 console.log(`[ElevenLabs] Event: ${message.type}`);
@@ -838,7 +837,7 @@ fastify.register(async (fastifyInstance) => {
                   break;
 
                 case "audio":
-                  if (streamSid) {
+                  if (streamSid && !audioFlowPaused) {
                     const audioData = {
                       event: "media",
                       streamSid,
@@ -849,6 +848,10 @@ fastify.register(async (fastifyInstance) => {
                       },
                     };
                     ws.send(JSON.stringify(audioData));
+                  } else if (audioFlowPaused) {
+                    console.log(
+                      "🔇 [AUDIO] Audio flow paused, skipping audio chunk"
+                    );
                   }
                   break;
 
@@ -857,13 +860,54 @@ fastify.register(async (fastifyInstance) => {
                   break;
 
                 case "user_speaking":
-                  console.log(
-                    `🎤 [USER] Speaking - Duration: ${speakingDuration}s, Should Interrupt: ${shouldInterrupt}`
-                  );
                   const speakingDuration =
                     message.user_speaking_event?.duration || 0;
                   const shouldInterrupt =
                     message.user_speaking_event?.should_interrupt;
+
+                  console.log(
+                    `🎤 [USER] Speaking - Duration: ${speakingDuration}s, Should Interrupt: ${shouldInterrupt}`
+                  );
+
+                  // Imprimir el mensaje completo del evento
+                  console.log(
+                    "📋 [USER_SPEAKING] Full message:",
+                    JSON.stringify(message, null, 2)
+                  );
+
+                  // Interrupción manual si ElevenLabs no la detecta
+                  if (speakingDuration > 0.5 && !shouldInterrupt) {
+                    console.log(
+                      "🚨 [MANUAL] User speaking >0.5s, forcing interruption"
+                    );
+
+                    // Pausar el flujo de audio inmediatamente
+                    audioFlowPaused = true;
+                    interruptionInProgress = true;
+                    console.log(
+                      "🔇 [AUDIO] Audio flow paused due to manual interruption"
+                    );
+
+                    if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                      elevenLabsWs.send(
+                        JSON.stringify({
+                          type: "interrupt_agent",
+                        })
+                      );
+                      console.log("🛑 [MANUAL] Sent interrupt_agent command");
+                    }
+
+                    // Auto-resume audio flow after 2 seconds if no conversation_resumed event
+                    setTimeout(() => {
+                      if (interruptionInProgress) {
+                        audioFlowPaused = false;
+                        interruptionInProgress = false;
+                        console.log(
+                          "⏰ [AUDIO] Auto-resumed audio flow after timeout"
+                        );
+                      }
+                    }, 2000);
+                  }
 
                   if (shouldInterrupt) {
                     console.log(
@@ -880,6 +924,13 @@ fastify.register(async (fastifyInstance) => {
                     "📊 [INTERRUPTION] Details:",
                     JSON.stringify(message, null, 2)
                   );
+
+                  // Pausar el flujo de audio durante la interrupción
+                  audioFlowPaused = true;
+                  interruptionInProgress = true;
+                  console.log(
+                    "🔇 [AUDIO] Audio flow paused due to interruption"
+                  );
                   break;
 
                 case "interruption":
@@ -888,6 +939,14 @@ fastify.register(async (fastifyInstance) => {
                     "📊 [INTERRUPTION] Details:",
                     JSON.stringify(message, null, 2)
                   );
+
+                  // Pausar el flujo de audio
+                  audioFlowPaused = true;
+                  interruptionInProgress = true;
+                  console.log(
+                    "🔇 [AUDIO] Audio flow paused due to interruption event"
+                  );
+
                   if (elevenLabsWs?.readyState === WebSocket.OPEN) {
                     elevenLabsWs.send(
                       JSON.stringify({
@@ -900,6 +959,11 @@ fastify.register(async (fastifyInstance) => {
 
                 case "conversation_resumed":
                   console.log("🔄 [INTERRUPTION] Conversation resumed");
+
+                  // Reanudar el flujo de audio
+                  audioFlowPaused = false;
+                  interruptionInProgress = false;
+                  console.log("🔊 [AUDIO] Audio flow resumed");
                   break;
 
                 case "interruption_started":
@@ -1079,7 +1143,7 @@ fastify.register(async (fastifyInstance) => {
       ws.on("message", (message) => {
         try {
           const msg = JSON.parse(message);
-          // console.log("msg.event ", msg.event);
+
           switch (msg.event) {
             case "start":
               streamSid = msg.start.streamSid;
