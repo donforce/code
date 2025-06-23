@@ -173,7 +173,7 @@ const queueChannel = supabase
   )
   .subscribe();
 
-// Process all pending queues
+// Process all pending queues with improved user-level locking
 async function processAllPendingQueues() {
   try {
     console.log("[Queue] Starting multi-threaded queue processing");
@@ -242,8 +242,11 @@ async function processAllPendingQueues() {
     // Create a map for quick user lookup
     const usersMap = new Map(usersData?.map((user) => [user.id, user]) || []);
 
-    // Filter and prioritize queue items
-    const eligibleItems = pendingQueues.filter((item) => {
+    // Filter and prioritize queue items with improved user-level locking
+    const eligibleItems = [];
+    const processedUsers = new Set(); // Track users we've already selected for processing
+
+    for (const item of pendingQueues) {
       const user = usersMap.get(item.user_id);
 
       // Check if user has available minutes
@@ -251,21 +254,37 @@ async function processAllPendingQueues() {
         console.log(
           `[Queue] User ${item.user_id} has no available minutes, skipping`
         );
-        return false;
+        continue;
       }
 
-      // Check if user already has an active call
+      // Check if user already has an active call (global tracking)
       if (userActiveCalls.has(item.user_id)) {
         console.log(
           `[Queue] User ${item.user_id} already has active call, skipping`
         );
-        return false;
+        continue;
       }
 
-      return true;
-    });
+      // Check if we've already selected a call for this user in this processing cycle
+      if (processedUsers.has(item.user_id)) {
+        console.log(
+          `[Queue] User ${item.user_id} already has a call selected for processing, skipping additional calls`
+        );
+        continue;
+      }
 
-    console.log(`[Queue] ${eligibleItems.length} eligible items found`);
+      // Add to eligible items and mark user as processed
+      eligibleItems.push(item);
+      processedUsers.add(item.user_id);
+
+      console.log(
+        `[Queue] Added call for user ${item.user_id} to eligible items (position ${item.queue_position})`
+      );
+    }
+
+    console.log(
+      `[Queue] ${eligibleItems.length} eligible items found after user-level filtering`
+    );
 
     // Process eligible items in parallel (up to max concurrent calls)
     const itemsToProcess = eligibleItems.slice(
@@ -306,16 +325,31 @@ async function processAllPendingQueues() {
   }
 }
 
-// Enhanced queue item processing with retry logic
+// Enhanced queue item processing with retry logic and detailed logging
 async function processQueueItemWithRetry(queueItem, attempt = 1) {
   const workerId = `worker_${Date.now()}_${Math.random()
     .toString(36)
     .substr(2, 9)}`;
 
   try {
+    console.log("=".repeat(80));
     console.log(
-      `[Queue] Worker ${workerId} starting to process queue item ${queueItem.id} (attempt ${attempt})`
+      `📞 [QUEUE PROCESSING] Worker ${workerId} starting to process queue item ${queueItem.id} (attempt ${attempt})`
     );
+    console.log("=".repeat(80));
+    console.log("📋 Queue Item Details:");
+    console.log(`   • Queue ID: ${queueItem.id}`);
+    console.log(`   • User ID: ${queueItem.user_id}`);
+    console.log(`   • Lead ID: ${queueItem.lead_id}`);
+    console.log(`   • Queue Position: ${queueItem.queue_position}`);
+    console.log(`   • Status: ${queueItem.status}`);
+    console.log(`   • Created: ${queueItem.created_at}`);
+    console.log("");
+    console.log("👤 Lead Details:");
+    console.log(`   • Name: ${queueItem.lead?.name || "N/A"}`);
+    console.log(`   • Phone: ${queueItem.lead?.phone || "N/A"}`);
+    console.log(`   • Email: ${queueItem.lead?.email || "N/A"}`);
+    console.log("=".repeat(80));
 
     // Add to worker pool
     workerPool.add(workerId);
@@ -434,6 +468,7 @@ async function processQueueItemWithRetry(queueItem, attempt = 1) {
   } finally {
     // Remove from worker pool
     workerPool.delete(workerId);
+    console.log(`[Queue] Worker ${workerId} finished processing`);
   }
 }
 
@@ -564,36 +599,66 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       date.getMonth() + 1
     ).padStart(2, "0")}/${String(date.getFullYear()).slice(-2)}`;
 
-    // Make the call
-    const call = await twilioClient.calls.create({
-      from: TWILIO_PHONE_NUMBER,
-      to: queueItem.lead.phone,
-      url: `https://${RAILWAY_PUBLIC_DOMAIN}/outbound-call-twiml?prompt=${encodeURIComponent(
-        "Eres un asistente de ventas inmobiliarias."
-      )}&first_message=${encodeURIComponent(
-        "Hola, ¿cómo estás?"
-      )}&client_name=${encodeURIComponent(
-        queueItem.lead.name
-      )}&client_phone=${encodeURIComponent(
-        queueItem.lead.phone
-      )}&client_email=${encodeURIComponent(
-        queueItem.lead.email
-      )}&client_id=${encodeURIComponent(
-        queueItem.lead_id
-      )}&fecha=${encodeURIComponent(fecha)}&dia_semana=${encodeURIComponent(
-        dia_semana
-      )}&agent_name=${encodeURIComponent(
-        agentName
-      )}&assistant_name=${encodeURIComponent(userData.assistant_name)}`,
-      statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
-      statusCallbackEvent: ["completed"],
-      statusCallbackMethod: "POST",
-    });
+    // Make the call with error handling
+    console.log(`[Queue] Worker ${workerId} - Creating Twilio call...`);
+    let call;
+    try {
+      call = await twilioClient.calls.create({
+        from: TWILIO_PHONE_NUMBER,
+        to: queueItem.lead.phone,
+        url: `https://${RAILWAY_PUBLIC_DOMAIN}/outbound-call-twiml?prompt=${encodeURIComponent(
+          "Eres un asistente de ventas inmobiliarias."
+        )}&first_message=${encodeURIComponent(
+          "Hola, ¿cómo estás?"
+        )}&client_name=${encodeURIComponent(
+          queueItem.lead.name
+        )}&client_phone=${encodeURIComponent(
+          queueItem.lead.phone
+        )}&client_email=${encodeURIComponent(
+          queueItem.lead.email
+        )}&client_id=${encodeURIComponent(
+          queueItem.lead_id
+        )}&fecha=${encodeURIComponent(fecha)}&dia_semana=${encodeURIComponent(
+          dia_semana
+        )}&agent_name=${encodeURIComponent(
+          agentName
+        )}&assistant_name=${encodeURIComponent(userData.assistant_name)}`,
+        statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
+        statusCallbackEvent: ["completed"],
+        statusCallbackMethod: "POST",
+      });
 
-    console.log(`[Queue] Worker ${workerId} - Call initiated successfully`, {
-      callSid: call.sid,
-      queueId: queueItem.id,
-    });
+      console.log(`[Queue] Worker ${workerId} - Call initiated successfully`, {
+        callSid: call.sid,
+        queueId: queueItem.id,
+      });
+    } catch (twilioError) {
+      console.error(
+        `[Queue] Worker ${workerId} - Twilio call creation failed:`,
+        {
+          error: twilioError.message,
+          code: twilioError.code,
+          status: twilioError.status,
+          moreInfo: twilioError.moreInfo,
+        }
+      );
+
+      // Update queue item with error
+      await supabase
+        .from("call_queue")
+        .update({
+          status: "failed",
+          completed_at: new Date().toISOString(),
+          error_message: `Twilio error: ${twilioError.message} (Code: ${twilioError.code})`,
+        })
+        .eq("id", queueItem.id);
+
+      // Release user tracking
+      userActiveCalls.delete(queueItem.user_id);
+      activeCalls--;
+
+      return false;
+    }
 
     // Track the call globally
     globalActiveCalls.set(call.sid, {
@@ -668,6 +733,23 @@ async function processQueueItem(queueItem, workerId = "unknown") {
 
     // Release user and global tracking in case of error
     userActiveCalls.delete(queueItem.user_id);
+
+    // Update queue item with error
+    try {
+      await supabase
+        .from("call_queue")
+        .update({
+          status: "failed",
+          completed_at: new Date().toISOString(),
+          error_message: error.message,
+        })
+        .eq("id", queueItem.id);
+    } catch (updateError) {
+      console.error(
+        `[Queue] Worker ${workerId} - Error updating queue item with error:`,
+        updateError
+      );
+    }
 
     return false;
   }
@@ -1458,33 +1540,67 @@ fastify.register(async (fastifyInstance) => {
   );
 });
 
-// Your existing twilio-status endpoint with queue management
+// Your existing twilio-status endpoint with enhanced logging and error handling
 fastify.post("/twilio-status", async (request, reply) => {
   const callSid = request.body.CallSid;
   const callDuration = parseInt(request.body.CallDuration || "0", 10);
   const callStatus = request.body.CallStatus;
+  const callErrorCode = request.body.ErrorCode;
+  const callErrorMessage = request.body.ErrorMessage;
 
   console.log("=".repeat(80));
-  console.log("📞 [CALL SUMMARY] Call completed - Starting summary");
+  console.log("📞 [TWILIO STATUS] Status update received from Twilio");
   console.log("=".repeat(80));
-  console.log("[Twilio] Status update received", {
-    callSid,
-    callStatus,
-    callDuration,
-  });
+  console.log("📱 Call Details:");
+  console.log(`   • Call SID: ${callSid}`);
+  console.log(`   • Status: ${callStatus}`);
+  console.log(`   • Duration: ${callDuration} seconds`);
+  console.log(`   • Error Code: ${callErrorCode || "None"}`);
+  console.log(`   • Error Message: ${callErrorMessage || "None"}`);
+  console.log("📋 Full Twilio payload:", JSON.stringify(request.body, null, 2));
+  console.log("=".repeat(80));
 
   try {
     // Get call info from global tracking
     const callInfo = globalActiveCalls.get(callSid);
     console.log("[Twilio] Global call info:", callInfo);
 
-    // Update call status
+    // Determine the result based on Twilio status
+    let result = "initiated";
+    if (callStatus === "completed" && callDuration > 0) {
+      result = "success";
+    } else if (
+      ["failed", "busy", "no-answer", "canceled"].includes(callStatus)
+    ) {
+      result = "failed";
+    } else if (callErrorCode) {
+      result = "failed";
+    }
+
+    console.log(
+      `[Twilio] Determined result: ${result} based on status: ${callStatus}`
+    );
+
+    // Update call status with detailed error information
+    const updateData = {
+      duration: callDuration,
+      status: callStatus,
+      result: result,
+      updated_at: new Date().toISOString(),
+    };
+
+    // Add error information if available
+    if (callErrorCode || callErrorMessage) {
+      updateData.error_code = callErrorCode;
+      updateData.error_message = callErrorMessage;
+      console.log(
+        `[Twilio] Adding error info: ${callErrorCode} - ${callErrorMessage}`
+      );
+    }
+
     const { data: call, error: callError } = await supabase
       .from("calls")
-      .update({
-        duration: callDuration,
-        status: callStatus,
-      })
+      .update(updateData)
       .eq("call_sid", callSid)
       .select("user_id, queue_id, lead_id")
       .single();
@@ -1532,39 +1648,50 @@ fastify.post("/twilio-status", async (request, reply) => {
         });
       }
 
-      // Update user's available minutes (callDuration is already in seconds)
-      const { error: userError } = await supabase.rpc("decrement_minutes", {
-        uid: call.user_id,
-        mins: callDuration, // Pass the duration directly in seconds
-      });
+      // Only deduct minutes if call was successful and has duration
+      if (result === "success" && callDuration > 0) {
+        console.log("[Twilio] Call was successful, deducting minutes");
 
-      let updatedUser = null;
-      if (userError) {
-        console.error("[Twilio] Error updating user minutes:", userError);
-      } else {
-        // Get updated available minutes
-        const { data: updatedUserData, error: updateFetchError } =
-          await supabase
-            .from("users")
-            .select("available_minutes")
-            .eq("id", call.user_id)
-            .single();
+        // Update user's available minutes
+        const { error: userError } = await supabase.rpc("decrement_minutes", {
+          uid: call.user_id,
+          mins: callDuration,
+        });
 
-        if (updateFetchError) {
-          console.error(
-            "[Twilio] Error fetching updated user minutes:",
-            updateFetchError
-          );
+        let updatedUser = null;
+        if (userError) {
+          console.error("[Twilio] Error updating user minutes:", userError);
         } else {
-          updatedUser = updatedUserData;
-          console.log("[Twilio] User minutes updated successfully", {
-            userId: call.user_id,
-            previousMinutes: userData?.available_minutes || 0,
-            deductedSeconds: callDuration,
-            deductedMinutes: Math.round((callDuration / 60) * 100) / 100,
-            newMinutes: updatedUser.available_minutes,
-          });
+          // Get updated available minutes
+          const { data: updatedUserData, error: updateFetchError } =
+            await supabase
+              .from("users")
+              .select("available_minutes")
+              .eq("id", call.user_id)
+              .single();
+
+          if (updateFetchError) {
+            console.error(
+              "[Twilio] Error fetching updated user minutes:",
+              updateFetchError
+            );
+          } else {
+            updatedUser = updatedUserData;
+            console.log("[Twilio] User minutes updated successfully", {
+              userId: call.user_id,
+              previousMinutes: userData?.available_minutes || 0,
+              deductedSeconds: callDuration,
+              deductedMinutes: Math.round((callDuration / 60) * 100) / 100,
+              newMinutes: updatedUser.available_minutes,
+            });
+          }
         }
+      } else {
+        console.log("[Twilio] Call was not successful, not deducting minutes", {
+          result: result,
+          duration: callDuration,
+          status: callStatus,
+        });
       }
 
       // Release the user's active call status (global tracking)
@@ -1608,20 +1735,29 @@ fastify.post("/twilio-status", async (request, reply) => {
       console.log(`   • Call SID: ${callSid}`);
       console.log(`   • Worker ID: ${callInfo?.workerId || "unknown"}`);
       console.log(`   • Status: ${callStatus}`);
+      console.log(`   • Result: ${result}`);
       console.log(
         `   • Duration: ${callDuration} seconds (${
           Math.round((callDuration / 60) * 100) / 100
         } minutes)`
       );
+      console.log(`   • Error Code: ${callErrorCode || "None"}`);
+      console.log(`   • Error Message: ${callErrorMessage || "None"}`);
       console.log(`   • Completed at: ${new Date().toISOString()}`);
       console.log("");
       console.log("👤 User Details:");
       console.log(`   • User ID: ${call.user_id}`);
       console.log(`   • User Email: ${userData?.email || "N/A"}`);
       console.log(`   • Minutes Before: ${userData?.available_minutes || 0}`);
-      console.log(`   • Minutes After: ${updatedUser?.available_minutes || 0}`);
       console.log(
-        `   • Minutes Used: ${Math.round((callDuration / 60) * 100) / 100}`
+        `   • Minutes After: ${
+          updatedUser?.available_minutes || userData?.available_minutes || 0
+        }`
+      );
+      console.log(
+        `   • Minutes Used: ${
+          result === "success" ? Math.round((callDuration / 60) * 100) / 100 : 0
+        }`
       );
       console.log("");
       console.log("🎯 Lead Details:");
@@ -2432,3 +2568,281 @@ fastify.listen({ port: PORT, host: "0.0.0.0" }, () => {
   console.log("=".repeat(80));
 });
 // 🚀 Force Railway deployment - Sun Jun 22 21:04:44 EDT 2025
+
+// Add automatic cleanup function for stuck calls with enhanced logging
+async function cleanupStuckCalls() {
+  try {
+    console.log("=".repeat(80));
+    console.log("🧹 [CLEANUP] Running automatic cleanup of stuck calls...");
+    console.log("=".repeat(80));
+
+    // Get all calls marked as "In Progress"
+    const { data: stuckCalls, error: callsError } = await supabase
+      .from("calls")
+      .select("*")
+      .eq("status", "In Progress");
+
+    if (callsError) {
+      console.error("[CLEANUP] Error getting stuck calls:", callsError);
+      return;
+    }
+
+    if (!stuckCalls || stuckCalls.length === 0) {
+      console.log("[CLEANUP] No stuck calls found");
+      return;
+    }
+
+    console.log(`[CLEANUP] Found ${stuckCalls.length} stuck calls`);
+
+    for (const call of stuckCalls) {
+      try {
+        console.log(`[CLEANUP] Checking call ${call.call_sid}...`);
+
+        // Check real status in Twilio
+        const twilioCall = await twilioClient.calls(call.call_sid).fetch();
+
+        console.log(`[CLEANUP] Twilio status for ${call.call_sid}:`, {
+          twilioStatus: twilioCall.status,
+          twilioDuration: twilioCall.duration,
+          twilioErrorCode: twilioCall.errorCode,
+          twilioErrorMessage: twilioCall.errorMessage,
+          dbStatus: call.status,
+          dbDuration: call.duration,
+        });
+
+        // If call is actually completed in Twilio but marked as "In Progress" in DB
+        if (
+          ["completed", "failed", "busy", "no-answer", "canceled"].includes(
+            twilioCall.status
+          )
+        ) {
+          console.log(
+            `[CLEANUP] Updating call ${call.call_sid} from In Progress to ${twilioCall.status}`
+          );
+
+          // Determine result based on Twilio status
+          let result = "initiated";
+          if (twilioCall.status === "completed" && twilioCall.duration > 0) {
+            result = "success";
+          } else if (
+            ["failed", "busy", "no-answer", "canceled"].includes(
+              twilioCall.status
+            )
+          ) {
+            result = "failed";
+          }
+
+          // Update call status in database
+          const updateData = {
+            status: twilioCall.status,
+            duration: twilioCall.duration || 0,
+            result: result,
+            updated_at: new Date().toISOString(),
+          };
+
+          // Add error information if available
+          if (twilioCall.errorCode || twilioCall.errorMessage) {
+            updateData.error_code = twilioCall.errorCode;
+            updateData.error_message = twilioCall.errorMessage;
+            console.log(
+              `[CLEANUP] Adding error info: ${twilioCall.errorCode} - ${twilioCall.errorMessage}`
+            );
+          }
+
+          const { error: updateError } = await supabase
+            .from("calls")
+            .update(updateData)
+            .eq("call_sid", call.call_sid);
+
+          if (updateError) {
+            console.error(
+              `[CLEANUP] Error updating call ${call.call_sid}:`,
+              updateError
+            );
+          } else {
+            // Remove from global tracking
+            globalActiveCalls.delete(call.call_sid);
+            userActiveCalls.delete(call.user_id);
+            activeCalls--;
+            console.log(
+              `[CLEANUP] Call ${call.call_sid} cleaned up successfully`
+            );
+          }
+
+          // Update associated queue item
+          if (call.queue_id) {
+            await supabase
+              .from("call_queue")
+              .update({
+                status: "completed",
+                completed_at: new Date().toISOString(),
+              })
+              .eq("id", call.queue_id);
+          }
+        } else if (twilioCall.status === "in-progress") {
+          // Check if call has been running too long (more than 15 minutes)
+          const callStartTime = new Date(call.created_at);
+          const now = new Date();
+          const durationMinutes = (now - callStartTime) / (1000 * 60);
+
+          if (durationMinutes > 15) {
+            console.log(
+              `[CLEANUP] Call ${
+                call.call_sid
+              } has been running for ${Math.round(
+                durationMinutes
+              )} minutes - hanging up`
+            );
+
+            try {
+              // Hang up the call
+              await twilioClient
+                .calls(call.call_sid)
+                .update({ status: "completed" });
+
+              // Update database
+              await supabase
+                .from("calls")
+                .update({
+                  status: "completed",
+                  duration: Math.round(durationMinutes * 60),
+                  result: "failed",
+                  error_code: "TIMEOUT",
+                  error_message: "Call hung up due to timeout (15+ minutes)",
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("call_sid", call.call_sid);
+
+              // Remove from global tracking
+              globalActiveCalls.delete(call.call_sid);
+              userActiveCalls.delete(call.user_id);
+              activeCalls--;
+
+              console.log(
+                `[CLEANUP] Call ${call.call_sid} hung up and cleaned up`
+              );
+            } catch (hangupError) {
+              console.error(
+                `[CLEANUP] Error hanging up call ${call.call_sid}:`,
+                hangupError
+              );
+            }
+          } else {
+            console.log(
+              `[CLEANUP] Call ${
+                call.call_sid
+              } is still in progress (${Math.round(
+                durationMinutes
+              )} minutes) - leaving as is`
+            );
+          }
+        }
+      } catch (twilioError) {
+        console.error(
+          `[CLEANUP] Error checking call ${call.call_sid} in Twilio:`,
+          twilioError
+        );
+
+        // If we can't verify in Twilio, mark as failed
+        await supabase
+          .from("calls")
+          .update({
+            status: "failed",
+            result: "failed",
+            error_code: "TWILIO_ERROR",
+            error_message: `Error checking call status: ${twilioError.message}`,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("call_sid", call.call_sid);
+
+        // Remove from global tracking
+        globalActiveCalls.delete(call.call_sid);
+        userActiveCalls.delete(call.user_id);
+        activeCalls--;
+      }
+    }
+
+    // Clean up stuck queue items
+    const { data: stuckQueue } = await supabase
+      .from("call_queue")
+      .select("*")
+      .eq("status", "in_progress");
+
+    if (stuckQueue && stuckQueue.length > 0) {
+      console.log(`[CLEANUP] Found ${stuckQueue.length} stuck queue items`);
+
+      for (const queueItem of stuckQueue) {
+        const { data: associatedCall } = await supabase
+          .from("calls")
+          .select("status")
+          .eq("queue_id", queueItem.id)
+          .single();
+
+        if (!associatedCall || associatedCall.status !== "In Progress") {
+          await supabase
+            .from("call_queue")
+            .update({
+              status: "completed",
+              completed_at: new Date().toISOString(),
+            })
+            .eq("id", queueItem.id);
+
+          console.log(
+            `[CLEANUP] Queue item ${queueItem.id} marked as completed`
+          );
+        }
+      }
+    }
+
+    console.log(
+      `[CLEANUP] Cleanup completed. Active calls: ${globalActiveCalls.size}/${QUEUE_CONFIG.maxConcurrentCalls}`
+    );
+    console.log("=".repeat(80));
+  } catch (error) {
+    console.error("[CLEANUP] Error during cleanup:", error);
+    console.log("=".repeat(80));
+  }
+}
+
+// Run cleanup every 5 minutes
+const CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
+console.log(
+  `[CLEANUP] Setting up automatic cleanup every ${
+    CLEANUP_INTERVAL / 1000
+  } seconds`
+);
+
+const cleanupInterval = setInterval(cleanupStuckCalls, CLEANUP_INTERVAL);
+
+// Clean up interval on shutdown
+process.on("SIGTERM", () => {
+  clearInterval(cleanupInterval);
+  clearInterval(queueInterval);
+});
+process.on("SIGINT", () => {
+  clearInterval(cleanupInterval);
+  clearInterval(queueInterval);
+});
+
+// Run initial cleanup on startup
+console.log("[CLEANUP] Running initial cleanup on startup");
+setTimeout(cleanupStuckCalls, 10000); // Run after 10 seconds
+
+// Endpoint to manually trigger cleanup
+fastify.post("/queue/cleanup", async (request, reply) => {
+  try {
+    console.log("[Queue] Manual cleanup triggered");
+
+    // Run cleanup immediately
+    await cleanupStuckCalls();
+
+    reply.send({
+      success: true,
+      message: "Cleanup completed successfully",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("[Queue] Error during manual cleanup:", error);
+    reply.code(500).send({ error: "Error during cleanup" });
+  }
+});
