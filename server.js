@@ -186,13 +186,6 @@ async function processAllPendingQueues() {
           name,
           phone,
           email
-        ),
-        user:auth.users (
-          available_minutes,
-          email,
-          first_name,
-          last_name,
-          assistant_name
         )
       `
       )
@@ -214,10 +207,29 @@ async function processAllPendingQueues() {
       return;
     }
 
+    // Get user data separately to avoid foreign key issues
+    const userIds = [...new Set(pendingQueues.map((item) => item.user_id))];
+    const { data: usersData, error: usersError } = await supabase
+      .from("users")
+      .select(
+        "id, available_minutes, email, first_name, last_name, assistant_name"
+      )
+      .in("id", userIds);
+
+    if (usersError) {
+      console.error("[Queue] Error fetching users data:", usersError);
+      throw usersError;
+    }
+
+    // Create a map for quick user lookup
+    const usersMap = new Map(usersData?.map((user) => [user.id, user]) || []);
+
     // Filter and prioritize queue items
     const eligibleItems = pendingQueues.filter((item) => {
+      const user = usersMap.get(item.user_id);
+
       // Check if user has available minutes
-      if (!item.user || item.user.available_minutes <= 0) {
+      if (!user || user.available_minutes <= 0) {
         console.log(
           `[Queue] User ${item.user_id} has no available minutes, skipping`
         );
@@ -1965,7 +1977,7 @@ fastify.get("/api/calls/:callSid", async (request, reply) => {
           phone,
           email
         ),
-        user:auth.users (
+        user:users (
           email
         )
       `
