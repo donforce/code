@@ -794,7 +794,7 @@ fastify.register(async (fastifyInstance) => {
           elevenLabsWs.on("message", async (data) => {
             try {
               const message = JSON.parse(data);
-
+              console.log(`[ElevenLabs] Event Type: ${message.type}`);
               // Only log critical events, skip ping messages
               if (message.type !== "ping") {
                 console.log(`[ElevenLabs] Event: ${message.type}`);
@@ -856,14 +856,13 @@ fastify.register(async (fastifyInstance) => {
                   break;
 
                 case "user_speaking":
+                  console.log(
+                    `🎤 [USER] Speaking - Duration: ${speakingDuration}s, Should Interrupt: ${shouldInterrupt}`
+                  );
                   const speakingDuration =
                     message.user_speaking_event?.duration || 0;
                   const shouldInterrupt =
                     message.user_speaking_event?.should_interrupt;
-
-                  console.log(
-                    `🎤 [USER] Speaking - Duration: ${speakingDuration}s, Should Interrupt: ${shouldInterrupt}`
-                  );
 
                   if (shouldInterrupt) {
                     console.log(
