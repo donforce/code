@@ -48,7 +48,10 @@ if (
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-const fastify = Fastify();
+const fastify = Fastify({
+  logger: false,
+  rawBody: true, // Preserve raw body for webhook signature verification
+});
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
@@ -80,7 +83,7 @@ const workerPool = new Set(); // Track active workers
 console.log("[Queue] Multi-threaded configuration:", QUEUE_CONFIG);
 
 // Function to verify ElevenLabs webhook signature
-function verifyElevenLabsSignature(payload, signature) {
+function verifyElevenLabsSignature(rawBody, signature) {
   try {
     console.log("[WEBHOOK] Verifying signature format:", signature);
 
@@ -113,8 +116,8 @@ function verifyElevenLabsSignature(payload, signature) {
       return false;
     }
 
-    // Generate expected signature using the format: timestamp.payload
-    const signedPayload = `${timestamp}.${payload}`;
+    // Generate expected signature using the format: timestamp.rawBody
+    const signedPayload = `${timestamp}.${rawBody}`;
     const expectedSignature = crypto
       .createHmac("sha256", ELEVENLABS_WEBHOOK_SECRET)
       .update(signedPayload, "utf8")
@@ -895,11 +898,6 @@ fastify.register(async (fastifyInstance) => {
           elevenLabsWs.on("message", async (data) => {
             try {
               const message = JSON.parse(data);
-              console.log(
-                "[ElevenLabs] WS Event:",
-                message.type,
-                JSON.stringify(message, null, 2)
-              );
 
               switch (message.type) {
                 case "conversation_initiation_metadata":
@@ -2046,12 +2044,13 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     console.log("=".repeat(80));
 
     // Get the raw body for signature verification
-    const rawBody = JSON.stringify(request.body);
+    const rawBody = request.rawBody || JSON.stringify(request.body);
     const signature = request.headers["elevenlabs-signature"];
 
     console.log("🔐 [WEBHOOK] Signature verification:");
     console.log(`   • Received signature: ${signature}`);
     console.log(`   • Body length: ${rawBody.length} characters`);
+    console.log(`   • Raw body preview: ${rawBody.substring(0, 100)}...`);
 
     // Verify the signature
     if (!signature) {
