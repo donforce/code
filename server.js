@@ -9,6 +9,7 @@ import Twilio from "twilio";
 import { createClient } from "@supabase/supabase-js";
 import os from "os";
 import { performance } from "perf_hooks";
+import crypto from "crypto";
 
 dotenv.config();
 
@@ -44,6 +45,28 @@ fastify.register(fastifyWs);
 
 const PORT = process.env.PORT || 8000;
 const activeUserCalls = new Map(); // Track active calls per user
+
+// ElevenLabs webhook secret
+const ELEVENLABS_WEBHOOK_SECRET =
+  "wsec_aa13b4b7bba3044aa6c9c231cfe02e13cac62a418c56e075c4bc614cebe4602a";
+
+// Function to verify ElevenLabs webhook signature
+function verifyElevenLabsSignature(payload, signature) {
+  try {
+    const expectedSignature = crypto
+      .createHmac("sha256", ELEVENLABS_WEBHOOK_SECRET)
+      .update(payload, "utf8")
+      .digest("hex");
+
+    return crypto.timingSafeEqual(
+      Buffer.from(signature, "hex"),
+      Buffer.from(expectedSignature, "hex")
+    );
+  } catch (error) {
+    console.error("[WEBHOOK] Error verifying signature:", error);
+    return false;
+  }
+}
 
 // Add metrics tracking variables
 let startTime = performance.now();
@@ -350,6 +373,7 @@ async function processQueueItem(queueItem) {
       status: "In Progress",
       result: "initiated",
       queue_id: queueItem.id,
+      conversation_id: null, // Will be updated when ElevenLabs sends conversation_id
     });
 
     if (callError) {
@@ -582,6 +606,47 @@ fastify.register(async (fastifyInstance) => {
                     "[ElevenLabs] Received initiation metadata",
                     JSON.stringify(message, null, 2)
                   );
+
+                  // Save conversation_id to database
+                  if (
+                    callSid &&
+                    message.conversation_initiation_metadata_event
+                      ?.conversation_id
+                  ) {
+                    const conversationId =
+                      message.conversation_initiation_metadata_event
+                        .conversation_id;
+                    console.log(
+                      "[ElevenLabs] Saving conversation_id:",
+                      conversationId
+                    );
+
+                    try {
+                      const { error: updateError } = await supabase
+                        .from("calls")
+                        .update({
+                          conversation_id: conversationId,
+                          updated_at: new Date().toISOString(),
+                        })
+                        .eq("call_sid", callSid);
+
+                      if (updateError) {
+                        console.error(
+                          "[ElevenLabs] Error saving conversation_id:",
+                          updateError
+                        );
+                      } else {
+                        console.log(
+                          "[ElevenLabs] Conversation_id saved to database"
+                        );
+                      }
+                    } catch (dbError) {
+                      console.error(
+                        "[ElevenLabs] Error saving conversation_id to DB:",
+                        dbError
+                      );
+                    }
+                  }
                   break;
 
                 case "audio":
@@ -1010,15 +1075,17 @@ fastify.post("/twilio-status", async (request, reply) => {
         mins: callDuration, // Pass the duration directly in seconds
       });
 
+      let updatedUser = null;
       if (userError) {
         console.error("[Twilio] Error updating user minutes:", userError);
       } else {
         // Get updated available minutes
-        const { data: updatedUser, error: updateFetchError } = await supabase
-          .from("users")
-          .select("available_minutes")
-          .eq("id", call.user_id)
-          .single();
+        const { data: updatedUserData, error: updateFetchError } =
+          await supabase
+            .from("users")
+            .select("available_minutes")
+            .eq("id", call.user_id)
+            .single();
 
         if (updateFetchError) {
           console.error(
@@ -1026,6 +1093,7 @@ fastify.post("/twilio-status", async (request, reply) => {
             updateFetchError
           );
         } else {
+          updatedUser = updatedUserData;
           console.log("[Twilio] User minutes updated successfully", {
             userId: call.user_id,
             previousMinutes: userData?.available_minutes || 0,
@@ -1199,8 +1267,27 @@ fastify.get("/metrics", async (request, reply) => {
   }
 });
 
+// Test endpoint for logging
+fastify.get("/test-logs", async (request, reply) => {
+  console.log("🔥🔥🔥 TEST LOGS ENDPOINT CALLED 🔥🔥🔥");
+  console.log("🔥🔥🔥 TIMESTAMP:", new Date().toISOString());
+  console.log("🔥🔥🔥 USER AGENT:", request.headers["user-agent"]);
+  console.log("🔥🔥🔥 REMOTE ADDRESS:", request.ip);
+
+  return reply.send({
+    success: true,
+    message: "Test logs endpoint called",
+    timestamp: new Date().toISOString(),
+    logs: "Check Railway logs for console.log messages",
+  });
+});
+
 // API Integration endpoints
 fastify.post("/api/integration/leads", async (request, reply) => {
+  console.log("🔥🔥🔥 ENDPOINT CALLED - Integration leads endpoint 🔥🔥🔥");
+  console.log("🔥🔥🔥 TIMESTAMP:", new Date().toISOString());
+  console.log("🔥🔥🔥 REQUEST BODY:", JSON.stringify(request.body));
+
   try {
     console.log("[API] Integration leads endpoint called");
     console.log(
@@ -1422,12 +1509,15 @@ fastify.get("/api/calls/:callSid", async (request, reply) => {
         result: call.result,
         created_at: call.created_at,
         updated_at: call.updated_at,
+        conversation_id: call.conversation_id,
         transcript_summary: call.transcript_summary,
         conversation_duration: call.conversation_duration,
         turn_count: call.turn_count,
         data_collection_results: call.data_collection_results,
         data_collection_success: call.data_collection_success,
         data_collection_error: call.data_collection_error,
+        call_successful: call.call_successful,
+        elevenlabs_analysis: call.elevenlabs_analysis,
         lead: call.lead,
         user: call.user,
       },
@@ -1438,7 +1528,135 @@ fastify.get("/api/calls/:callSid", async (request, reply) => {
   }
 });
 
+// ElevenLabs webhook endpoint
+fastify.post("/webhook/elevenlabs", async (request, reply) => {
+  try {
+    console.log("=".repeat(80));
+    console.log("🎯 [ELEVENLABS WEBHOOK] Received webhook from ElevenLabs");
+    console.log("=".repeat(80));
+
+    // Get the raw body for signature verification
+    const rawBody = JSON.stringify(request.body);
+    const signature = request.headers["elevenlabs-signature"];
+
+    console.log("🔐 [WEBHOOK] Signature verification:");
+    console.log(`   • Received signature: ${signature}`);
+    console.log(`   • Body length: ${rawBody.length} characters`);
+
+    // Verify the signature
+    if (!signature) {
+      console.error("[WEBHOOK] Error: Missing ElevenLabs-Signature header");
+      return reply.code(401).send({ error: "Missing signature header" });
+    }
+
+    const isValidSignature = verifyElevenLabsSignature(rawBody, signature);
+
+    if (!isValidSignature) {
+      console.error("[WEBHOOK] Error: Invalid signature");
+      return reply.code(401).send({ error: "Invalid signature" });
+    }
+
+    console.log("✅ [WEBHOOK] Signature verified successfully");
+    console.log("📋 Webhook Data:", JSON.stringify(request.body, null, 2));
+
+    const webhookData = request.body;
+
+    // Extract key data from webhook
+    const conversationId = webhookData.data?.conversation_id;
+    const callSuccessful = webhookData.data?.analysis?.call_successful;
+    const transcriptSummary = webhookData.data?.analysis?.transcript_summary;
+    const analysis = webhookData.data?.analysis;
+    const dataCollectionResults =
+      webhookData.data?.analysis?.data_collection_results;
+
+    console.log("🔍 [WEBHOOK] Extracted Data:");
+    console.log(`   • Conversation ID: ${conversationId}`);
+    console.log(`   • Call Successful: ${callSuccessful}`);
+    console.log(`   • Has Transcript Summary: ${!!transcriptSummary}`);
+    console.log(`   • Has Analysis: ${!!analysis}`);
+    console.log(`   • Has Data Collection: ${!!dataCollectionResults}`);
+
+    if (!conversationId) {
+      console.error("[WEBHOOK] Error: Missing conversation_id");
+      return reply.code(400).send({ error: "Missing conversation_id" });
+    }
+
+    // Find the call record by conversation_id
+    const { data: call, error: callError } = await supabase
+      .from("calls")
+      .select("*")
+      .eq("conversation_id", conversationId)
+      .single();
+
+    if (callError) {
+      console.error(
+        "[WEBHOOK] Error finding call by conversation_id:",
+        callError
+      );
+      return reply
+        .code(404)
+        .send({ error: "Call not found for conversation_id" });
+    }
+
+    console.log("[WEBHOOK] Found call:", call.call_sid);
+
+    // Update call record with webhook data
+    const updateData = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (transcriptSummary) {
+      updateData.transcript_summary = transcriptSummary;
+      console.log("[WEBHOOK] Added transcript_summary");
+    }
+
+    if (analysis) {
+      updateData.elevenlabs_analysis = analysis;
+      console.log("[WEBHOOK] Added analysis");
+    }
+
+    if (dataCollectionResults) {
+      updateData.data_collection_results = dataCollectionResults;
+      console.log("[WEBHOOK] Added data_collection_results");
+    }
+
+    if (callSuccessful !== undefined) {
+      updateData.call_successful = callSuccessful;
+      console.log("[WEBHOOK] Added call_successful:", callSuccessful);
+    }
+
+    // Update the call record
+    const { error: updateError } = await supabase
+      .from("calls")
+      .update(updateData)
+      .eq("conversation_id", conversationId);
+
+    if (updateError) {
+      console.error("[WEBHOOK] Error updating call:", updateError);
+      return reply.code(500).send({ error: "Failed to update call" });
+    }
+
+    console.log("✅ [WEBHOOK] Call updated successfully");
+    console.log("=".repeat(80));
+
+    return reply.send({
+      success: true,
+      message: "Webhook processed successfully",
+      conversation_id: conversationId,
+      call_sid: call.call_sid,
+    });
+  } catch (error) {
+    console.error("[WEBHOOK] Error processing webhook:", error);
+    console.log("=".repeat(80));
+    return reply.code(500).send({ error: "Internal server error" });
+  }
+});
+
 fastify.listen({ port: PORT, host: "0.0.0.0" }, () => {
+  console.log("🚀 SERVER STARTED - Railway deployment successful!");
   console.log(`[Server] Listening on port ${PORT}`);
+  console.log(`[Server] Environment: ${process.env.NODE_ENV || "development"}`);
+  console.log(`[Server] Railway domain: ${RAILWAY_PUBLIC_DOMAIN}`);
+  console.log("=".repeat(80));
 });
 // 🚀 Force Railway deployment - Sun Jun 22 21:04:44 EDT 2025
