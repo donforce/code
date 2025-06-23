@@ -243,10 +243,15 @@ async function processQueueItem(queueItem) {
   try {
     totalCalls++;
     activeCalls++;
+
+    console.log("=".repeat(80));
+    console.log("📞 [CALL START] Starting new call");
+    console.log("=".repeat(80));
+
     // Check available minutes before proceeding
     const { data: userData, error: userError } = await supabase
       .from("users")
-      .select("available_minutes")
+      .select("available_minutes, email")
       .eq("id", queueItem.user_id)
       .single();
 
@@ -258,6 +263,7 @@ async function processQueueItem(queueItem) {
     if (!userData || userData.available_minutes <= 0) {
       console.log("[Queue] No available minutes for user", {
         userId: queueItem.user_id,
+        userEmail: userData?.email,
         availableMinutes: userData?.available_minutes || 0,
       });
 
@@ -286,8 +292,10 @@ async function processQueueItem(queueItem) {
 
     console.log("[Queue] Initiating call", {
       userId: queueItem.user_id,
+      userEmail: userData.email,
       leadId: queueItem.lead_id,
       queueId: queueItem.id,
+      availableMinutes: userData.available_minutes,
     });
 
     const date = new Date();
@@ -349,11 +357,36 @@ async function processQueueItem(queueItem) {
       throw callError;
     }
 
+    // Print call start summary
+    console.log("📱 Call Details:");
+    console.log(`   • Call SID: ${call.sid}`);
+    console.log(`   • Status: In Progress`);
+    console.log(`   • Started at: ${new Date().toISOString()}`);
+    console.log("");
+    console.log("👤 User Details:");
+    console.log(`   • User ID: ${queueItem.user_id}`);
+    console.log(`   • User Email: ${userData.email}`);
+    console.log(`   • Available Minutes: ${userData.available_minutes}`);
+    console.log("");
+    console.log("🎯 Lead Details:");
+    console.log(`   • Lead ID: ${queueItem.lead_id}`);
+    console.log(`   • Name: ${queueItem.lead.name}`);
+    console.log(`   • Phone: ${queueItem.lead.phone}`);
+    console.log(`   • Email: ${queueItem.lead.email}`);
+    console.log("");
+    console.log("📋 Queue Details:");
+    console.log(`   • Queue ID: ${queueItem.id}`);
+    console.log(`   • Queue Status: in_progress`);
+    console.log("=".repeat(80));
+
     return true;
   } catch (error) {
     failedCalls++;
     activeCalls--;
     console.error("[Queue] Error processing call:", error);
+    console.log("=".repeat(80));
+    console.log("❌ [CALL START] Error occurred during call initiation");
+    console.log("=".repeat(80));
     // Release user in case of error
     activeUserCalls.delete(queueItem.user_id);
     return false;
@@ -733,6 +766,10 @@ fastify.post("/twilio-status", async (request, reply) => {
   const callSid = request.body.CallSid;
   const callDuration = parseInt(request.body.CallDuration || "0", 10);
   const callStatus = request.body.CallStatus;
+
+  console.log("=".repeat(80));
+  console.log("📞 [CALL SUMMARY] Call completed - Starting summary");
+  console.log("=".repeat(80));
   console.log("[Twilio] Status update received", {
     callSid,
     callStatus,
@@ -748,7 +785,7 @@ fastify.post("/twilio-status", async (request, reply) => {
         status: callStatus,
       })
       .eq("call_sid", callSid)
-      .select("user_id, queue_id")
+      .select("user_id, queue_id, lead_id")
       .single();
 
     if (callError) {
@@ -762,7 +799,7 @@ fastify.post("/twilio-status", async (request, reply) => {
       // Get current available minutes before update
       const { data: userData, error: fetchError } = await supabase
         .from("users")
-        .select("available_minutes")
+        .select("available_minutes, email")
         .eq("id", call.user_id)
         .single();
 
@@ -771,7 +808,26 @@ fastify.post("/twilio-status", async (request, reply) => {
       } else {
         console.log("[Twilio] Current user minutes before update:", {
           userId: call.user_id,
+          userEmail: userData.email,
           availableMinutes: userData.available_minutes,
+        });
+      }
+
+      // Get lead information
+      const { data: leadData, error: leadError } = await supabase
+        .from("leads")
+        .select("name, phone, email")
+        .eq("id", call.lead_id)
+        .single();
+
+      if (leadError) {
+        console.error("[Twilio] Error fetching lead data:", leadError);
+      } else {
+        console.log("[Twilio] Lead information:", {
+          leadId: call.lead_id,
+          leadName: leadData.name,
+          leadPhone: leadData.phone,
+          leadEmail: leadData.email,
         });
       }
 
@@ -801,6 +857,7 @@ fastify.post("/twilio-status", async (request, reply) => {
             userId: call.user_id,
             previousMinutes: userData?.available_minutes || 0,
             deductedSeconds: callDuration,
+            deductedMinutes: Math.round((callDuration / 60) * 100) / 100,
             newMinutes: updatedUser.available_minutes,
           });
         }
@@ -830,11 +887,52 @@ fastify.post("/twilio-status", async (request, reply) => {
 
       // Process next queue item for this user
       await processUserQueue(call.user_id);
+
+      // Print comprehensive call summary
+      console.log("=".repeat(80));
+      console.log("📞 [CALL SUMMARY] Final Summary");
+      console.log("=".repeat(80));
+      console.log("📱 Call Details:");
+      console.log(`   • Call SID: ${callSid}`);
+      console.log(`   • Status: ${callStatus}`);
+      console.log(
+        `   • Duration: ${callDuration} seconds (${
+          Math.round((callDuration / 60) * 100) / 100
+        } minutes)`
+      );
+      console.log(`   • Completed at: ${new Date().toISOString()}`);
+      console.log("");
+      console.log("👤 User Details:");
+      console.log(`   • User ID: ${call.user_id}`);
+      console.log(`   • User Email: ${userData?.email || "N/A"}`);
+      console.log(`   • Minutes Before: ${userData?.available_minutes || 0}`);
+      console.log(`   • Minutes After: ${updatedUser?.available_minutes || 0}`);
+      console.log(
+        `   • Minutes Used: ${Math.round((callDuration / 60) * 100) / 100}`
+      );
+      console.log("");
+      console.log("🎯 Lead Details:");
+      console.log(`   • Lead ID: ${call.lead_id}`);
+      console.log(`   • Name: ${leadData?.name || "N/A"}`);
+      console.log(`   • Phone: ${leadData?.phone || "N/A"}`);
+      console.log(`   • Email: ${leadData?.email || "N/A"}`);
+      console.log("");
+      console.log("📋 Queue Details:");
+      console.log(`   • Queue ID: ${call.queue_id || "N/A"}`);
+      console.log(`   • Queue Status: completed`);
+      console.log("");
+      console.log("🔄 Next Steps:");
+      console.log(`   • User released from active calls`);
+      console.log(`   • Processing next queue item for user ${call.user_id}`);
+      console.log("=".repeat(80));
     }
 
     reply.code(200).send("OK");
   } catch (error) {
     console.error("[Twilio] Error in status callback:", error);
+    console.log("=".repeat(80));
+    console.log("❌ [CALL SUMMARY] Error occurred during call completion");
+    console.log("=".repeat(80));
     reply.code(500).send("Error");
   }
 });
