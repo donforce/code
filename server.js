@@ -187,7 +187,7 @@ async function processAllPendingQueues() {
           phone,
           email
         ),
-        user:users (
+        user:auth.users (
           available_minutes,
           email,
           first_name,
@@ -1965,7 +1965,7 @@ fastify.get("/api/calls/:callSid", async (request, reply) => {
           phone,
           email
         ),
-        user:users (
+        user:auth.users (
           email
         )
       `
