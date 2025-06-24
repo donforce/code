@@ -1580,6 +1580,175 @@ fastify.register(async (fastifyInstance) => {
   );
 });
 
+// Function to clean up stuck calls
+async function cleanupStuckCalls() {
+  try {
+    console.log("[CLEANUP] Starting cleanup of stuck calls...");
+
+    // Get all calls that are stuck in "In Progress" status
+    const { data: stuckCalls, error: callsError } = await supabase
+      .from("calls")
+      .select("*")
+      .eq("status", "In Progress");
+
+    if (callsError) {
+      console.error("[CLEANUP] Error fetching stuck calls:", callsError);
+      return;
+    }
+
+    if (!stuckCalls || stuckCalls.length === 0) {
+      console.log("[CLEANUP] No stuck calls found");
+      return;
+    }
+
+    console.log(`[CLEANUP] Found ${stuckCalls.length} stuck calls`);
+
+    for (const call of stuckCalls) {
+      try {
+        // Get the actual call status from Twilio
+        const twilioCall = await twilioClient.calls(call.call_sid).fetch();
+
+        console.log(
+          `[CLEANUP] Call ${call.call_sid} status in Twilio: ${twilioCall.status}`
+        );
+
+        // If the call has ended in Twilio but is still marked as "In Progress"
+        if (
+          ["completed", "failed", "busy", "no-answer", "canceled"].includes(
+            twilioCall.status
+          )
+        ) {
+          console.log(
+            `[CLEANUP] Updating call ${call.call_sid} status to ${twilioCall.status}`
+          );
+
+          // Update the call in the database
+          await supabase
+            .from("calls")
+            .update({
+              status: twilioCall.status,
+              duration: twilioCall.duration || 0,
+              result: twilioCall.status === "completed" ? "success" : "failed",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("call_sid", call.call_sid);
+
+          // Remove from global tracking
+          globalActiveCalls.delete(call.call_sid);
+          if (call.user_id) userActiveCalls.delete(call.user_id);
+          activeCalls--;
+
+          // Update associated queue item if exists
+          if (call.queue_id) {
+            await supabase
+              .from("call_queue")
+              .update({
+                status: "completed",
+                completed_at: new Date().toISOString(),
+              })
+              .eq("id", call.queue_id);
+          }
+        } else if (twilioCall.status === "in-progress") {
+          // Check if call has been running too long (more than 10 minutes)
+          const callStartTime = new Date(call.created_at);
+          const now = new Date();
+          const durationMinutes = (now - callStartTime) / (1000 * 60);
+
+          if (durationMinutes > 10) {
+            console.log(
+              `[CLEANUP] Call ${
+                call.call_sid
+              } has been running for ${Math.round(
+                durationMinutes
+              )} minutes - hanging up`
+            );
+
+            try {
+              // Hang up the call
+              await twilioClient
+                .calls(call.call_sid)
+                .update({ status: "completed" });
+
+              // Update database
+              await supabase
+                .from("calls")
+                .update({
+                  status: "completed",
+                  duration: Math.round(durationMinutes * 60),
+                  result: "failed",
+                  error_code: "TIMEOUT",
+                  error_message: "Call hung up due to timeout (10+ minutes)",
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("call_sid", call.call_sid);
+
+              // Remove from global tracking
+              globalActiveCalls.delete(call.call_sid);
+              if (call.user_id) userActiveCalls.delete(call.user_id);
+              activeCalls--;
+            } catch (hangupError) {
+              console.error(
+                `[CLEANUP] Error hanging up call ${call.call_sid}:`,
+                hangupError
+              );
+            }
+          }
+        }
+      } catch (twilioError) {
+        // If we can't verify in Twilio, mark as failed
+        console.error(
+          `[CLEANUP] Error checking call ${call.call_sid} in Twilio:`,
+          twilioError
+        );
+
+        await supabase
+          .from("calls")
+          .update({
+            status: "failed",
+            result: "failed",
+            error_code: "TWILIO_ERROR",
+            error_message: `Error checking call status: ${twilioError.message}`,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("call_sid", call.call_sid);
+
+        // Remove from global tracking
+        globalActiveCalls.delete(call.call_sid);
+        if (call.user_id) userActiveCalls.delete(call.user_id);
+        activeCalls--;
+      }
+    }
+
+    // Clean up stuck queue items
+    const { data: stuckQueue } = await supabase
+      .from("call_queue")
+      .select("*")
+      .eq("status", "in_progress");
+
+    if (stuckQueue && stuckQueue.length > 0) {
+      for (const queueItem of stuckQueue) {
+        const { data: associatedCall } = await supabase
+          .from("calls")
+          .select("status")
+          .eq("queue_id", queueItem.id)
+          .single();
+
+        if (!associatedCall || associatedCall.status !== "In Progress") {
+          await supabase
+            .from("call_queue")
+            .update({
+              status: "completed",
+              completed_at: new Date().toISOString(),
+            })
+            .eq("id", queueItem.id);
+        }
+      }
+    }
+  } catch (error) {
+    console.error("[CLEANUP] Error during cleanup:", error);
+  }
+}
+
 // Your existing twilio-status endpoint with enhanced logging and error handling
 fastify.post("/twilio-status", async (request, reply) => {
   const callSid = request.body.CallSid;
