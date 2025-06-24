@@ -9,8 +9,8 @@
     "dev": "node --watch server.js"
   },
   "dependencies": {
-    "@fastify/formbody": "^7.4.0",
-    "@fastify/websocket": "^8.4.0",
+    "@fastify/formbody": "^8.0.2",
+    "@fastify/websocket": "^8.3.1",
     "@supabase/supabase-js": "^2.39.7",
     "dotenv": "^16.4.5",
     "fastify": "^4.26.1",
