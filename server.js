@@ -921,17 +921,23 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     console.log(
       `[Queue] Worker ${workerId} - Verificando disponibilidad del calendario (solo informativo)...`
     );
-    const calendarAvailability = await checkGoogleCalendarAvailability(
+    const calendarSummary = await getCalendarAvailabilitySummary(
       queueItem.user_id
     );
 
-    if (!calendarAvailability.available) {
+    if (!calendarSummary) {
       console.log(
-        `[Queue] Worker ${workerId} - ⚠️ Calendario no disponible: ${calendarAvailability.reason} (pero continuando con la llamada)`
+        `[Queue] Worker ${workerId} - ⚠️ No se pudo obtener resumen del calendario (pero continuando con la llamada)`
       );
     } else {
       console.log(
-        `[Queue] Worker ${workerId} - ✅ Calendario disponible: ${calendarAvailability.calendars} calendarios encontrados`
+        `[Queue] Worker ${workerId} - ✅ Resumen del calendario obtenido:`,
+        {
+          totalEvents: calendarSummary.totalEvents,
+          freeDays: calendarSummary.freeDays.length,
+          busyDays: calendarSummary.busyDays.length,
+          timezone: calendarSummary.timezone,
+        }
       );
     }
 
