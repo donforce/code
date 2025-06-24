@@ -23,6 +23,9 @@ const {
   SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY,
   RAILWAY_PUBLIC_DOMAIN,
+  // Google Calendar configuration
+  GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET,
   // Multi-threading configuration
   MAX_CONCURRENT_CALLS,
   MAX_CALLS_PER_USER,
@@ -41,7 +44,9 @@ if (
   !TWILIO_PHONE_NUMBER ||
   !SUPABASE_URL ||
   !SUPABASE_SERVICE_ROLE_KEY ||
-  !RAILWAY_PUBLIC_DOMAIN
+  !RAILWAY_PUBLIC_DOMAIN ||
+  !GOOGLE_CLIENT_ID ||
+  !GOOGLE_CLIENT_SECRET
 ) {
   console.error("Missing required environment variables");
   throw new Error("Missing required environment variables");
@@ -385,6 +390,417 @@ async function cancelPendingCalls(userId, reason) {
   });
 }
 
+// Función para verificar disponibilidad del calendario de Google
+async function checkGoogleCalendarAvailability(userId) {
+  try {
+    console.log(
+      `[Calendar] Verificando disponibilidad del calendario para usuario: ${userId}`
+    );
+
+    // Obtener configuración del calendario del usuario
+    const { data: calendarSettings, error: settingsError } = await supabase
+      .from("user_calendar_settings")
+      .select(
+        "access_token, refresh_token, calendar_enabled, calendar_timezone"
+      )
+      .eq("user_id", userId)
+      .single();
+
+    if (settingsError) {
+      console.log(
+        `[Calendar] No se encontró configuración de calendario para usuario ${userId}:`,
+        settingsError.message
+      );
+      return { available: false, reason: "No calendar configuration found" };
+    }
+
+    if (!calendarSettings?.calendar_enabled) {
+      console.log(`[Calendar] Calendario no habilitado para usuario ${userId}`);
+      return { available: false, reason: "Calendar not enabled" };
+    }
+
+    if (!calendarSettings?.access_token) {
+      console.log(`[Calendar] No hay token de acceso para usuario ${userId}`);
+      return { available: false, reason: "No access token" };
+    }
+
+    // Verificar si el token actual es válido
+    try {
+      const tokenInfoResponse = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?access_token=${calendarSettings.access_token}`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (!tokenInfoResponse.ok) {
+        console.log(
+          `[Calendar] Token expirado para usuario ${userId}, intentando renovar...`
+        );
+
+        // Intentar renovar el token
+        const { google } = require("googleapis");
+        const oauth2Client = new google.auth.OAuth2(
+          process.env.GOOGLE_CLIENT_ID,
+          process.env.GOOGLE_CLIENT_SECRET
+        );
+
+        oauth2Client.setCredentials({
+          access_token: calendarSettings.access_token,
+          refresh_token: calendarSettings.refresh_token,
+        });
+
+        const { credentials } = await oauth2Client.refreshAccessToken();
+
+        if (!credentials.access_token) {
+          console.log(
+            `[Calendar] No se pudo renovar el token para usuario ${userId}`
+          );
+          return { available: false, reason: "Token renewal failed" };
+        }
+
+        // Actualizar el token en la base de datos
+        await supabase
+          .from("user_calendar_settings")
+          .update({
+            access_token: credentials.access_token,
+            refresh_token:
+              credentials.refresh_token || calendarSettings.refresh_token,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("user_id", userId);
+
+        console.log(
+          `[Calendar] Token renovado exitosamente para usuario ${userId}`
+        );
+        calendarSettings.access_token = credentials.access_token;
+      } else {
+        console.log(`[Calendar] Token válido para usuario ${userId}`);
+      }
+    } catch (tokenError) {
+      console.error(
+        `[Calendar] Error verificando/renovando token para usuario ${userId}:`,
+        tokenError.message
+      );
+      return { available: false, reason: "Token verification failed" };
+    }
+
+    // Verificar acceso a Google Calendar API
+    try {
+      const { google } = require("googleapis");
+      const oauth2Client = new google.auth.OAuth2(
+        process.env.GOOGLE_CLIENT_ID,
+        process.env.GOOGLE_CLIENT_SECRET
+      );
+
+      oauth2Client.setCredentials({
+        access_token: calendarSettings.access_token,
+      });
+
+      const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
+      // Intentar obtener la lista de calendarios para verificar acceso
+      const calendarsResponse = await calendar.calendarList.list();
+
+      if (
+        calendarsResponse.data.items &&
+        calendarsResponse.data.items.length > 0
+      ) {
+        console.log(
+          `[Calendar] Calendario disponible para usuario ${userId}, ${calendarsResponse.data.items.length} calendarios encontrados`
+        );
+        return {
+          available: true,
+          calendars: calendarsResponse.data.items.length,
+          timezone: calendarSettings.calendar_timezone,
+        };
+      } else {
+        console.log(
+          `[Calendar] No se encontraron calendarios para usuario ${userId}`
+        );
+        return { available: false, reason: "No calendars found" };
+      }
+    } catch (calendarError) {
+      console.error(
+        `[Calendar] Error accediendo a Google Calendar para usuario ${userId}:`,
+        calendarError.message
+      );
+      return { available: false, reason: "Calendar API access failed" };
+    }
+  } catch (error) {
+    console.error(
+      `[Calendar] Error general verificando calendario para usuario ${userId}:`,
+      error.message
+    );
+    return { available: false, reason: "General error" };
+  }
+}
+
+// Función para obtener resumen de disponibilidad del calendario para las próximas 2 semanas
+async function getCalendarAvailabilitySummary(userId) {
+  try {
+    console.log(
+      `[Calendar] Obteniendo resumen de disponibilidad para usuario: ${userId}`
+    );
+
+    // Obtener configuración del calendario del usuario
+    const { data: calendarSettings, error: settingsError } = await supabase
+      .from("user_calendar_settings")
+      .select(
+        "access_token, refresh_token, calendar_enabled, calendar_timezone"
+      )
+      .eq("user_id", userId)
+      .single();
+
+    if (
+      settingsError ||
+      !calendarSettings?.calendar_enabled ||
+      !calendarSettings?.access_token
+    ) {
+      console.log(
+        `[Calendar] No se puede obtener resumen - configuración no válida para usuario ${userId}`
+      );
+      return null;
+    }
+
+    // Verificar y renovar token si es necesario
+    try {
+      const tokenInfoResponse = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?access_token=${calendarSettings.access_token}`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (!tokenInfoResponse.ok) {
+        console.log(
+          `[Calendar] Renovando token para resumen de usuario ${userId}...`
+        );
+
+        const { google } = require("googleapis");
+        const oauth2Client = new google.auth.OAuth2(
+          process.env.GOOGLE_CLIENT_ID,
+          process.env.GOOGLE_CLIENT_SECRET
+        );
+
+        oauth2Client.setCredentials({
+          access_token: calendarSettings.access_token,
+          refresh_token: calendarSettings.refresh_token,
+        });
+
+        const { credentials } = await oauth2Client.refreshAccessToken();
+
+        if (credentials.access_token) {
+          await supabase
+            .from("user_calendar_settings")
+            .update({
+              access_token: credentials.access_token,
+              refresh_token:
+                credentials.refresh_token || calendarSettings.refresh_token,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("user_id", userId);
+
+          calendarSettings.access_token = credentials.access_token;
+        }
+      }
+    } catch (tokenError) {
+      console.error(
+        `[Calendar] Error con token para resumen de usuario ${userId}:`,
+        tokenError.message
+      );
+      return null;
+    }
+
+    // Obtener eventos del calendario para las próximas 2 semanas
+    try {
+      const { google } = require("googleapis");
+      const oauth2Client = new google.auth.OAuth2(
+        process.env.GOOGLE_CLIENT_ID,
+        process.env.GOOGLE_CLIENT_SECRET
+      );
+
+      oauth2Client.setCredentials({
+        access_token: calendarSettings.access_token,
+      });
+
+      const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
+      // Calcular fechas para las próximas 2 semanas
+      const now = new Date();
+      const twoWeeksFromNow = new Date(
+        now.getTime() + 14 * 24 * 60 * 60 * 1000
+      );
+
+      // Obtener eventos del calendario principal
+      const eventsResponse = await calendar.events.list({
+        calendarId: "primary",
+        timeMin: now.toISOString(),
+        timeMax: twoWeeksFromNow.toISOString(),
+        singleEvents: true,
+        orderBy: "startTime",
+      });
+
+      const events = eventsResponse.data.items || [];
+
+      // Procesar eventos y crear resumen
+      const summary = {
+        userId: userId,
+        timezone: calendarSettings.calendar_timezone,
+        period: {
+          start: now.toISOString(),
+          end: twoWeeksFromNow.toISOString(),
+          days: 14,
+        },
+        totalEvents: events.length,
+        eventsByDay: {},
+        busyHours: {},
+        freeDays: [],
+        busyDays: [],
+      };
+
+      // Agrupar eventos por día
+      const daysWithEvents = new Set();
+
+      events.forEach((event) => {
+        const start = new Date(event.start.dateTime || event.start.date);
+        const end = new Date(event.end.dateTime || event.end.date);
+        const dayKey = start.toISOString().split("T")[0];
+
+        if (!summary.eventsByDay[dayKey]) {
+          summary.eventsByDay[dayKey] = [];
+        }
+
+        summary.eventsByDay[dayKey].push({
+          title: event.summary || "Sin título",
+          start: start.toISOString(),
+          end: end.toISOString(),
+          duration: Math.round((end - start) / (1000 * 60)), // duración en minutos
+          isAllDay: !event.start.dateTime,
+        });
+
+        daysWithEvents.add(dayKey);
+      });
+
+      // Identificar días libres y ocupados
+      for (let i = 0; i < 14; i++) {
+        const date = new Date(now);
+        date.setDate(date.getDate() + i);
+        const dayKey = date.toISOString().split("T")[0];
+
+        if (daysWithEvents.has(dayKey)) {
+          summary.busyDays.push(dayKey);
+        } else {
+          summary.freeDays.push(dayKey);
+        }
+      }
+
+      // Mostrar resumen por consola
+      console.log("=".repeat(80));
+      console.log("📅 RESUMEN DE DISPONIBILIDAD DEL CALENDARIO");
+      console.log("=".repeat(80));
+      console.log(`👤 Usuario: ${userId}`);
+      console.log(`🌍 Zona horaria: ${summary.timezone}`);
+      console.log(
+        `📅 Período: ${now.toLocaleDateString()} - ${twoWeeksFromNow.toLocaleDateString()} (14 días)`
+      );
+      console.log(`📊 Total de eventos: ${summary.totalEvents}`);
+      console.log(`✅ Días libres: ${summary.freeDays.length}`);
+      console.log(`📅 Días ocupados: ${summary.busyDays.length}`);
+      console.log("");
+
+      if (summary.totalEvents > 0) {
+        console.log("📋 EVENTOS POR DÍA:");
+        console.log("-".repeat(50));
+
+        Object.keys(summary.eventsByDay)
+          .sort()
+          .forEach((dayKey) => {
+            const dayEvents = summary.eventsByDay[dayKey];
+            const date = new Date(dayKey);
+            const dayName = date.toLocaleDateString("es-ES", {
+              weekday: "long",
+              year: "numeric",
+              month: "long",
+              day: "numeric",
+            });
+
+            console.log(`\n📅 ${dayName}:`);
+            dayEvents.forEach((event, index) => {
+              const startTime = new Date(event.start).toLocaleTimeString(
+                "es-ES",
+                {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                }
+              );
+              const endTime = new Date(event.end).toLocaleTimeString("es-ES", {
+                hour: "2-digit",
+                minute: "2-digit",
+              });
+
+              if (event.isAllDay) {
+                console.log(`   ${index + 1}. 🌅 ${event.title} (Todo el día)`);
+              } else {
+                console.log(
+                  `   ${index + 1}. ⏰ ${
+                    event.title
+                  } (${startTime} - ${endTime}, ${event.duration} min)`
+                );
+              }
+            });
+          });
+      }
+
+      console.log("\n📊 RESUMEN ESTADÍSTICO:");
+      console.log("-".repeat(50));
+      console.log(`✅ Días completamente libres: ${summary.freeDays.length}`);
+      console.log(`📅 Días con eventos: ${summary.busyDays.length}`);
+      console.log(
+        `📊 Promedio de eventos por día: ${(summary.totalEvents / 14).toFixed(
+          1
+        )}`
+      );
+
+      if (summary.freeDays.length > 0) {
+        console.log("\n🎯 DÍAS LIBRES:");
+        summary.freeDays.forEach((dayKey) => {
+          const date = new Date(dayKey);
+          const dayName = date.toLocaleDateString("es-ES", {
+            weekday: "long",
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          });
+          console.log(`   ✅ ${dayName}`);
+        });
+      }
+
+      console.log("=".repeat(80));
+
+      return summary;
+    } catch (calendarError) {
+      console.error(
+        `[Calendar] Error obteniendo eventos para usuario ${userId}:`,
+        calendarError.message
+      );
+      return null;
+    }
+  } catch (error) {
+    console.error(
+      `[Calendar] Error general obteniendo resumen para usuario ${userId}:`,
+      error.message
+    );
+    return null;
+  }
+}
+
 async function processQueueItem(queueItem, workerId = "unknown") {
   try {
     totalCalls++;
@@ -420,6 +836,24 @@ async function processQueueItem(queueItem, workerId = "unknown") {
         .eq("id", queueItem.id);
 
       return false;
+    }
+
+    // Verificar disponibilidad del calendario solo para logging (no bloquea la llamada)
+    console.log(
+      `[Queue] Worker ${workerId} - Verificando disponibilidad del calendario (solo informativo)...`
+    );
+    const calendarAvailability = await checkGoogleCalendarAvailability(
+      queueItem.user_id
+    );
+
+    if (!calendarAvailability.available) {
+      console.log(
+        `[Queue] Worker ${workerId} - ⚠️ Calendario no disponible: ${calendarAvailability.reason} (pero continuando con la llamada)`
+      );
+    } else {
+      console.log(
+        `[Queue] Worker ${workerId} - ✅ Calendario disponible: ${calendarAvailability.calendars} calendarios encontrados`
+      );
     }
 
     // Mark user as having active call (global tracking)
@@ -2141,6 +2575,61 @@ fastify.get("/api/user/agent-config", async (request, reply) => {
     });
   } catch (error) {
     console.error("[API] Error getting agent config:", error);
+    return reply.code(500).send({ error: "Error interno del servidor" });
+  }
+});
+
+// Endpoint to get calendar availability summary
+fastify.get("/api/user/calendar-summary", async (request, reply) => {
+  try {
+    console.log("[API] Get calendar summary endpoint called");
+
+    const apiKey =
+      request.headers["x-api-key"] ||
+      request.headers["authorization"]?.replace("Bearer ", "");
+
+    if (!apiKey) {
+      console.log("[API] No API key provided");
+      return reply.code(401).send({ error: "API key requerida" });
+    }
+
+    console.log("[API] API key received:", apiKey);
+
+    const { data: keyData, error: keyError } = await supabase
+      .from("api_keys")
+      .select("user_id, is_active")
+      .eq("api_key", apiKey)
+      .single();
+
+    if (keyError || !keyData || !keyData.is_active) {
+      console.log(
+        "[API] Invalid API key:",
+        keyError || "Key not found or inactive"
+      );
+      return reply.code(401).send({ error: "API key inválida" });
+    }
+
+    const userId = keyData.user_id;
+
+    console.log(`[API] Getting calendar summary for user ${userId}`);
+
+    // Obtener el resumen de disponibilidad del calendario
+    const summary = await getCalendarAvailabilitySummary(userId);
+
+    if (!summary) {
+      return reply.code(404).send({
+        error: "No se pudo obtener el resumen del calendario",
+        reason: "Configuración de calendario no válida o error de acceso",
+      });
+    }
+
+    return reply.send({
+      success: true,
+      data: summary,
+      message: "Resumen de disponibilidad del calendario obtenido exitosamente",
+    });
+  } catch (error) {
+    console.error("[API] Error getting calendar summary:", error);
     return reply.code(500).send({ error: "Error interno del servidor" });
   }
 });
