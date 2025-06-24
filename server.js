@@ -425,7 +425,8 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     // Mark user as having active call (global tracking)
     userActiveCalls.set(queueItem.user_id, true);
 
-    // Create agent_name from first_name and last_name
+    // Create agent_firstname from first_name and agent_name from full name
+    const agentFirstName = userData.first_name || "Agente";
     const agentName =
       `${userData.first_name || ""} ${userData.last_name || ""}`.trim() ||
       "Agente";
@@ -465,6 +466,8 @@ async function processQueueItem(queueItem, workerId = "unknown") {
           queueItem.lead_id
         )}&fecha=${encodeURIComponent(fecha)}&dia_semana=${encodeURIComponent(
           dia_semana
+        )}&agent_firstname=${encodeURIComponent(
+          agentFirstName
         )}&agent_name=${encodeURIComponent(
           agentName
         )}&assistant_name=${encodeURIComponent(userData.assistant_name)}`,
@@ -722,8 +725,6 @@ fastify.register(async (fastifyInstance) => {
       let elevenLabsWs = null;
       let customParameters = null;
       let lastUserTranscript = "";
-      let audioFlowPaused = false;
-      let interruptionInProgress = false;
 
       ws.on("error", console.error);
 
@@ -837,7 +838,7 @@ fastify.register(async (fastifyInstance) => {
                   break;
 
                 case "audio":
-                  if (streamSid && !audioFlowPaused) {
+                  if (streamSid) {
                     const audioData = {
                       event: "media",
                       streamSid,
@@ -848,10 +849,6 @@ fastify.register(async (fastifyInstance) => {
                       },
                     };
                     ws.send(JSON.stringify(audioData));
-                  } else if (audioFlowPaused) {
-                    console.log(
-                      "🔇 [AUDIO] Audio flow paused, skipping audio chunk"
-                    );
                   }
                   break;
 
@@ -875,40 +872,6 @@ fastify.register(async (fastifyInstance) => {
                     JSON.stringify(message, null, 2)
                   );
 
-                  // Interrupción manual si ElevenLabs no la detecta
-                  if (speakingDuration > 0.5 && !shouldInterrupt) {
-                    console.log(
-                      "🚨 [MANUAL] User speaking >0.5s, forcing interruption"
-                    );
-
-                    // Pausar el flujo de audio inmediatamente
-                    audioFlowPaused = true;
-                    interruptionInProgress = true;
-                    console.log(
-                      "🔇 [AUDIO] Audio flow paused due to manual interruption"
-                    );
-
-                    if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                      elevenLabsWs.send(
-                        JSON.stringify({
-                          type: "interrupt_agent",
-                        })
-                      );
-                      console.log("🛑 [MANUAL] Sent interrupt_agent command");
-                    }
-
-                    // Auto-resume audio flow after 2 seconds if no conversation_resumed event
-                    setTimeout(() => {
-                      if (interruptionInProgress) {
-                        audioFlowPaused = false;
-                        interruptionInProgress = false;
-                        console.log(
-                          "⏰ [AUDIO] Auto-resumed audio flow after timeout"
-                        );
-                      }
-                    }, 2000);
-                  }
-
                   if (shouldInterrupt) {
                     console.log(
                       "🚨 [INTERRUPTION] ElevenLabs detected should_interrupt=true"
@@ -924,13 +887,6 @@ fastify.register(async (fastifyInstance) => {
                     "📊 [INTERRUPTION] Details:",
                     JSON.stringify(message, null, 2)
                   );
-
-                  // Pausar el flujo de audio durante la interrupción
-                  audioFlowPaused = true;
-                  interruptionInProgress = true;
-                  console.log(
-                    "🔇 [AUDIO] Audio flow paused due to interruption"
-                  );
                   break;
 
                 case "interruption":
@@ -939,31 +895,10 @@ fastify.register(async (fastifyInstance) => {
                     "📊 [INTERRUPTION] Details:",
                     JSON.stringify(message, null, 2)
                   );
-
-                  // Pausar el flujo de audio
-                  audioFlowPaused = true;
-                  interruptionInProgress = true;
-                  console.log(
-                    "🔇 [AUDIO] Audio flow paused due to interruption event"
-                  );
-
-                  if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                    elevenLabsWs.send(
-                      JSON.stringify({
-                        type: "interrupt_agent",
-                      })
-                    );
-                    console.log("🛑 [MANUAL] Sent interrupt_agent command");
-                  }
                   break;
 
                 case "conversation_resumed":
                   console.log("🔄 [INTERRUPTION] Conversation resumed");
-
-                  // Reanudar el flujo de audio
-                  audioFlowPaused = false;
-                  interruptionInProgress = false;
-                  console.log("🔊 [AUDIO] Audio flow resumed");
                   break;
 
                 case "interruption_started":
@@ -2295,12 +2230,12 @@ async function cleanupStuckCalls() {
               .eq("id", call.queue_id);
           }
         } else if (twilioCall.status === "in-progress") {
-          // Check if call has been running too long (more than 15 minutes)
+          // Check if call has been running too long (more than 10 minutes)
           const callStartTime = new Date(call.created_at);
           const now = new Date();
           const durationMinutes = (now - callStartTime) / (1000 * 60);
 
-          if (durationMinutes > 15) {
+          if (durationMinutes > 10) {
             try {
               // Hang up the call
               await twilioClient
@@ -2315,7 +2250,7 @@ async function cleanupStuckCalls() {
                   duration: Math.round(durationMinutes * 60),
                   result: "failed",
                   error_code: "TIMEOUT",
-                  error_message: "Call hung up due to timeout (15+ minutes)",
+                  error_message: "Call hung up due to timeout (10+ minutes)",
                   updated_at: new Date().toISOString(),
                 })
                 .eq("call_sid", call.call_sid);
