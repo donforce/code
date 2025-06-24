@@ -1132,6 +1132,7 @@ fastify.post("/outbound-call", async (request, reply) => {
   }
 
   // Create agent_name from first_name and last_name
+  const agentFirstName = userData.first_name || "Agente";
   const agentName =
     `${userData.first_name || ""} ${userData.last_name || ""}`.trim() ||
     "Agente";
@@ -1169,6 +1170,8 @@ fastify.post("/outbound-call", async (request, reply) => {
         fecha
       )}&dia_semana=${encodeURIComponent(
         dia_semana
+      )}&agent_firstname=${encodeURIComponent(
+        agentFirstName
       )}&agent_name=${encodeURIComponent(
         agentName
       )}&assistant_name=${encodeURIComponent(userData.assistant_name)}`,
@@ -1200,6 +1203,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     client_id,
     fecha,
     dia_semana,
+    agent_firstname,
     agent_name,
     assistant_name,
   } = request.query;
@@ -1216,6 +1220,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
           <Parameter name="client_id" value="${client_id}" />
           <Parameter name="fecha" value="${fecha}" />
           <Parameter name="dia_semana" value="${dia_semana}" />
+          <Parameter name="agent_firstname" value="${agent_firstname}" />
           <Parameter name="agent_name" value="${agent_name}" />
           <Parameter name="assistant_name" value="${assistant_name}" />
         </Stream>
@@ -1274,6 +1279,7 @@ fastify.register(async (fastifyInstance) => {
                 client_id: customParameters?.client_id || "",
                 fecha: customParameters?.fecha || "",
                 dia_semana: customParameters?.dia_semana || "",
+                agent_firstname: customParameters?.agent_firstname || "Agente",
                 agent_name: customParameters?.agent_name || "Daniela",
                 assistant_name:
                   customParameters?.assistant_name || "Asistente de Ventas",
