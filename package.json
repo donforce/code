@@ -12,11 +12,9 @@
     "@fastify/formbody": "^7.4.0",
     "@fastify/websocket": "^8.4.0",
     "@supabase/supabase-js": "^2.39.7",
-    "crypto": "^1.0.1",
     "dotenv": "^16.4.5",
     "fastify": "^4.26.1",
     "googleapis": "^105.0.0",
-    "perf_hooks": "^0.0.1",
     "twilio": "^4.23.0",
     "ws": "^8.16.0"
   },
