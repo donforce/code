@@ -595,6 +595,62 @@ async function checkGoogleCalendarAvailability(userId) {
   }
 }
 
+// Función para calcular horarios libres entre eventos
+function calculateFreeSlots(busySlots, timezone) {
+  const freeSlots = [];
+  const workStart = 8; // 8:00 AM
+  const workEnd = 18; // 6:00 PM
+
+  if (busySlots.length === 0) {
+    // Día completamente libre
+    return [
+      {
+        start: `${workStart.toString().padStart(2, "0")}:00`,
+        end: `${workEnd.toString().padStart(2, "0")}:00`,
+        description: "Día completamente libre",
+      },
+    ];
+  }
+
+  // Ordenar eventos por hora de inicio
+  const sortedSlots = busySlots
+    .filter((slot) => !slot.isAllDay) // Excluir eventos de todo el día
+    .sort((a, b) => {
+      const timeA = parseInt(a.start.split(":")[0]);
+      const timeB = parseInt(b.start.split(":")[0]);
+      return timeA - timeB;
+    });
+
+  let currentTime = workStart;
+
+  for (const slot of sortedSlots) {
+    const slotStart = parseInt(slot.start.split(":")[0]);
+    const slotEnd = parseInt(slot.end.split(":")[0]);
+
+    // Si hay tiempo libre antes del evento
+    if (slotStart > currentTime) {
+      freeSlots.push({
+        start: `${currentTime.toString().padStart(2, "0")}:00`,
+        end: `${slotStart.toString().padStart(2, "0")}:00`,
+        description: `Libre antes de "${slot.title}"`,
+      });
+    }
+
+    currentTime = Math.max(currentTime, slotEnd);
+  }
+
+  // Si hay tiempo libre después del último evento
+  if (currentTime < workEnd) {
+    freeSlots.push({
+      start: `${currentTime.toString().padStart(2, "0")}:00`,
+      end: `${workEnd.toString().padStart(2, "0")}:00`,
+      description: "Libre después del último evento",
+    });
+  }
+
+  return freeSlots;
+}
+
 // Función para obtener resumen de disponibilidad del calendario para las próximas 2 semanas
 async function getCalendarAvailabilitySummary(userId) {
   try {
@@ -732,7 +788,7 @@ async function getCalendarAvailabilitySummary(userId) {
         `[Calendar][SUMMARY] Total de eventos encontrados: ${events.length}`
       );
 
-      // Procesar eventos y crear resumen
+      // Procesar eventos y crear resumen detallado
       const summary = {
         userId: userId,
         timezone: calendarSettings.calendar_timezone,
@@ -743,25 +799,42 @@ async function getCalendarAvailabilitySummary(userId) {
         },
         totalEvents: events.length,
         eventsByDay: {},
+        availabilityByDay: {},
         busyHours: {},
         freeDays: [],
         busyDays: [],
       };
+
       const daysWithEvents = new Set();
+
+      // Procesar eventos y crear horarios ocupados
       events.forEach((event) => {
         const start = new Date(event.start.dateTime || event.start.date);
         const end = new Date(event.end.dateTime || event.end.date);
         const dayKey = start.toISOString().split("T")[0];
+
         if (!summary.eventsByDay[dayKey]) {
           summary.eventsByDay[dayKey] = [];
         }
+
         summary.eventsByDay[dayKey].push({
           title: event.summary || "Sin título",
           start: start.toISOString(),
           end: end.toISOString(),
+          startTime: start.toLocaleTimeString("es-ES", {
+            hour: "2-digit",
+            minute: "2-digit",
+            timeZone: calendarSettings.calendar_timezone,
+          }),
+          endTime: end.toLocaleTimeString("es-ES", {
+            hour: "2-digit",
+            minute: "2-digit",
+            timeZone: calendarSettings.calendar_timezone,
+          }),
           duration: Math.round((end - start) / (1000 * 60)),
           isAllDay: !event.start.dateTime,
         });
+
         daysWithEvents.add(dayKey);
         console.log(
           `[Calendar][SUMMARY][EVENT] ${dayKey}: ${
@@ -769,25 +842,76 @@ async function getCalendarAvailabilitySummary(userId) {
           } (${start.toISOString()} - ${end.toISOString()})`
         );
       });
-      // Identificar días libres y ocupados
+
+      // Crear disponibilidad detallada por día
       for (let i = 0; i < 14; i++) {
         const date = new Date(now);
         date.setDate(date.getDate() + i);
         const dayKey = date.toISOString().split("T")[0];
+        const dayName = date.toLocaleDateString("es-ES", {
+          weekday: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+          timeZone: calendarSettings.calendar_timezone,
+        });
+
         if (daysWithEvents.has(dayKey)) {
           summary.busyDays.push(dayKey);
+
+          // Crear horarios de disponibilidad para días ocupados
+          const dayEvents = summary.eventsByDay[dayKey] || [];
+          const busySlots = dayEvents.map((event) => ({
+            start: event.startTime,
+            end: event.endTime,
+            title: event.title,
+            isAllDay: event.isAllDay,
+          }));
+
+          summary.availabilityByDay[dayKey] = {
+            date: dayKey,
+            dayName: dayName,
+            isFree: false,
+            busySlots: busySlots,
+            totalBusyTime: dayEvents.reduce(
+              (total, event) => total + event.duration,
+              0
+            ),
+            freeSlots: calculateFreeSlots(
+              busySlots,
+              calendarSettings.calendar_timezone
+            ),
+          };
         } else {
           summary.freeDays.push(dayKey);
+
+          // Día completamente libre
+          summary.availabilityByDay[dayKey] = {
+            date: dayKey,
+            dayName: dayName,
+            isFree: true,
+            busySlots: [],
+            totalBusyTime: 0,
+            freeSlots: [
+              {
+                start: "08:00",
+                end: "18:00",
+                description: "Día completamente libre",
+              },
+            ],
+          };
         }
       }
+
       console.log(
         `[Calendar][SUMMARY] Días ocupados: ${summary.busyDays.length} | Días libres: ${summary.freeDays.length}`
       );
       console.log(`[Calendar][SUMMARY] Días ocupados:`, summary.busyDays);
       console.log(`[Calendar][SUMMARY] Días libres:`, summary.freeDays);
-      // Mostrar resumen por consola
+
+      // Mostrar resumen detallado por consola
       console.log("=".repeat(80));
-      console.log("📅 RESUMEN DE DISPONIBILIDAD DEL CALENDARIO");
+      console.log("📅 RESUMEN DETALLADO DE DISPONIBILIDAD DEL CALENDARIO");
       console.log("=".repeat(80));
       console.log(`👤 Usuario: ${userId}`);
       console.log(`🌍 Zona horaria: ${summary.timezone}`);
@@ -798,45 +922,57 @@ async function getCalendarAvailabilitySummary(userId) {
       console.log(`✅ Días libres: ${summary.freeDays.length}`);
       console.log(`📅 Días ocupados: ${summary.busyDays.length}`);
       console.log("");
-      if (summary.totalEvents > 0) {
-        console.log("📋 EVENTOS POR DÍA:");
-        console.log("-".repeat(50));
-        Object.keys(summary.eventsByDay)
-          .sort()
-          .forEach((dayKey) => {
-            const dayEvents = summary.eventsByDay[dayKey];
-            const date = new Date(dayKey);
-            const dayName = date.toLocaleDateString("es-ES", {
-              weekday: "long",
-              year: "numeric",
-              month: "long",
-              day: "numeric",
-            });
-            console.log(`\n📅 ${dayName}:`);
-            dayEvents.forEach((event, index) => {
-              const startTime = new Date(event.start).toLocaleTimeString(
-                "es-ES",
-                {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                }
+
+      // Mostrar disponibilidad por día
+      console.log("📋 DISPONIBILIDAD POR DÍA:");
+      console.log("-".repeat(50));
+      Object.keys(summary.availabilityByDay)
+        .sort()
+        .forEach((dayKey) => {
+          const dayInfo = summary.availabilityByDay[dayKey];
+          console.log(`\n📅 ${dayInfo.dayName}:`);
+
+          if (dayInfo.isFree) {
+            console.log(`   ✅ DÍA LIBRE - Disponible todo el día`);
+            dayInfo.freeSlots.forEach((slot, index) => {
+              console.log(
+                `      ${index + 1}. ${slot.start} - ${slot.end}: ${
+                  slot.description
+                }`
               );
-              const endTime = new Date(event.end).toLocaleTimeString("es-ES", {
-                hour: "2-digit",
-                minute: "2-digit",
-              });
-              if (event.isAllDay) {
-                console.log(`   ${index + 1}. 🌅 ${event.title} (Todo el día)`);
+            });
+          } else {
+            console.log(
+              `   📅 DÍA OCUPADO - ${dayInfo.totalBusyTime} minutos ocupados`
+            );
+            console.log(`   📋 Eventos programados:`);
+            dayInfo.busySlots.forEach((slot, index) => {
+              if (slot.isAllDay) {
+                console.log(
+                  `      ${index + 1}. 🌅 ${slot.title} (Todo el día)`
+                );
               } else {
                 console.log(
-                  `   ${index + 1}. ⏰ ${
-                    event.title
-                  } (${startTime} - ${endTime}, ${event.duration} min)`
+                  `      ${index + 1}. ⏰ ${slot.title} (${slot.start} - ${
+                    slot.end
+                  })`
                 );
               }
             });
-          });
-      }
+
+            if (dayInfo.freeSlots.length > 0) {
+              console.log(`   ✅ Horarios disponibles:`);
+              dayInfo.freeSlots.forEach((slot, index) => {
+                console.log(
+                  `      ${index + 1}. ${slot.start} - ${slot.end}: ${
+                    slot.description
+                  }`
+                );
+              });
+            }
+          }
+        });
+
       console.log("\n📊 RESUMEN ESTADÍSTICO:");
       console.log("-".repeat(50));
       console.log(`✅ Días completamente libres: ${summary.freeDays.length}`);
@@ -846,19 +982,15 @@ async function getCalendarAvailabilitySummary(userId) {
           1
         )}`
       );
+
       if (summary.freeDays.length > 0) {
         console.log("\n🎯 DÍAS LIBRES:");
         summary.freeDays.forEach((dayKey) => {
-          const date = new Date(dayKey);
-          const dayName = date.toLocaleDateString("es-ES", {
-            weekday: "long",
-            year: "numeric",
-            month: "long",
-            day: "numeric",
-          });
-          console.log(`   ✅ ${dayName}`);
+          const dayInfo = summary.availabilityByDay[dayKey];
+          console.log(`   ✅ ${dayInfo.dayName}`);
         });
       }
+
       console.log("=".repeat(80));
       console.log(
         "[Calendar][SUMMARY] ===== FIN DE RESUMEN DE DISPONIBILIDAD ====="
@@ -933,12 +1065,44 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       console.log(
         `[Queue] Worker ${workerId} - ✅ Resumen del calendario obtenido:`,
         {
+          timezone: calendarSummary.timezone,
           totalEvents: calendarSummary.totalEvents,
           freeDays: calendarSummary.freeDays.length,
           busyDays: calendarSummary.busyDays.length,
-          timezone: calendarSummary.timezone,
+          period: `${new Date(
+            calendarSummary.period.start
+          ).toLocaleDateString()} - ${new Date(
+            calendarSummary.period.end
+          ).toLocaleDateString()}`,
         }
       );
+
+      // Mostrar disponibilidad detallada para los próximos 3 días
+      console.log(
+        `[Queue] Worker ${workerId} - 📅 Disponibilidad detallada (próximos 3 días):`
+      );
+      const next3Days = Object.keys(calendarSummary.availabilityByDay)
+        .sort()
+        .slice(0, 3);
+
+      next3Days.forEach((dayKey) => {
+        const dayInfo = calendarSummary.availabilityByDay[dayKey];
+        console.log(`   📅 ${dayInfo.dayName}:`);
+
+        if (dayInfo.isFree) {
+          console.log(`      ✅ DÍA LIBRE - Disponible todo el día`);
+        } else {
+          console.log(`      📅 ${dayInfo.totalBusyTime} min ocupados`);
+          if (dayInfo.freeSlots.length > 0) {
+            console.log(`      ✅ Horarios libres:`);
+            dayInfo.freeSlots.forEach((slot) => {
+              console.log(
+                `         • ${slot.start} - ${slot.end}: ${slot.description}`
+              );
+            });
+          }
+        }
+      });
     }
 
     // Mark user as having active call (global tracking)
