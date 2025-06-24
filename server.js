@@ -1813,22 +1813,27 @@ async function cleanupStuckCalls() {
 
 // Your existing twilio-status endpoint with enhanced logging and error handling
 fastify.post("/twilio-status", async (request, reply) => {
+  console.log("=".repeat(80));
+  console.log("📞 [TWILIO STATUS] Status update received from Twilio");
+  console.log("=".repeat(80));
+
+  // Log request details
+  console.log("📋 Request Headers:", request.headers);
+  console.log("📋 Request Body Type:", typeof request.body);
+  console.log("📋 Request Body:", request.body);
+
   const callSid = request.body.CallSid;
   const callDuration = parseInt(request.body.CallDuration || "0", 10);
   const callStatus = request.body.CallStatus;
   const callErrorCode = request.body.ErrorCode;
   const callErrorMessage = request.body.ErrorMessage;
 
-  console.log("=".repeat(80));
-  console.log("📞 [TWILIO STATUS] Status update received from Twilio");
-  console.log("=".repeat(80));
   console.log("📱 Call Details:");
   console.log(`   • Call SID: ${callSid}`);
   console.log(`   • Status: ${callStatus}`);
   console.log(`   • Duration: ${callDuration} seconds`);
   console.log(`   • Error Code: ${callErrorCode || "None"}`);
   console.log(`   • Error Message: ${callErrorMessage || "None"}`);
-  console.log("📋 Full Twilio payload:", JSON.stringify(request.body, null, 2));
   console.log("=".repeat(80));
 
   try {
@@ -1858,7 +1863,8 @@ fastify.post("/twilio-status", async (request, reply) => {
       } else {
         console.error("[Twilio] Error fetching recent calls:", allCallsError);
       }
-      return reply.code(404).send({ error: "Call not found in database" });
+      // Return 200 OK even if call not found to avoid Twilio errors
+      return reply.code(200).send();
     } else {
       console.log("[Twilio] Existing call found:", existingCall);
     }
@@ -1930,10 +1936,13 @@ fastify.post("/twilio-status", async (request, reply) => {
         }
       }
     }
-    reply.send({ success: true });
+
+    // Return 200 OK with empty response as Twilio expects
+    reply.code(200).send();
   } catch (error) {
     console.error("[TWILIO STATUS] Error during status update:", error);
-    reply.code(500).send({ error: "Internal server error" });
+    // Return 200 OK even on error to avoid Twilio retries
+    reply.code(200).send();
   }
 });
 
