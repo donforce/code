@@ -163,12 +163,21 @@ const queueChannel = supabase
 // Optimized queue processing with reduced database queries
 async function processAllPendingQueues() {
   try {
+    console.log("[Queue] 🔄 Starting queue processing...");
+    console.log(
+      `[Queue] 📊 Current active calls: ${globalActiveCalls.size}/${QUEUE_CONFIG.maxConcurrentCalls}`
+    );
+
     // Check if we can process more calls
     if (globalActiveCalls.size >= QUEUE_CONFIG.maxConcurrentCalls) {
+      console.log(
+        "[Queue] ⏸️ Max concurrent calls reached, skipping processing"
+      );
       return;
     }
 
     // Get all pending queue items with optimized query
+    console.log("[Queue] 🔍 Fetching pending queue items...");
     const { data: pendingQueues, error } = await supabase
       .from("call_queue")
       .select(
@@ -191,16 +200,24 @@ async function processAllPendingQueues() {
       .limit(QUEUE_CONFIG.maxConcurrentCalls * 2);
 
     if (error) {
-      console.error("[Queue] Error fetching pending queues:", error);
+      console.error("[Queue] ❌ Error fetching pending queues:", error);
       return;
     }
 
     if (!pendingQueues || pendingQueues.length === 0) {
+      console.log("[Queue] ℹ️ No pending queues found");
       return;
     }
 
+    console.log(`[Queue] 📋 Found ${pendingQueues.length} pending queue items`);
+
     // Get user data in single query for all users
     const userIds = [...new Set(pendingQueues.map((item) => item.user_id))];
+    console.log(
+      `[Queue] 👥 Fetching data for ${userIds.length} users:`,
+      userIds
+    );
+
     const { data: usersData, error: usersError } = await supabase
       .from("users")
       .select(
@@ -209,9 +226,11 @@ async function processAllPendingQueues() {
       .in("id", userIds);
 
     if (usersError) {
-      console.error("[Queue] Error fetching users data:", usersError);
+      console.error("[Queue] ❌ Error fetching users data:", usersError);
       return;
     }
+
+    console.log(`[Queue] ✅ Found ${usersData?.length || 0} users with data`);
 
     // Create optimized user lookup map
     const usersMap = new Map(usersData?.map((user) => [user.id, user]) || []);
@@ -222,16 +241,48 @@ async function processAllPendingQueues() {
 
     for (const item of pendingQueues) {
       const user = usersMap.get(item.user_id);
+      console.log(
+        `[Queue] 🔍 Checking item ${item.id} for user ${item.user_id}:`,
+        {
+          hasUser: !!user,
+          availableMinutes: user?.available_minutes || 0,
+          hasActiveCall: userActiveCalls.has(item.user_id),
+          alreadyProcessed: processedUsers.has(item.user_id),
+        }
+      );
 
-      if (!user || user.available_minutes <= 0) continue;
-      if (userActiveCalls.has(item.user_id)) continue;
-      if (processedUsers.has(item.user_id)) continue;
+      if (!user || user.available_minutes <= 0) {
+        console.log(
+          `[Queue] ❌ User ${item.user_id} not eligible: no user data or no minutes`
+        );
+        continue;
+      }
+      if (userActiveCalls.has(item.user_id)) {
+        console.log(
+          `[Queue] ❌ User ${item.user_id} not eligible: already has active call`
+        );
+        continue;
+      }
+      if (processedUsers.has(item.user_id)) {
+        console.log(
+          `[Queue] ❌ User ${item.user_id} not eligible: already processed`
+        );
+        continue;
+      }
 
       eligibleItems.push(item);
       processedUsers.add(item.user_id);
+      console.log(
+        `[Queue] ✅ Item ${item.id} for user ${item.user_id} is eligible`
+      );
     }
 
-    if (eligibleItems.length === 0) return;
+    if (eligibleItems.length === 0) {
+      console.log("[Queue] ℹ️ No eligible items found");
+      return;
+    }
+
+    console.log(`[Queue] 🎯 Found ${eligibleItems.length} eligible items`);
 
     // Process items concurrently with optimized batch size
     const itemsToProcess = eligibleItems.slice(
@@ -239,14 +290,19 @@ async function processAllPendingQueues() {
       QUEUE_CONFIG.maxConcurrentCalls - globalActiveCalls.size
     );
 
+    console.log(
+      `[Queue] 🚀 Processing ${itemsToProcess.length} items concurrently`
+    );
+
     // Process items concurrently without waiting for all to complete
     itemsToProcess.forEach(async (item) => {
+      console.log(`[Queue] 🔄 Starting processing for item ${item.id}`);
       processQueueItemWithRetry(item).catch((error) => {
-        console.error(`[Queue] Error processing item ${item.id}:`, error);
+        console.error(`[Queue] ❌ Error processing item ${item.id}:`, error);
       });
     });
   } catch (error) {
-    console.error("[Queue] Error in queue processing:", error);
+    console.error("[Queue] ❌ Error in queue processing:", error);
   }
 }
 
@@ -1915,3 +1971,138 @@ fastify.post("/queue/cleanup", async (request, reply) => {
     reply.code(500).send({ error: "Error during cleanup" });
   }
 });
+
+// Add webhook endpoint for ElevenLabs
+fastify.post("/webhook/elevenlabs", async (request, reply) => {
+  try {
+    console.log("=".repeat(80));
+    console.log("🔔 [ELEVENLABS WEBHOOK] Post-call webhook received");
+    console.log("=".repeat(80));
+
+    const rawBody = request.rawBody;
+    const signature = request.headers["elevenlabs-signature"];
+
+    console.log("📋 Webhook Headers:", request.headers);
+    console.log("📄 Raw Body Length:", rawBody?.length || 0);
+
+    if (!signature) {
+      console.error("❌ No signature provided");
+      return reply.code(401).send({ error: "No signature provided" });
+    }
+
+    if (!verifyElevenLabsSignature(rawBody, signature)) {
+      console.error("❌ Invalid signature");
+      return reply.code(401).send({ error: "Invalid signature" });
+    }
+
+    console.log("✅ Signature verified successfully");
+
+    const webhookData = request.body;
+    console.log("📊 Webhook Data:", JSON.stringify(webhookData, null, 2));
+
+    if (
+      !webhookData ||
+      !webhookData.data ||
+      !webhookData.data.conversation_id
+    ) {
+      console.error("❌ Invalid webhook data structure");
+      return reply.code(400).send({ error: "Invalid webhook data" });
+    }
+
+    const { conversation_id, analysis } = webhookData.data;
+
+    console.log("🔍 Processing webhook for conversation:", conversation_id);
+
+    // Find the call by conversation_id
+    const { data: call, error: callError } = await supabase
+      .from("calls")
+      .select("*")
+      .eq("conversation_id", conversation_id)
+      .single();
+
+    if (callError || !call) {
+      console.error("❌ Call not found for conversation:", conversation_id);
+      return reply.code(404).send({ error: "Call not found" });
+    }
+
+    console.log("✅ Found call:", call.call_sid);
+
+    // Update call with webhook data
+    const updateData = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (analysis) {
+      if (analysis.call_successful !== undefined) {
+        updateData.call_successful = analysis.call_successful;
+      }
+      if (analysis.transcript_summary) {
+        updateData.transcript_summary = analysis.transcript_summary;
+      }
+      if (analysis.conversation_duration) {
+        updateData.conversation_duration = analysis.conversation_duration;
+      }
+      if (analysis.turn_count) {
+        updateData.turn_count = analysis.turn_count;
+      }
+      if (analysis.data_collection_results) {
+        updateData.data_collection_results = analysis.data_collection_results;
+      }
+    }
+
+    console.log("📝 Updating call with data:", updateData);
+
+    const { error: updateError } = await supabase
+      .from("calls")
+      .update(updateData)
+      .eq("conversation_id", conversation_id);
+
+    if (updateError) {
+      console.error("❌ Error updating call:", updateError);
+      return reply.code(500).send({ error: "Failed to update call" });
+    }
+
+    console.log("✅ Call updated successfully");
+    console.log("=".repeat(80));
+
+    reply.send({ success: true, message: "Webhook processed successfully" });
+  } catch (error) {
+    console.error("❌ Error processing webhook:", error);
+    reply.code(500).send({ error: "Internal server error" });
+  }
+});
+
+// Start the server
+const start = async () => {
+  try {
+    console.log("🚀 Starting server...");
+    console.log("📊 Queue Configuration:", QUEUE_CONFIG);
+    console.log("🔧 Environment Check:");
+    console.log(
+      `   • ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY ? "✅ Set" : "❌ Missing"}`
+    );
+    console.log(
+      `   • ELEVENLABS_AGENT_ID: ${
+        ELEVENLABS_AGENT_ID ? "✅ Set" : "❌ Missing"
+      }`
+    );
+    console.log(
+      `   • TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID ? "✅ Set" : "❌ Missing"}`
+    );
+    console.log(
+      `   • RAILWAY_PUBLIC_DOMAIN: ${
+        RAILWAY_PUBLIC_DOMAIN ? "✅ Set" : "❌ Missing"
+      }`
+    );
+
+    await fastify.listen({ port: PORT, host: "0.0.0.0" });
+    console.log(`✅ Server running on port ${PORT}`);
+    console.log("🔄 Queue processing interval set to:", QUEUE_INTERVAL, "ms");
+    console.log("🧹 Cleanup interval set to:", CLEANUP_INTERVAL, "ms");
+  } catch (err) {
+    console.error("❌ Error starting server:", err);
+    process.exit(1);
+  }
+};
+
+start();
