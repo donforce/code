@@ -1549,6 +1549,8 @@ fastify.register(async (fastifyInstance) => {
       let elevenLabsWs = null;
       let customParameters = null;
       let lastUserTranscript = "";
+      let sentAudioChunks = new Set(); // Para evitar audio duplicado
+      let audioChunkCounter = 0; // Contador para limpiar el Set periódicamente
 
       ws.on("error", console.error);
 
@@ -1621,14 +1623,7 @@ fastify.register(async (fastifyInstance) => {
             if (elevenLabsWs.readyState === WebSocket.OPEN) {
               elevenLabsWs.send(JSON.stringify(initialConfig));
 
-              elevenLabsWs.send(
-                JSON.stringify({
-                  type: "audio",
-                  audio_event: {
-                    audio_base_64: Buffer.from([0x00]).toString("base64"),
-                  },
-                })
-              );
+              // No enviar audio inicial vacío para evitar duplicados
             } else {
               console.error(
                 "[ElevenLabs] WebSocket not ready, state:",
@@ -1683,16 +1678,37 @@ fastify.register(async (fastifyInstance) => {
 
                   case "audio":
                     if (streamSid) {
-                      const audioData = {
-                        event: "media",
-                        streamSid,
-                        media: {
-                          payload:
-                            message.audio?.chunk ||
-                            message.audio_event?.audio_base_64,
-                        },
-                      };
-                      ws.send(JSON.stringify(audioData));
+                      const audioPayload =
+                        message.audio?.chunk ||
+                        message.audio_event?.audio_base_64;
+
+                      // Verificar si este audio ya fue enviado
+                      if (!sentAudioChunks.has(audioPayload)) {
+                        sentAudioChunks.add(audioPayload);
+                        audioChunkCounter++;
+
+                        // Limpiar el Set cada 10 chunks para evitar problemas de memoria
+                        if (audioChunkCounter > 10) {
+                          sentAudioChunks.clear();
+                          audioChunkCounter = 0;
+                          console.log(
+                            "[ElevenLabs Audio] Cleaned audio chunks cache"
+                          );
+                        }
+
+                        const audioData = {
+                          event: "media",
+                          streamSid,
+                          media: {
+                            payload: audioPayload,
+                          },
+                        };
+                        ws.send(JSON.stringify(audioData));
+                      } else {
+                        console.log(
+                          "[ElevenLabs Audio] Skipping duplicate audio chunk"
+                        );
+                      }
                     }
                     break;
 
@@ -1952,15 +1968,32 @@ fastify.register(async (fastifyInstance) => {
 
             case "media":
               if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                elevenLabsWs.send(
-                  JSON.stringify({
-                    type: "user_audio_chunk",
-                    user_audio_chunk: Buffer.from(
-                      msg.media.payload,
-                      "base64"
-                    ).toString("base64"),
-                  })
-                );
+                const audioChunk = Buffer.from(
+                  msg.media.payload,
+                  "base64"
+                ).toString("base64");
+
+                // Verificar si este chunk de audio ya fue enviado
+                if (!sentAudioChunks.has(audioChunk)) {
+                  sentAudioChunks.add(audioChunk);
+                  audioChunkCounter++;
+
+                  // Limpiar el Set cada 10 chunks para evitar problemas de memoria
+                  if (audioChunkCounter > 10) {
+                    sentAudioChunks.clear();
+                    audioChunkCounter = 0;
+                    console.log("[Audio] Cleaned audio chunks cache");
+                  }
+
+                  elevenLabsWs.send(
+                    JSON.stringify({
+                      type: "user_audio_chunk",
+                      user_audio_chunk: audioChunk,
+                    })
+                  );
+                } else {
+                  console.log("[Audio] Skipping duplicate audio chunk");
+                }
               }
               break;
 
