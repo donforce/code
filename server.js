@@ -75,58 +75,6 @@ const fastify = Fastify({
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
-// Add custom middleware to capture raw body for webhooks
-fastify.addHook("onRequest", (request, reply, done) => {
-  console.log("🔍 [MIDDLEWARE] Request received:", {
-    url: request.url,
-    method: request.method,
-    headers: Object.keys(request.headers),
-    userAgent: request.headers["user-agent"],
-    timestamp: new Date().toISOString(),
-  });
-
-  if (request.url === "/webhook/elevenlabs") {
-    console.log(
-      "🎯 [MIDDLEWARE] ElevenLabs webhook detected - capturing raw body"
-    );
-
-    // For webhook endpoint, capture raw body manually before Fastify processes it
-    const chunks = [];
-    let totalSize = 0;
-
-    request.raw.on("data", (chunk) => {
-      chunks.push(chunk);
-      totalSize += chunk.length;
-      console.log(
-        `📦 [MIDDLEWARE] Received chunk: ${chunk.length} bytes, total: ${totalSize} bytes`
-      );
-    });
-
-    request.raw.on("end", () => {
-      const rawBody = Buffer.concat(chunks).toString();
-      request.rawBody = rawBody;
-      console.log("✅ [MIDDLEWARE] Raw body captured successfully:", {
-        totalChunks: chunks.length,
-        totalSize: totalSize,
-        rawBodyLength: rawBody.length,
-        rawBodyPreview:
-          rawBody.substring(0, 200) + (rawBody.length > 200 ? "..." : ""),
-      });
-      done();
-    });
-
-    request.raw.on("error", (error) => {
-      console.error("❌ [MIDDLEWARE] Error capturing raw body:", error);
-      done();
-    });
-  } else {
-    console.log(
-      "⏭️ [MIDDLEWARE] Not a webhook request, skipping raw body capture"
-    );
-    done();
-  }
-});
-
 const PORT = process.env.PORT || 8000;
 
 // Optimized metrics tracking - reduced frequency
@@ -2444,52 +2392,8 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     console.log("🔔 [ELEVENLABS WEBHOOK] Post-call webhook received");
     console.log("=".repeat(80));
 
-    // Get the raw body that was captured by the middleware
-    const rawBody = request.rawBody;
-    const signature = request.headers["elevenlabs-signature"];
-
     console.log("📋 Webhook Headers:", request.headers);
-    console.log("📄 Raw Body Length:", rawBody?.length || 0);
-    console.log("📄 Raw Body (first 200 chars):", rawBody?.substring(0, 200));
-    console.log("📄 Raw Body available:", !!rawBody);
-
-    if (!signature) {
-      console.error("❌ No signature provided");
-      return reply.code(401).send({ error: "No signature provided" });
-    }
-
-    if (!rawBody) {
-      console.error("❌ No raw body captured by middleware");
-      console.log("🔍 Trying fallback methods...");
-
-      // Fallback: try to get raw body from request.raw
-      let fallbackRawBody = "";
-      if (request.raw && request.raw.body) {
-        fallbackRawBody = request.raw.body.toString();
-        console.log("📄 Using fallback request.raw.body");
-      } else {
-        console.error("❌ No fallback raw body available");
-        return reply
-          .code(400)
-          .send({ error: "No raw body available for signature verification" });
-      }
-
-      // Use fallback raw body for verification
-      if (!verifyElevenLabsSignature(fallbackRawBody, signature)) {
-        console.error("❌ Invalid signature with fallback raw body");
-        return reply.code(401).send({ error: "Invalid signature" });
-      }
-    } else {
-      // Use middleware raw body for verification
-      if (!verifyElevenLabsSignature(rawBody, signature)) {
-        console.error("❌ Invalid signature");
-        console.log("🔍 Signature verification failed. Raw body:", rawBody);
-        console.log("🔍 Signature received:", signature);
-        return reply.code(401).send({ error: "Invalid signature" });
-      }
-    }
-
-    console.log("✅ Signature verified successfully");
+    console.log("📄 Request Body:", request.body);
 
     const webhookData = request.body;
     console.log("📊 Webhook Data Structure:", {
