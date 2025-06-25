@@ -1057,10 +1057,60 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       queueItem.user_id
     );
 
+    let availabilityJson = null;
     if (!calendarSummary) {
       console.log(
         `[Queue] Worker ${workerId} - ⚠️ No se pudo obtener resumen del calendario (pero continuando con la llamada)`
       );
+
+      // Crear JSON por defecto indicando disponibilidad todos los días
+      const now = new Date();
+      const defaultDays = [];
+
+      for (let i = 0; i < 15; i++) {
+        const date = new Date(now);
+        date.setDate(date.getDate() + i);
+        const dayKey = date.toISOString().split("T")[0];
+        const dayName = date.toLocaleDateString("es-ES", {
+          weekday: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        });
+
+        defaultDays.push({
+          day: dayName,
+          isFree: true,
+          busyTime: 0,
+          freeSlots: [
+            {
+              start: "08:00",
+              end: "18:00",
+              description: "Día completamente libre",
+            },
+          ],
+        });
+      }
+
+      availabilityJson = {
+        workerId: workerId,
+        summary: {
+          timezone: "America/New_York",
+          totalEvents: 0,
+          freeDays: 15,
+          busyDays: 0,
+          period: `${now.toLocaleDateString()} - ${new Date(
+            now.getTime() + 14 * 24 * 60 * 60 * 1000
+          ).toLocaleDateString()}`,
+        },
+        period: "15 días completos",
+        availability: defaultDays,
+      };
+
+      console.log(
+        "📅 [Calendar] JSON por defecto creado - Disponible todos los días"
+      );
+      console.log(JSON.stringify(availabilityJson, null, 2));
     } else {
       console.log(
         `[Queue] Worker ${workerId} - ✅ Resumen del calendario obtenido:`,
@@ -1080,7 +1130,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       // Mostrar disponibilidad detallada para los próximos 15 días
       const allDays = Object.keys(calendarSummary.availabilityByDay).sort();
 
-      const availabilityJson = {
+      availabilityJson = {
         workerId: workerId,
         summary: {
           timezone: calendarSummary.timezone,
@@ -1141,6 +1191,10 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     // Make the call with error handling
     let call;
     try {
+      const availabilityParam = availabilityJson
+        ? encodeURIComponent(JSON.stringify(availabilityJson))
+        : "";
+
       call = await twilioClient.calls.create({
         from: TWILIO_PHONE_NUMBER,
         to: queueItem.lead.phone,
@@ -1162,7 +1216,9 @@ async function processQueueItem(queueItem, workerId = "unknown") {
           agentFirstName
         )}&agent_name=${encodeURIComponent(
           agentName
-        )}&assistant_name=${encodeURIComponent(userData.assistant_name)}`,
+        )}&assistant_name=${encodeURIComponent(
+          userData.assistant_name
+        )}&calendar_availability=${availabilityParam}`,
         statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
         statusCallbackEvent: ["completed"],
         statusCallbackMethod: "POST",
@@ -1385,6 +1441,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     agent_firstname,
     agent_name,
     assistant_name,
+    calendar_availability,
   } = request.query;
 
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
@@ -1402,6 +1459,9 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
           <Parameter name="agent_firstname" value="${agent_firstname}" />
           <Parameter name="agent_name" value="${agent_name}" />
           <Parameter name="assistant_name" value="${assistant_name}" />
+          <Parameter name="calendar_availability" value="${
+            calendar_availability || ""
+          }" />
         </Stream>
       </Connect>
     </Response>`;
@@ -1462,6 +1522,8 @@ fastify.register(async (fastifyInstance) => {
                 agent_name: customParameters?.agent_name || "Daniela",
                 assistant_name:
                   customParameters?.assistant_name || "Asistente de Ventas",
+                calendar_availability:
+                  customParameters?.calendar_availability || "",
               },
               usage: {
                 no_ip_reason: "user_ip_not_collected",
