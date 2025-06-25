@@ -2571,6 +2571,31 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
   }
 });
 
+// Add test endpoint for webhook debugging
+fastify.get("/webhook/elevenlabs/test", async (request, reply) => {
+  console.log("🧪 [WEBHOOK TEST] Test endpoint accessed");
+  return reply.send({
+    status: "ok",
+    message: "Webhook endpoint is accessible",
+    timestamp: new Date().toISOString(),
+    server: "code-production",
+  });
+});
+
+// Add POST test endpoint for webhook debugging
+fastify.post("/webhook/elevenlabs/test", async (request, reply) => {
+  console.log("🧪 [WEBHOOK TEST] POST test endpoint accessed");
+  console.log("📋 Headers:", request.headers);
+  console.log("📄 Body:", request.body);
+  return reply.send({
+    status: "ok",
+    message: "Webhook POST endpoint is accessible",
+    received_data: request.body,
+    timestamp: new Date().toISOString(),
+    server: "code-production",
+  });
+});
+
 // Start the server
 const start = async () => {
   try {
