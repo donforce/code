@@ -1077,32 +1077,41 @@ async function processQueueItem(queueItem, workerId = "unknown") {
         }
       );
 
-      // Mostrar disponibilidad detallada para los próximos 3 días
-      console.log(
-        `[Queue] Worker ${workerId} - 📅 Disponibilidad detallada (próximos 3 días):`
-      );
-      const next3Days = Object.keys(calendarSummary.availabilityByDay)
-        .sort()
-        .slice(0, 3);
+      // Mostrar disponibilidad detallada para los próximos 15 días
+      const allDays = Object.keys(calendarSummary.availabilityByDay).sort();
 
-      next3Days.forEach((dayKey) => {
-        const dayInfo = calendarSummary.availabilityByDay[dayKey];
-        console.log(`   📅 ${dayInfo.dayName}:`);
+      const availabilityJson = {
+        workerId: workerId,
+        summary: {
+          timezone: calendarSummary.timezone,
+          totalEvents: calendarSummary.totalEvents,
+          freeDays: calendarSummary.freeDays.length,
+          busyDays: calendarSummary.busyDays.length,
+          period: `${new Date(
+            calendarSummary.period.start
+          ).toLocaleDateString()} - ${new Date(
+            calendarSummary.period.end
+          ).toLocaleDateString()}`,
+        },
+        period: "15 días completos",
+        availability: allDays.map((dayKey) => {
+          const dayInfo = calendarSummary.availabilityByDay[dayKey];
+          return {
+            day: dayInfo.dayName,
+            isFree: dayInfo.isFree,
+            busyTime: dayInfo.isFree ? 0 : dayInfo.totalBusyTime,
+            freeSlots: dayInfo.isFree
+              ? []
+              : dayInfo.freeSlots.map((slot) => ({
+                  start: slot.start,
+                  end: slot.end,
+                  description: slot.description,
+                })),
+          };
+        }),
+      };
 
-        if (dayInfo.isFree) {
-          console.log(`      ✅ DÍA LIBRE - Disponible todo el día`);
-        } else {
-          console.log(`      📅 ${dayInfo.totalBusyTime} min ocupados`);
-          if (dayInfo.freeSlots.length > 0) {
-            console.log(`      ✅ Horarios libres:`);
-            dayInfo.freeSlots.forEach((slot) => {
-              console.log(
-                `         • ${slot.start} - ${slot.end}: ${slot.description}`
-              );
-            });
-          }
-        }
-      });
+      console.log(JSON.stringify(availabilityJson, null, 2));
     }
 
     // Mark user as having active call (global tracking)
