@@ -2653,7 +2653,27 @@ Responde en formato JSON con la siguiente estructura:
 
     // Try to parse JSON response
     try {
-      const parsedAnalysis = JSON.parse(analysisContent);
+      let jsonContent = analysisContent;
+
+      // Check if response is wrapped in markdown code blocks
+      if (analysisContent.includes("```json")) {
+        console.log(
+          "🔍 [OPENAI] Detected markdown code block, extracting JSON..."
+        );
+        const jsonMatch = analysisContent.match(/```json\s*([\s\S]*?)\s*```/);
+        if (jsonMatch && jsonMatch[1]) {
+          jsonContent = jsonMatch[1].trim();
+          console.log(
+            "✅ [OPENAI] Successfully extracted JSON from markdown block"
+          );
+        } else {
+          console.warn(
+            "⚠️ [OPENAI] Could not extract JSON from markdown block"
+          );
+        }
+      }
+
+      const parsedAnalysis = JSON.parse(jsonContent);
       console.log("✅ [OPENAI] Analysis parsed successfully:", {
         resumen_ejecutivo:
           parsedAnalysis.resumen_ejecutivo?.substring(0, 100) + "...",
