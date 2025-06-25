@@ -1058,6 +1058,9 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     );
 
     let availabilityJson = null;
+    let defaultText = "Disponible todos los dias";
+    let finalText = "Disponible todos los dias";
+
     if (!calendarSummary) {
       console.log(
         `[Queue] Worker ${workerId} - ⚠️ No se pudo obtener resumen del calendario (pero continuando con la llamada)`
@@ -1097,7 +1100,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
         );
       }
 
-      const defaultText = `Los días y horarios disponibles son ${defaultTextParts.join(
+      defaultText = `Los días y horarios disponibles son ${defaultTextParts.join(
         "."
       )}.`;
 
@@ -1179,7 +1182,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
         })
         .join(", ");
 
-      const finalText = `Los días y horarios disponibles son ${availabilityText}.`;
+      finalText = `Los días y horarios disponibles son ${availabilityText}.`;
 
       console.log("📅 [Calendar] Disponibilidad en texto:");
       console.log(finalText);
