@@ -26,6 +26,8 @@ const {
   // Google Calendar configuration
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
+  // OpenAI configuration
+  OPENAI_API_KEY,
   // Multi-threading configuration
   MAX_CONCURRENT_CALLS,
   MAX_CALLS_PER_USER,
@@ -46,7 +48,8 @@ if (
   !SUPABASE_SERVICE_ROLE_KEY ||
   !RAILWAY_PUBLIC_DOMAIN ||
   !GOOGLE_CLIENT_ID ||
-  !GOOGLE_CLIENT_SECRET
+  !GOOGLE_CLIENT_SECRET ||
+  !OPENAI_API_KEY
 ) {
   console.error("Missing required environment variables");
   throw new Error("Missing required environment variables");
@@ -2503,6 +2506,37 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     }
 
     console.log("✅ Call updated successfully");
+
+    // 🔍 ANALYZE CALL WITH OPENAI
+    console.log("🤖 [OPENAI] Starting call analysis...");
+    try {
+      const openAIAnalysis = await analyzeCallWithOpenAI(webhookData, call);
+
+      if (openAIAnalysis) {
+        console.log("✅ [OPENAI] Analysis completed successfully");
+
+        // Update call with OpenAI analysis
+        const { error: openAIUpdateError } = await supabase
+          .from("calls")
+          .update({
+            openai_analysis: openAIAnalysis,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("conversation_id", conversation_id);
+
+        if (openAIUpdateError) {
+          console.error(
+            "❌ Error updating call with OpenAI analysis:",
+            openAIUpdateError
+          );
+        } else {
+          console.log("✅ Call updated with OpenAI analysis");
+        }
+      }
+    } catch (openAIError) {
+      console.error("❌ Error analyzing call with OpenAI:", openAIError);
+    }
+
     console.log("=".repeat(80));
 
     reply.send({ success: true, message: "Webhook processed successfully" });
@@ -2511,6 +2545,126 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     reply.code(500).send({ error: "Internal server error" });
   }
 });
+
+// Function to analyze call with OpenAI
+async function analyzeCallWithOpenAI(webhookData, call) {
+  try {
+    console.log("🤖 [OPENAI] Preparing analysis request...");
+
+    const { conversation_id, analysis, transcript, metadata } =
+      webhookData.data;
+
+    // Prepare the conversation transcript for analysis
+    let fullTranscript = "";
+    if (transcript && transcript.length > 0) {
+      fullTranscript = transcript
+        .map((turn) => {
+          const speaker = turn.speaker === "user" ? "Cliente" : "Agente";
+          const text = turn.text || "";
+          return `${speaker}: ${text}`;
+        })
+        .join("\n");
+    }
+
+    // Prepare analysis prompt
+    const analysisPrompt = `
+Analiza la siguiente conversación de ventas inmobiliarias y proporciona un análisis detallado:
+
+CONVERSACIÓN:
+${fullTranscript}
+
+METADATOS DE LA LLAMADA:
+- Duración: ${metadata?.call_duration_secs || 0} segundos
+- Turnos de conversación: ${transcript?.length || 0}
+- Éxito de la llamada: ${analysis?.call_successful ? "Sí" : "No"}
+
+Por favor proporciona un análisis estructurado que incluya:
+
+1. RESUMEN EJECUTIVO (2-3 oraciones)
+2. PUNTOS CLAVE DE LA CONVERSACIÓN
+3. INTERÉS DEL CLIENTE (Alto/Medio/Bajo)
+4. OBJECIONES IDENTIFICADAS
+5. SIGUIENTES PASOS RECOMENDADOS
+6. CALIFICACIÓN DE LA OPORTUNIDAD (1-10)
+7. OBSERVACIONES ADICIONALES
+
+Responde en formato JSON con la siguiente estructura:
+{
+  "resumen_ejecutivo": "string",
+  "puntos_clave": ["string"],
+  "interes_cliente": "Alto/Medio/Bajo",
+  "objeciones": ["string"],
+  "siguientes_pasos": ["string"],
+  "calificacion_oportunidad": number,
+  "observaciones": "string"
+}
+`;
+
+    // Call OpenAI API
+    const openAIResponse = await fetch(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "system",
+              content:
+                "Eres un analista experto en ventas inmobiliarias. Analiza conversaciones de ventas y proporciona insights valiosos en formato JSON.",
+            },
+            {
+              role: "user",
+              content: analysisPrompt,
+            },
+          ],
+          temperature: 0.3,
+          max_tokens: 1000,
+        }),
+      }
+    );
+
+    if (!openAIResponse.ok) {
+      throw new Error(
+        `OpenAI API error: ${openAIResponse.status} ${openAIResponse.statusText}`
+      );
+    }
+
+    const openAIData = await openAIResponse.json();
+    const analysisContent = openAIData.choices[0]?.message?.content;
+
+    if (!analysisContent) {
+      throw new Error("No analysis content received from OpenAI");
+    }
+
+    // Try to parse JSON response
+    try {
+      const parsedAnalysis = JSON.parse(analysisContent);
+      console.log("✅ [OPENAI] Analysis parsed successfully:", {
+        resumen_ejecutivo:
+          parsedAnalysis.resumen_ejecutivo?.substring(0, 100) + "...",
+        interes_cliente: parsedAnalysis.interes_cliente,
+        calificacion_oportunidad: parsedAnalysis.calificacion_oportunidad,
+      });
+      return parsedAnalysis;
+    } catch (parseError) {
+      console.warn(
+        "⚠️ [OPENAI] Could not parse JSON response, returning raw text"
+      );
+      return {
+        raw_analysis: analysisContent,
+        parse_error: parseError.message,
+      };
+    }
+  } catch (error) {
+    console.error("❌ [OPENAI] Error in analysis:", error);
+    throw error;
+  }
+}
 
 // Add test endpoint for webhook debugging
 fastify.get("/webhook/elevenlabs/test", async (request, reply) => {
@@ -2558,6 +2712,9 @@ const start = async () => {
       `   • RAILWAY_PUBLIC_DOMAIN: ${
         RAILWAY_PUBLIC_DOMAIN ? "✅ Set" : "❌ Missing"
       }`
+    );
+    console.log(
+      `   • OPENAI_API_KEY: ${OPENAI_API_KEY ? "✅ Set" : "❌ Missing"}`
     );
 
     await fastify.listen({ port: PORT, host: "0.0.0.0" });
