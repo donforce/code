@@ -1616,293 +1616,306 @@ fastify.register(async (fastifyInstance) => {
               JSON.stringify(initialConfig.dynamic_variables, null, 2)
             );
             console.log(JSON.stringify(initialConfig, null, 2));
-            elevenLabsWs.send(JSON.stringify(initialConfig));
 
-            elevenLabsWs.send(
-              JSON.stringify({
-                type: "audio",
-                audio_event: {
-                  audio_base_64: Buffer.from([0x00]).toString("base64"),
-                },
-              })
-            );
-          });
+            // Verificar que el WebSocket esté abierto antes de enviar
+            if (elevenLabsWs.readyState === WebSocket.OPEN) {
+              elevenLabsWs.send(JSON.stringify(initialConfig));
 
-          elevenLabsWs.on("message", async (data) => {
-            try {
-              const message = JSON.parse(data);
+              elevenLabsWs.send(
+                JSON.stringify({
+                  type: "audio",
+                  audio_event: {
+                    audio_base_64: Buffer.from([0x00]).toString("base64"),
+                  },
+                })
+              );
+            } else {
+              console.error(
+                "[ElevenLabs] WebSocket not ready, state:",
+                elevenLabsWs.readyState
+              );
+            }
 
-              // Only log critical events, skip ping messages
-              if (message.type !== "ping") {
-                console.log(`[ElevenLabs] Event: ${message.type}`);
-              }
+            elevenLabsWs.on("message", async (data) => {
+              try {
+                const message = JSON.parse(data);
 
-              switch (message.type) {
-                case "conversation_initiation_metadata":
-                  // Save conversation_id to database
-                  if (
-                    callSid &&
-                    message.conversation_initiation_metadata_event
-                      ?.conversation_id
-                  ) {
-                    const conversationId =
+                // Only log critical events, skip ping messages
+                if (message.type !== "ping") {
+                  console.log(`[ElevenLabs] Event: ${message.type}`);
+                }
+
+                switch (message.type) {
+                  case "conversation_initiation_metadata":
+                    // Save conversation_id to database
+                    if (
+                      callSid &&
                       message.conversation_initiation_metadata_event
-                        .conversation_id;
+                        ?.conversation_id
+                    ) {
+                      const conversationId =
+                        message.conversation_initiation_metadata_event
+                          .conversation_id;
 
-                    try {
-                      const { error: updateError } = await supabase
-                        .from("calls")
-                        .update({
-                          conversation_id: conversationId,
-                          updated_at: new Date().toISOString(),
-                        })
-                        .eq("call_sid", callSid);
+                      try {
+                        const { error: updateError } = await supabase
+                          .from("calls")
+                          .update({
+                            conversation_id: conversationId,
+                            updated_at: new Date().toISOString(),
+                          })
+                          .eq("call_sid", callSid);
 
-                      if (updateError) {
+                        if (updateError) {
+                          console.error(
+                            "[ElevenLabs] Error saving conversation_id:",
+                            updateError
+                          );
+                        }
+                      } catch (dbError) {
                         console.error(
-                          "[ElevenLabs] Error saving conversation_id:",
-                          updateError
+                          "[ElevenLabs] Error saving conversation_id to DB:",
+                          dbError
                         );
                       }
-                    } catch (dbError) {
-                      console.error(
-                        "[ElevenLabs] Error saving conversation_id to DB:",
-                        dbError
+                    }
+                    break;
+
+                  case "audio":
+                    if (streamSid) {
+                      const audioData = {
+                        event: "media",
+                        streamSid,
+                        media: {
+                          payload:
+                            message.audio?.chunk ||
+                            message.audio_event?.audio_base_64,
+                        },
+                      };
+                      ws.send(JSON.stringify(audioData));
+                    }
+                    break;
+
+                  case "agent_response":
+                    console.log("🤖 [AGENT] Speaking");
+                    break;
+
+                  case "user_speaking":
+                    const speakingDuration =
+                      message.user_speaking_event?.duration || 0;
+                    const shouldInterrupt =
+                      message.user_speaking_event?.should_interrupt;
+
+                    console.log(
+                      `🎤 [USER] Speaking - Duration: ${speakingDuration}s, Should Interrupt: ${shouldInterrupt}`
+                    );
+
+                    // Imprimir el mensaje completo del evento
+                    console.log(
+                      "📋 [USER_SPEAKING] Full message:",
+                      JSON.stringify(message, null, 2)
+                    );
+
+                    if (shouldInterrupt) {
+                      console.log(
+                        "🚨 [INTERRUPTION] ElevenLabs detected should_interrupt=true"
                       );
                     }
-                  }
-                  break;
-
-                case "audio":
-                  if (streamSid) {
-                    const audioData = {
-                      event: "media",
-                      streamSid,
-                      media: {
-                        payload:
-                          message.audio?.chunk ||
-                          message.audio_event?.audio_base_64,
-                      },
-                    };
-                    ws.send(JSON.stringify(audioData));
-                  }
-                  break;
-
-                case "agent_response":
-                  console.log("🤖 [AGENT] Speaking");
-                  break;
-
-                case "user_speaking":
-                  const speakingDuration =
-                    message.user_speaking_event?.duration || 0;
-                  const shouldInterrupt =
-                    message.user_speaking_event?.should_interrupt;
-
-                  console.log(
-                    `🎤 [USER] Speaking - Duration: ${speakingDuration}s, Should Interrupt: ${shouldInterrupt}`
-                  );
-
-                  // Imprimir el mensaje completo del evento
-                  console.log(
-                    "📋 [USER_SPEAKING] Full message:",
-                    JSON.stringify(message, null, 2)
-                  );
-
-                  if (shouldInterrupt) {
-                    console.log(
-                      "🚨 [INTERRUPTION] ElevenLabs detected should_interrupt=true"
-                    );
-                  }
-                  break;
-
-                case "agent_interrupted":
-                  console.log(
-                    "🛑 [INTERRUPTION] Agent interrupted successfully"
-                  );
-                  console.log(
-                    "📊 [INTERRUPTION] Details:",
-                    JSON.stringify(message, null, 2)
-                  );
-                  break;
-
-                case "interruption":
-                  console.log("🚨 [INTERRUPTION] Interruption event received");
-                  console.log(
-                    "📊 [INTERRUPTION] Details:",
-                    JSON.stringify(message, null, 2)
-                  );
-                  break;
-
-                case "conversation_resumed":
-                  console.log("🔄 [INTERRUPTION] Conversation resumed");
-                  break;
-
-                case "interruption_started":
-                  console.log("🚨 [INTERRUPTION] Interruption started");
-                  break;
-
-                case "interruption_ended":
-                  console.log("✅ [INTERRUPTION] Interruption ended");
-                  break;
-
-                case "user_transcript":
-                  const transcript =
-                    message.user_transcription_event?.user_transcript
-                      ?.toLowerCase()
-                      .trim() || "";
-
-                  if (transcript === lastUserTranscript) {
                     break;
-                  }
 
-                  lastUserTranscript = transcript;
+                  case "agent_interrupted":
+                    console.log(
+                      "🛑 [INTERRUPTION] Agent interrupted successfully"
+                    );
+                    console.log(
+                      "📊 [INTERRUPTION] Details:",
+                      JSON.stringify(message, null, 2)
+                    );
+                    break;
 
-                  const normalized = transcript.replace(/[\s,]/g, "");
-                  const isNumericSequence = /^\d{7,}$/.test(normalized);
-                  const hasVoicemailPhrases = [
-                    "deje su mensaje",
-                    "después del tono",
-                    "mensaje de voz",
-                    "buzón de voz",
-                    "el número que usted marcó",
-                    "no está disponible",
-                    "intente más tarde",
-                    "ha sido desconectado",
-                    "gracias por llamar",
-                  ].some((phrase) => transcript.includes(phrase));
+                  case "interruption":
+                    console.log(
+                      "🚨 [INTERRUPTION] Interruption event received"
+                    );
+                    console.log(
+                      "📊 [INTERRUPTION] Details:",
+                      JSON.stringify(message, null, 2)
+                    );
+                    break;
 
-                  if (isNumericSequence || hasVoicemailPhrases) {
-                    console.log("[System] Detected voicemail - hanging up");
+                  case "conversation_resumed":
+                    console.log("🔄 [INTERRUPTION] Conversation resumed");
+                    break;
 
-                    if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                      elevenLabsWs.close();
+                  case "interruption_started":
+                    console.log("🚨 [INTERRUPTION] Interruption started");
+                    break;
+
+                  case "interruption_ended":
+                    console.log("✅ [INTERRUPTION] Interruption ended");
+                    break;
+
+                  case "user_transcript":
+                    const transcript =
+                      message.user_transcription_event?.user_transcript
+                        ?.toLowerCase()
+                        .trim() || "";
+
+                    if (transcript === lastUserTranscript) {
+                      break;
                     }
 
+                    lastUserTranscript = transcript;
+
+                    const normalized = transcript.replace(/[\s,]/g, "");
+                    const isNumericSequence = /^\d{7,}$/.test(normalized);
+                    const hasVoicemailPhrases = [
+                      "deje su mensaje",
+                      "después del tono",
+                      "mensaje de voz",
+                      "buzón de voz",
+                      "el número que usted marcó",
+                      "no está disponible",
+                      "intente más tarde",
+                      "ha sido desconectado",
+                      "gracias por llamar",
+                    ].some((phrase) => transcript.includes(phrase));
+
+                    if (isNumericSequence || hasVoicemailPhrases) {
+                      console.log("[System] Detected voicemail - hanging up");
+
+                      if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                        elevenLabsWs.close();
+                      }
+
+                      if (callSid) {
+                        try {
+                          await twilioClient
+                            .calls(callSid)
+                            .update({ status: "completed" });
+                        } catch (err) {
+                          console.error("[Twilio] Error ending call:", err);
+                        }
+                      }
+
+                      if (ws.readyState === WebSocket.OPEN) {
+                        ws.close();
+                      }
+                    }
+                    break;
+
+                  case "conversation_summary":
+                    console.log("📝 [SUMMARY] Conversation completed");
+
+                    // Save transcript summary to database
                     if (callSid) {
                       try {
-                        await twilioClient
-                          .calls(callSid)
-                          .update({ status: "completed" });
-                      } catch (err) {
-                        console.error("[Twilio] Error ending call:", err);
-                      }
-                    }
+                        const { error: updateError } = await supabase
+                          .from("calls")
+                          .update({
+                            transcript_summary:
+                              message.conversation_summary_event
+                                ?.conversation_summary,
+                            conversation_duration:
+                              message.conversation_summary_event
+                                ?.conversation_duration,
+                            turn_count:
+                              message.conversation_summary_event?.turn_count,
+                            updated_at: new Date().toISOString(),
+                          })
+                          .eq("call_sid", callSid);
 
-                    if (ws.readyState === WebSocket.OPEN) {
-                      ws.close();
-                    }
-                  }
-                  break;
-
-                case "conversation_summary":
-                  console.log("📝 [SUMMARY] Conversation completed");
-
-                  // Save transcript summary to database
-                  if (callSid) {
-                    try {
-                      const { error: updateError } = await supabase
-                        .from("calls")
-                        .update({
-                          transcript_summary:
-                            message.conversation_summary_event
-                              ?.conversation_summary,
-                          conversation_duration:
-                            message.conversation_summary_event
-                              ?.conversation_duration,
-                          turn_count:
-                            message.conversation_summary_event?.turn_count,
-                          updated_at: new Date().toISOString(),
-                        })
-                        .eq("call_sid", callSid);
-
-                      if (updateError) {
+                        if (updateError) {
+                          console.error(
+                            "[ElevenLabs] Error saving transcript summary:",
+                            updateError
+                          );
+                        }
+                      } catch (dbError) {
                         console.error(
-                          "[ElevenLabs] Error saving transcript summary:",
-                          updateError
+                          "[ElevenLabs] Error saving transcript summary to DB:",
+                          dbError
                         );
                       }
-                    } catch (dbError) {
-                      console.error(
-                        "[ElevenLabs] Error saving transcript summary to DB:",
-                        dbError
-                      );
                     }
-                  }
-                  break;
+                    break;
 
-                case "data_collection_results":
-                  console.log("📊 [DATA] Collection results received");
+                  case "data_collection_results":
+                    console.log("📊 [DATA] Collection results received");
 
-                  // Save data collection results to database
-                  if (callSid) {
-                    try {
-                      const { error: updateError } = await supabase
-                        .from("calls")
-                        .update({
-                          data_collection_results:
-                            message.data_collection_results_event
-                              ?.collected_data,
-                          data_collection_success:
-                            message.data_collection_results_event?.success,
-                          data_collection_error:
-                            message.data_collection_results_event?.error,
-                          updated_at: new Date().toISOString(),
-                        })
-                        .eq("call_sid", callSid);
+                    // Save data collection results to database
+                    if (callSid) {
+                      try {
+                        const { error: updateError } = await supabase
+                          .from("calls")
+                          .update({
+                            data_collection_results:
+                              message.data_collection_results_event
+                                ?.collected_data,
+                            data_collection_success:
+                              message.data_collection_results_event?.success,
+                            data_collection_error:
+                              message.data_collection_results_event?.error,
+                            updated_at: new Date().toISOString(),
+                          })
+                          .eq("call_sid", callSid);
 
-                      if (updateError) {
+                        if (updateError) {
+                          console.error(
+                            "[ElevenLabs] Error saving data collection results:",
+                            updateError
+                          );
+                        }
+                      } catch (dbError) {
                         console.error(
-                          "[ElevenLabs] Error saving data collection results:",
-                          updateError
+                          "[ElevenLabs] Error saving data collection results to DB:",
+                          dbError
                         );
                       }
-                    } catch (dbError) {
-                      console.error(
-                        "[ElevenLabs] Error saving data collection results to DB:",
-                        dbError
+                    }
+                    break;
+
+                  case "conversation_ended":
+                    console.log("🔚 [END] Conversation ended");
+                    break;
+
+                  default:
+                    // Only log unknown message types, not ping
+                    if (message.type !== "ping") {
+                      console.log(
+                        `[ElevenLabs] Unknown event: ${message.type}`
                       );
                     }
-                  }
-                  break;
-
-                case "conversation_ended":
-                  console.log("🔚 [END] Conversation ended");
-                  break;
-
-                default:
-                  // Only log unknown message types, not ping
-                  if (message.type !== "ping") {
-                    console.log(`[ElevenLabs] Unknown event: ${message.type}`);
-                  }
+                }
+              } catch (error) {
+                console.error("[ElevenLabs] Error processing message:", error);
               }
-            } catch (error) {
-              console.error("[ElevenLabs] Error processing message:", error);
-            }
-          });
+            });
 
-          elevenLabsWs.on("error", (error) => {
-            console.error("[ElevenLabs] WebSocket error:", error);
-          });
+            elevenLabsWs.on("error", (error) => {
+              console.error("[ElevenLabs] WebSocket error:", error);
+            });
 
-          elevenLabsWs.on("close", async () => {
-            console.log("[ElevenLabs] Disconnected");
+            elevenLabsWs.on("close", async () => {
+              console.log("[ElevenLabs] Disconnected");
 
-            if (callSid) {
-              try {
-                await twilioClient
-                  .calls(callSid)
-                  .update({ status: "completed" });
-                console.log(
-                  `[Twilio] Call ${callSid} ended due to ElevenLabs disconnection.`
-                );
-              } catch (err) {
-                console.error("[Twilio] Error ending call:", err);
+              if (callSid) {
+                try {
+                  await twilioClient
+                    .calls(callSid)
+                    .update({ status: "completed" });
+                  console.log(
+                    `[Twilio] Call ${callSid} ended due to ElevenLabs disconnection.`
+                  );
+                } catch (err) {
+                  console.error("[Twilio] Error ending call:", err);
+                }
               }
-            }
 
-            if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-              elevenLabsWs.close();
-            }
+              if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                elevenLabsWs.close();
+              }
+            });
           });
         } catch (error) {
           console.error("[ElevenLabs] Setup error:", error);
