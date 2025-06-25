@@ -1092,11 +1092,13 @@ async function processQueueItem(queueItem, workerId = "unknown") {
           ],
         });
 
-        defaultTextParts.push(`${dayName} de 8AM a 6PM`);
+        defaultTextParts.push(
+          `${dayName.charAt(0).toUpperCase() + dayName.slice(1)} de 8AM a 6PM`
+        );
       }
 
       const defaultText = `Los días y horarios disponibles son ${defaultTextParts.join(
-        ", "
+        "."
       )}.`;
 
       console.log("📅 [Calendar] Disponibilidad por defecto en texto:");
@@ -1149,7 +1151,9 @@ async function processQueueItem(queueItem, workerId = "unknown") {
               month: "2-digit",
               year: "numeric",
             });
-            return `${dayName} de 8AM a 6PM`;
+            return `${
+              dayName.charAt(0).toUpperCase() + dayName.slice(1)
+            } de 8AM a 6PM`;
           } else {
             // Día con horarios específicos
             const date = new Date(dayKey);
@@ -1168,7 +1172,9 @@ async function processQueueItem(queueItem, workerId = "unknown") {
               })
               .join(" y ");
 
-            return `${dayName} ${timeSlots}`;
+            return `${
+              dayName.charAt(0).toUpperCase() + dayName.slice(1)
+            } ${timeSlots}`;
           }
         })
         .join(", ");
@@ -1269,7 +1275,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
             .filter(Boolean);
 
           availabilityText = `Los días y horarios disponibles son ${availabilityTextParts.join(
-            ", "
+            "."
           )}.`;
         }
       }
