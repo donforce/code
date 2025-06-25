@@ -75,6 +75,21 @@ const fastify = Fastify({
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
+// Add custom middleware to capture raw body for webhooks
+fastify.addHook("onRequest", (request, reply, done) => {
+  if (request.url === "/webhook/elevenlabs") {
+    // For webhook endpoint, capture raw body manually before Fastify processes it
+    const chunks = [];
+    request.raw.on("data", (chunk) => chunks.push(chunk));
+    request.raw.on("end", () => {
+      request.rawBody = Buffer.concat(chunks).toString();
+      done();
+    });
+  } else {
+    done();
+  }
+});
+
 const PORT = process.env.PORT || 8000;
 
 // Optimized metrics tracking - reduced frequency
@@ -2392,39 +2407,89 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     console.log("🔔 [ELEVENLABS WEBHOOK] Post-call webhook received");
     console.log("=".repeat(80));
 
+    // Get the raw body that was captured by the middleware
     const rawBody = request.rawBody;
     const signature = request.headers["elevenlabs-signature"];
 
     console.log("📋 Webhook Headers:", request.headers);
     console.log("📄 Raw Body Length:", rawBody?.length || 0);
+    console.log("📄 Raw Body (first 200 chars):", rawBody?.substring(0, 200));
+    console.log("📄 Raw Body available:", !!rawBody);
 
     if (!signature) {
       console.error("❌ No signature provided");
       return reply.code(401).send({ error: "No signature provided" });
     }
 
-    if (!verifyElevenLabsSignature(rawBody, signature)) {
-      console.error("❌ Invalid signature");
-      return reply.code(401).send({ error: "Invalid signature" });
+    if (!rawBody) {
+      console.error("❌ No raw body captured by middleware");
+      console.log("🔍 Trying fallback methods...");
+
+      // Fallback: try to get raw body from request.raw
+      let fallbackRawBody = "";
+      if (request.raw && request.raw.body) {
+        fallbackRawBody = request.raw.body.toString();
+        console.log("📄 Using fallback request.raw.body");
+      } else {
+        console.error("❌ No fallback raw body available");
+        return reply
+          .code(400)
+          .send({ error: "No raw body available for signature verification" });
+      }
+
+      // Use fallback raw body for verification
+      if (!verifyElevenLabsSignature(fallbackRawBody, signature)) {
+        console.error("❌ Invalid signature with fallback raw body");
+        return reply.code(401).send({ error: "Invalid signature" });
+      }
+    } else {
+      // Use middleware raw body for verification
+      if (!verifyElevenLabsSignature(rawBody, signature)) {
+        console.error("❌ Invalid signature");
+        console.log("🔍 Signature verification failed. Raw body:", rawBody);
+        console.log("🔍 Signature received:", signature);
+        return reply.code(401).send({ error: "Invalid signature" });
+      }
     }
 
     console.log("✅ Signature verified successfully");
 
     const webhookData = request.body;
-    console.log("📊 Webhook Data:", JSON.stringify(webhookData, null, 2));
+    console.log("📊 Webhook Data Structure:", {
+      hasWebhookData: !!webhookData,
+      hasData: !!webhookData?.data,
+      hasConversationId: !!webhookData?.data?.conversation_id,
+      webhookDataKeys: webhookData ? Object.keys(webhookData) : [],
+      dataKeys: webhookData?.data ? Object.keys(webhookData.data) : [],
+    });
 
+    // Check for ElevenLabs specific structure
     if (
       !webhookData ||
       !webhookData.data ||
       !webhookData.data.conversation_id
     ) {
       console.error("❌ Invalid webhook data structure");
+      console.log("📊 Received data:", JSON.stringify(webhookData, null, 2));
       return reply.code(400).send({ error: "Invalid webhook data" });
     }
 
-    const { conversation_id, analysis } = webhookData.data;
+    const { conversation_id, analysis, transcript, metadata } =
+      webhookData.data;
 
     console.log("🔍 Processing webhook for conversation:", conversation_id);
+    console.log(
+      "📊 Analysis data:",
+      analysis ? Object.keys(analysis) : "No analysis"
+    );
+    console.log(
+      "📊 Transcript length:",
+      transcript ? transcript.length : "No transcript"
+    );
+    console.log(
+      "📊 Metadata:",
+      metadata ? Object.keys(metadata) : "No metadata"
+    );
 
     // Find the call by conversation_id
     const { data: call, error: callError } = await supabase
@@ -2435,6 +2500,24 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
 
     if (callError || !call) {
       console.error("❌ Call not found for conversation:", conversation_id);
+      console.log(
+        "🔍 Searching for calls with conversation_id:",
+        conversation_id
+      );
+
+      // Let's check what calls exist in the database
+      const { data: allCalls, error: allCallsError } = await supabase
+        .from("calls")
+        .select("call_sid, conversation_id, created_at")
+        .order("created_at", { ascending: false })
+        .limit(10);
+
+      if (!allCallsError) {
+        console.log("📋 Recent calls in database:", allCalls);
+      } else {
+        console.error("❌ Error fetching recent calls:", allCallsError);
+      }
+
       return reply.code(404).send({ error: "Call not found" });
     }
 
@@ -2452,14 +2535,17 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       if (analysis.transcript_summary) {
         updateData.transcript_summary = analysis.transcript_summary;
       }
-      if (analysis.conversation_duration) {
-        updateData.conversation_duration = analysis.conversation_duration;
-      }
-      if (analysis.turn_count) {
-        updateData.turn_count = analysis.turn_count;
-      }
       if (analysis.data_collection_results) {
         updateData.data_collection_results = analysis.data_collection_results;
+      }
+    }
+
+    if (metadata) {
+      if (metadata.call_duration_secs) {
+        updateData.conversation_duration = metadata.call_duration_secs;
+      }
+      if (transcript && transcript.length > 0) {
+        updateData.turn_count = transcript.length;
       }
     }
 
