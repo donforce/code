@@ -1487,69 +1487,95 @@ fastify.register(async (fastifyInstance) => {
 
       const setupElevenLabs = async () => {
         try {
+          console.log("[ElevenLabs] 🔄 Iniciando conexión con ElevenLabs...");
           const signedUrl = await getSignedUrl();
+          console.log("[ElevenLabs] ✅ URL firmada obtenida");
+
           elevenLabsWs = new WebSocket(signedUrl);
 
+          // Configurar timeout para la conexión
+          const connectionTimeout = setTimeout(() => {
+            if (elevenLabsWs.readyState === WebSocket.CONNECTING) {
+              console.error(
+                "[ElevenLabs] ❌ Timeout de conexión - Cerrando WebSocket"
+              );
+              elevenLabsWs.close();
+            }
+          }, 10000); // 10 segundos de timeout
+
           elevenLabsWs.on("open", () => {
-            console.log("[ElevenLabs] Connected to Conversational AI");
+            clearTimeout(connectionTimeout);
+            console.log("[ElevenLabs] ✅ Connected to Conversational AI");
             console.log(
-              "[ElevenLabs] Initializing conversation with ULTRA-AGGRESSIVE interruptions"
+              "[ElevenLabs] 🔧 Initializing conversation with ULTRA-AGGRESSIVE interruptions"
             );
 
-            const initialConfig = {
-              type: "conversation_initiation_client_data",
-              conversation_config_override: {
-                agent: {
-                  agent_id: ELEVENLABS_AGENT_ID,
+            try {
+              const initialConfig = {
+                type: "conversation_initiation_client_data",
+                conversation_config_override: {
+                  agent: {
+                    agent_id: ELEVENLABS_AGENT_ID,
+                  },
+                  keep_alive: true,
+                  interruption_settings: {
+                    enabled: true,
+                    sensitivity: "medium",
+                    min_duration: 0.5,
+                    max_duration: 5.0,
+                    cooldown_period: 1.0,
+                  },
                 },
-                keep_alive: true,
-                interruption_settings: {
-                  enabled: true,
-                  sensitivity: "medium", // Back to default medium sensitivity
-                  min_duration: 0.5, // Back to default 0.5 seconds
-                  max_duration: 5.0, // Back to default 5 seconds
-                  cooldown_period: 1.0, // Back to default 1 second
+                dynamic_variables: {
+                  client_name: customParameters?.client_name || "Cliente",
+                  client_phone: customParameters?.client_phone || "",
+                  client_email: customParameters?.client_email || "",
+                  client_id: customParameters?.client_id || "",
+                  fecha: customParameters?.fecha || "",
+                  dia_semana: customParameters?.dia_semana || "",
+                  agent_firstname:
+                    customParameters?.agent_firstname || "Agente",
+                  agent_name: customParameters?.agent_name || "Daniela",
+                  assistant_name:
+                    customParameters?.assistant_name || "Asistente de Ventas",
+                  calendar_availability:
+                    customParameters?.calendar_availability || "",
                 },
-              },
-              dynamic_variables: {
-                client_name: customParameters?.client_name || "Cliente",
-                client_phone: customParameters?.client_phone || "",
-                client_email: customParameters?.client_email || "",
-                client_id: customParameters?.client_id || "",
-                fecha: customParameters?.fecha || "",
-                dia_semana: customParameters?.dia_semana || "",
-                agent_firstname: customParameters?.agent_firstname || "Agente",
-                agent_name: customParameters?.agent_name || "Daniela",
-                assistant_name:
-                  customParameters?.assistant_name || "Asistente de Ventas",
-                calendar_availability:
-                  customParameters?.calendar_availability || "",
-              },
-              usage: {
-                no_ip_reason: "user_ip_not_collected",
-              },
-            };
+                usage: {
+                  no_ip_reason: "user_ip_not_collected",
+                },
+              };
 
-            console.log(
-              "🔧 [ElevenLabs] Initial config with ULTRA-AGGRESSIVE interruptions:"
-            );
-            console.log("🎯 Interruption Settings:");
-            console.log("   • Enabled: true");
-            console.log("   • Sensitivity: medium");
-            console.log("   • Min Duration: 0.5s");
-            console.log("   • Max Duration: 5.0s");
-            console.log("   • Cooldown: 1.0s");
-            console.log(JSON.stringify(initialConfig, null, 2));
-            elevenLabsWs.send(JSON.stringify(initialConfig));
+              console.log(
+                "🔧 [ElevenLabs] Initial config with ULTRA-AGGRESSIVE interruptions:"
+              );
+              console.log("🎯 Interruption Settings:");
+              console.log("   • Enabled: true");
+              console.log("   • Sensitivity: medium");
+              console.log("   • Min Duration: 0.5s");
+              console.log("   • Max Duration: 5.0s");
+              console.log("   • Cooldown: 1.0s");
+              console.log(JSON.stringify(initialConfig, null, 2));
 
-            elevenLabsWs.send(
-              JSON.stringify({
-                type: "audio",
-                audio_event: {
-                  audio_base_64: Buffer.from([0x00]).toString("base64"),
-                },
-              })
-            );
+              elevenLabsWs.send(JSON.stringify(initialConfig));
+              console.log("[ElevenLabs] ✅ Configuración inicial enviada");
+
+              elevenLabsWs.send(
+                JSON.stringify({
+                  type: "audio",
+                  audio_event: {
+                    audio_base_64: Buffer.from([0x00]).toString("base64"),
+                  },
+                })
+              );
+              console.log("[ElevenLabs] ✅ Audio inicial enviado");
+            } catch (configError) {
+              console.error(
+                "[ElevenLabs] ❌ Error enviando configuración inicial:",
+                configError
+              );
+              throw configError;
+            }
           });
 
           elevenLabsWs.on("message", async (data) => {
@@ -1558,11 +1584,36 @@ fastify.register(async (fastifyInstance) => {
 
               // Only log critical events, skip ping messages
               if (message.type !== "ping") {
-                console.log(`[ElevenLabs] Event: ${message.type}`);
+                console.log(`[ElevenLabs] 📨 Event: ${message.type}`);
               }
 
               switch (message.type) {
+                case "error":
+                  console.error(
+                    "[ElevenLabs] ❌ Error recibido de ElevenLabs:",
+                    message
+                  );
+                  // Intentar reconectar si es un error crítico
+                  if (
+                    message.error?.includes("authentication") ||
+                    message.error?.includes("token")
+                  ) {
+                    console.log(
+                      "[ElevenLabs] 🔄 Error de autenticación detectado, intentando reconectar..."
+                    );
+                    setTimeout(() => {
+                      if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                        elevenLabsWs.close();
+                      }
+                      setupElevenLabs();
+                    }, 2000);
+                  }
+                  break;
+
                 case "conversation_initiation_metadata":
+                  console.log(
+                    "[ElevenLabs] ✅ Metadata de conversación recibida"
+                  );
                   // Save conversation_id to database
                   if (
                     callSid &&
@@ -1584,13 +1635,18 @@ fastify.register(async (fastifyInstance) => {
 
                       if (updateError) {
                         console.error(
-                          "[ElevenLabs] Error saving conversation_id:",
+                          "[ElevenLabs] ❌ Error saving conversation_id:",
                           updateError
+                        );
+                      } else {
+                        console.log(
+                          "[ElevenLabs] ✅ Conversation ID guardado en DB:",
+                          conversationId
                         );
                       }
                     } catch (dbError) {
                       console.error(
-                        "[ElevenLabs] Error saving conversation_id to DB:",
+                        "[ElevenLabs] ❌ Error saving conversation_id to DB:",
                         dbError
                       );
                     }
@@ -1599,16 +1655,23 @@ fastify.register(async (fastifyInstance) => {
 
                 case "audio":
                   if (streamSid) {
-                    const audioData = {
-                      event: "media",
-                      streamSid,
-                      media: {
-                        payload:
-                          message.audio?.chunk ||
-                          message.audio_event?.audio_base_64,
-                      },
-                    };
-                    ws.send(JSON.stringify(audioData));
+                    try {
+                      const audioData = {
+                        event: "media",
+                        streamSid,
+                        media: {
+                          payload:
+                            message.audio?.chunk ||
+                            message.audio_event?.audio_base_64,
+                        },
+                      };
+                      ws.send(JSON.stringify(audioData));
+                    } catch (audioError) {
+                      console.error(
+                        "[ElevenLabs] ❌ Error enviando audio a Twilio:",
+                        audioError
+                      );
+                    }
                   }
                   break;
 
@@ -1626,12 +1689,6 @@ fastify.register(async (fastifyInstance) => {
                     `🎤 [USER] Speaking - Duration: ${speakingDuration}s, Should Interrupt: ${shouldInterrupt}`
                   );
 
-                  // Imprimir el mensaje completo del evento
-                  console.log(
-                    "📋 [USER_SPEAKING] Full message:",
-                    JSON.stringify(message, null, 2)
-                  );
-
                   if (shouldInterrupt) {
                     console.log(
                       "🚨 [INTERRUPTION] ElevenLabs detected should_interrupt=true"
@@ -1643,18 +1700,10 @@ fastify.register(async (fastifyInstance) => {
                   console.log(
                     "🛑 [INTERRUPTION] Agent interrupted successfully"
                   );
-                  console.log(
-                    "📊 [INTERRUPTION] Details:",
-                    JSON.stringify(message, null, 2)
-                  );
                   break;
 
                 case "interruption":
                   console.log("🚨 [INTERRUPTION] Interruption event received");
-                  console.log(
-                    "📊 [INTERRUPTION] Details:",
-                    JSON.stringify(message, null, 2)
-                  );
                   break;
 
                 case "conversation_resumed":
@@ -1670,51 +1719,60 @@ fastify.register(async (fastifyInstance) => {
                   break;
 
                 case "user_transcript":
-                  const transcript =
-                    message.user_transcription_event?.user_transcript
-                      ?.toLowerCase()
-                      .trim() || "";
+                  try {
+                    const transcript =
+                      message.user_transcription_event?.user_transcript
+                        ?.toLowerCase()
+                        .trim() || "";
 
-                  if (transcript === lastUserTranscript) {
-                    break;
-                  }
-
-                  lastUserTranscript = transcript;
-
-                  const normalized = transcript.replace(/[\s,]/g, "");
-                  const isNumericSequence = /^\d{7,}$/.test(normalized);
-                  const hasVoicemailPhrases = [
-                    "deje su mensaje",
-                    "después del tono",
-                    "mensaje de voz",
-                    "buzón de voz",
-                    "el número que usted marcó",
-                    "no está disponible",
-                    "intente más tarde",
-                    "ha sido desconectado",
-                    "gracias por llamar",
-                  ].some((phrase) => transcript.includes(phrase));
-
-                  if (isNumericSequence || hasVoicemailPhrases) {
-                    console.log("[System] Detected voicemail - hanging up");
-
-                    if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                      elevenLabsWs.close();
+                    if (transcript === lastUserTranscript) {
+                      break;
                     }
 
-                    if (callSid) {
-                      try {
-                        await twilioClient
-                          .calls(callSid)
-                          .update({ status: "completed" });
-                      } catch (err) {
-                        console.error("[Twilio] Error ending call:", err);
+                    lastUserTranscript = transcript;
+
+                    const normalized = transcript.replace(/[\s,]/g, "");
+                    const isNumericSequence = /^\d{7,}$/.test(normalized);
+                    const hasVoicemailPhrases = [
+                      "deje su mensaje",
+                      "después del tono",
+                      "mensaje de voz",
+                      "buzón de voz",
+                      "el número que usted marcó",
+                      "no está disponible",
+                      "intente más tarde",
+                      "ha sido desconectado",
+                      "gracias por llamar",
+                    ].some((phrase) => transcript.includes(phrase));
+
+                    if (isNumericSequence || hasVoicemailPhrases) {
+                      console.log(
+                        "[System] 🚫 Detected voicemail - hanging up"
+                      );
+
+                      if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                        elevenLabsWs.close();
+                      }
+
+                      if (callSid) {
+                        try {
+                          await twilioClient
+                            .calls(callSid)
+                            .update({ status: "completed" });
+                        } catch (err) {
+                          console.error("[Twilio] ❌ Error ending call:", err);
+                        }
+                      }
+
+                      if (ws.readyState === WebSocket.OPEN) {
+                        ws.close();
                       }
                     }
-
-                    if (ws.readyState === WebSocket.OPEN) {
-                      ws.close();
-                    }
+                  } catch (transcriptError) {
+                    console.error(
+                      "[ElevenLabs] ❌ Error procesando transcript:",
+                      transcriptError
+                    );
                   }
                   break;
 
@@ -1741,13 +1799,17 @@ fastify.register(async (fastifyInstance) => {
 
                       if (updateError) {
                         console.error(
-                          "[ElevenLabs] Error saving transcript summary:",
+                          "[ElevenLabs] ❌ Error saving transcript summary:",
                           updateError
+                        );
+                      } else {
+                        console.log(
+                          "[ElevenLabs] ✅ Transcript summary guardado en DB"
                         );
                       }
                     } catch (dbError) {
                       console.error(
-                        "[ElevenLabs] Error saving transcript summary to DB:",
+                        "[ElevenLabs] ❌ Error saving transcript summary to DB:",
                         dbError
                       );
                     }
@@ -1776,13 +1838,17 @@ fastify.register(async (fastifyInstance) => {
 
                       if (updateError) {
                         console.error(
-                          "[ElevenLabs] Error saving data collection results:",
+                          "[ElevenLabs] ❌ Error saving data collection results:",
                           updateError
+                        );
+                      } else {
+                        console.log(
+                          "[ElevenLabs] ✅ Data collection results guardado en DB"
                         );
                       }
                     } catch (dbError) {
                       console.error(
-                        "[ElevenLabs] Error saving data collection results to DB:",
+                        "[ElevenLabs] ❌ Error saving data collection results to DB:",
                         dbError
                       );
                     }
@@ -1796,20 +1862,45 @@ fastify.register(async (fastifyInstance) => {
                 default:
                   // Only log unknown message types, not ping
                   if (message.type !== "ping") {
-                    console.log(`[ElevenLabs] Unknown event: ${message.type}`);
+                    console.log(
+                      `[ElevenLabs] ❓ Unknown event: ${message.type}`
+                    );
                   }
               }
-            } catch (error) {
-              console.error("[ElevenLabs] Error processing message:", error);
+            } catch (messageError) {
+              console.error(
+                "[ElevenLabs] ❌ Error processing message:",
+                messageError
+              );
+              console.error("[ElevenLabs] Raw message data:", data);
             }
           });
 
           elevenLabsWs.on("error", (error) => {
-            console.error("[ElevenLabs] WebSocket error:", error);
+            console.error("[ElevenLabs] ❌ WebSocket error:", error);
+            console.error("[ElevenLabs] Error details:", {
+              message: error.message,
+              type: error.type,
+              code: error.code,
+              stack: error.stack,
+            });
+
+            // Intentar reconectar en caso de error
+            setTimeout(() => {
+              console.log(
+                "[ElevenLabs] 🔄 Intentando reconectar después de error..."
+              );
+              if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                elevenLabsWs.close();
+              }
+              setupElevenLabs();
+            }, 3000);
           });
 
-          elevenLabsWs.on("close", async () => {
-            console.log("[ElevenLabs] Disconnected");
+          elevenLabsWs.on("close", async (code, reason) => {
+            console.log(
+              `[ElevenLabs] 🔌 Disconnected - Code: ${code}, Reason: ${reason}`
+            );
 
             if (callSid) {
               try {
@@ -1817,10 +1908,10 @@ fastify.register(async (fastifyInstance) => {
                   .calls(callSid)
                   .update({ status: "completed" });
                 console.log(
-                  `[Twilio] Call ${callSid} ended due to ElevenLabs disconnection.`
+                  `[Twilio] ✅ Call ${callSid} ended due to ElevenLabs disconnection.`
                 );
               } catch (err) {
-                console.error("[Twilio] Error ending call:", err);
+                console.error("[Twilio] ❌ Error ending call:", err);
               }
             }
 
@@ -1828,8 +1919,37 @@ fastify.register(async (fastifyInstance) => {
               elevenLabsWs.close();
             }
           });
-        } catch (error) {
-          console.error("[ElevenLabs] Setup error:", error);
+
+          // Configurar heartbeat para detectar conexiones muertas
+          const heartbeat = setInterval(() => {
+            if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+              try {
+                elevenLabsWs.ping();
+              } catch (pingError) {
+                console.error(
+                  "[ElevenLabs] ❌ Error en heartbeat ping:",
+                  pingError
+                );
+                clearInterval(heartbeat);
+              }
+            } else {
+              clearInterval(heartbeat);
+            }
+          }, 30000); // Ping cada 30 segundos
+        } catch (setupError) {
+          console.error("[ElevenLabs] ❌ Setup error:", setupError);
+          console.error("[ElevenLabs] Error details:", {
+            message: setupError.message,
+            stack: setupError.stack,
+          });
+
+          // Intentar reconectar después de un error de setup
+          setTimeout(() => {
+            console.log(
+              "[ElevenLabs] 🔄 Reintentando setup después de error..."
+            );
+            setupElevenLabs();
+          }, 5000);
         }
       };
 
