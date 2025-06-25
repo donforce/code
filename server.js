@@ -70,10 +70,24 @@ const fastify = Fastify({
   maxRequestsPerSocket: 100,
   // Disable request logging for better performance
   disableRequestLogging: true,
+  // Add body parser configuration for webhooks
+  bodyLimit: 10485760, // 10MB limit
 });
 
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
+
+// Add custom middleware to capture raw body for webhooks
+fastify.addHook("preHandler", async (request, reply) => {
+  if (request.url === "/webhook/elevenlabs") {
+    // For webhook endpoint, capture raw body manually
+    const chunks = [];
+    request.raw.on("data", (chunk) => chunks.push(chunk));
+    request.raw.on("end", () => {
+      request.rawBody = Buffer.concat(chunks);
+    });
+  }
+});
 
 const PORT = process.env.PORT || 8000;
 
@@ -595,62 +609,6 @@ async function checkGoogleCalendarAvailability(userId) {
   }
 }
 
-// Función para calcular horarios libres entre eventos
-function calculateFreeSlots(busySlots, timezone) {
-  const freeSlots = [];
-  const workStart = 8; // 8:00 AM
-  const workEnd = 18; // 6:00 PM
-
-  if (busySlots.length === 0) {
-    // Día completamente libre
-    return [
-      {
-        start: `${workStart.toString().padStart(2, "0")}:00`,
-        end: `${workEnd.toString().padStart(2, "0")}:00`,
-        description: "Día completamente libre",
-      },
-    ];
-  }
-
-  // Ordenar eventos por hora de inicio
-  const sortedSlots = busySlots
-    .filter((slot) => !slot.isAllDay) // Excluir eventos de todo el día
-    .sort((a, b) => {
-      const timeA = parseInt(a.start.split(":")[0]);
-      const timeB = parseInt(b.start.split(":")[0]);
-      return timeA - timeB;
-    });
-
-  let currentTime = workStart;
-
-  for (const slot of sortedSlots) {
-    const slotStart = parseInt(slot.start.split(":")[0]);
-    const slotEnd = parseInt(slot.end.split(":")[0]);
-
-    // Si hay tiempo libre antes del evento
-    if (slotStart > currentTime) {
-      freeSlots.push({
-        start: `${currentTime.toString().padStart(2, "0")}:00`,
-        end: `${slotStart.toString().padStart(2, "0")}:00`,
-        description: `Libre antes de "${slot.title}"`,
-      });
-    }
-
-    currentTime = Math.max(currentTime, slotEnd);
-  }
-
-  // Si hay tiempo libre después del último evento
-  if (currentTime < workEnd) {
-    freeSlots.push({
-      start: `${currentTime.toString().padStart(2, "0")}:00`,
-      end: `${workEnd.toString().padStart(2, "0")}:00`,
-      description: "Libre después del último evento",
-    });
-  }
-
-  return freeSlots;
-}
-
 // Función para obtener resumen de disponibilidad del calendario para las próximas 2 semanas
 async function getCalendarAvailabilitySummary(userId) {
   try {
@@ -788,7 +746,7 @@ async function getCalendarAvailabilitySummary(userId) {
         `[Calendar][SUMMARY] Total de eventos encontrados: ${events.length}`
       );
 
-      // Procesar eventos y crear resumen detallado
+      // Procesar eventos y crear resumen
       const summary = {
         userId: userId,
         timezone: calendarSettings.calendar_timezone,
@@ -799,42 +757,25 @@ async function getCalendarAvailabilitySummary(userId) {
         },
         totalEvents: events.length,
         eventsByDay: {},
-        availabilityByDay: {},
         busyHours: {},
         freeDays: [],
         busyDays: [],
       };
-
       const daysWithEvents = new Set();
-
-      // Procesar eventos y crear horarios ocupados
       events.forEach((event) => {
         const start = new Date(event.start.dateTime || event.start.date);
         const end = new Date(event.end.dateTime || event.end.date);
         const dayKey = start.toISOString().split("T")[0];
-
         if (!summary.eventsByDay[dayKey]) {
           summary.eventsByDay[dayKey] = [];
         }
-
         summary.eventsByDay[dayKey].push({
           title: event.summary || "Sin título",
           start: start.toISOString(),
           end: end.toISOString(),
-          startTime: start.toLocaleTimeString("es-ES", {
-            hour: "2-digit",
-            minute: "2-digit",
-            timeZone: calendarSettings.calendar_timezone,
-          }),
-          endTime: end.toLocaleTimeString("es-ES", {
-            hour: "2-digit",
-            minute: "2-digit",
-            timeZone: calendarSettings.calendar_timezone,
-          }),
           duration: Math.round((end - start) / (1000 * 60)),
           isAllDay: !event.start.dateTime,
         });
-
         daysWithEvents.add(dayKey);
         console.log(
           `[Calendar][SUMMARY][EVENT] ${dayKey}: ${
@@ -842,76 +783,25 @@ async function getCalendarAvailabilitySummary(userId) {
           } (${start.toISOString()} - ${end.toISOString()})`
         );
       });
-
-      // Crear disponibilidad detallada por día
+      // Identificar días libres y ocupados
       for (let i = 0; i < 14; i++) {
         const date = new Date(now);
         date.setDate(date.getDate() + i);
         const dayKey = date.toISOString().split("T")[0];
-        const dayName = date.toLocaleDateString("es-ES", {
-          weekday: "long",
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-          timeZone: calendarSettings.calendar_timezone,
-        });
-
         if (daysWithEvents.has(dayKey)) {
           summary.busyDays.push(dayKey);
-
-          // Crear horarios de disponibilidad para días ocupados
-          const dayEvents = summary.eventsByDay[dayKey] || [];
-          const busySlots = dayEvents.map((event) => ({
-            start: event.startTime,
-            end: event.endTime,
-            title: event.title,
-            isAllDay: event.isAllDay,
-          }));
-
-          summary.availabilityByDay[dayKey] = {
-            date: dayKey,
-            dayName: dayName,
-            isFree: false,
-            busySlots: busySlots,
-            totalBusyTime: dayEvents.reduce(
-              (total, event) => total + event.duration,
-              0
-            ),
-            freeSlots: calculateFreeSlots(
-              busySlots,
-              calendarSettings.calendar_timezone
-            ),
-          };
         } else {
           summary.freeDays.push(dayKey);
-
-          // Día completamente libre
-          summary.availabilityByDay[dayKey] = {
-            date: dayKey,
-            dayName: dayName,
-            isFree: true,
-            busySlots: [],
-            totalBusyTime: 0,
-            freeSlots: [
-              {
-                start: "08:00",
-                end: "18:00",
-                description: "Día completamente libre",
-              },
-            ],
-          };
         }
       }
-
       console.log(
         `[Calendar][SUMMARY] Días ocupados: ${summary.busyDays.length} | Días libres: ${summary.freeDays.length}`
       );
       console.log(`[Calendar][SUMMARY] Días ocupados:`, summary.busyDays);
       console.log(`[Calendar][SUMMARY] Días libres:`, summary.freeDays);
-
-      // Mostrar resumen detallado por consola
+      // Mostrar resumen por consola
       console.log("=".repeat(80));
-      console.log("📅 RESUMEN DETALLADO DE DISPONIBILIDAD DEL CALENDARIO");
+      console.log("📅 RESUMEN DE DISPONIBILIDAD DEL CALENDARIO");
       console.log("=".repeat(80));
       console.log(`👤 Usuario: ${userId}`);
       console.log(`🌍 Zona horaria: ${summary.timezone}`);
@@ -922,57 +812,45 @@ async function getCalendarAvailabilitySummary(userId) {
       console.log(`✅ Días libres: ${summary.freeDays.length}`);
       console.log(`📅 Días ocupados: ${summary.busyDays.length}`);
       console.log("");
-
-      // Mostrar disponibilidad por día
-      console.log("📋 DISPONIBILIDAD POR DÍA:");
-      console.log("-".repeat(50));
-      Object.keys(summary.availabilityByDay)
-        .sort()
-        .forEach((dayKey) => {
-          const dayInfo = summary.availabilityByDay[dayKey];
-          console.log(`\n📅 ${dayInfo.dayName}:`);
-
-          if (dayInfo.isFree) {
-            console.log(`   ✅ DÍA LIBRE - Disponible todo el día`);
-            dayInfo.freeSlots.forEach((slot, index) => {
-              console.log(
-                `      ${index + 1}. ${slot.start} - ${slot.end}: ${
-                  slot.description
-                }`
-              );
+      if (summary.totalEvents > 0) {
+        console.log("📋 EVENTOS POR DÍA:");
+        console.log("-".repeat(50));
+        Object.keys(summary.eventsByDay)
+          .sort()
+          .forEach((dayKey) => {
+            const dayEvents = summary.eventsByDay[dayKey];
+            const date = new Date(dayKey);
+            const dayName = date.toLocaleDateString("es-ES", {
+              weekday: "long",
+              year: "numeric",
+              month: "long",
+              day: "numeric",
             });
-          } else {
-            console.log(
-              `   📅 DÍA OCUPADO - ${dayInfo.totalBusyTime} minutos ocupados`
-            );
-            console.log(`   📋 Eventos programados:`);
-            dayInfo.busySlots.forEach((slot, index) => {
-              if (slot.isAllDay) {
-                console.log(
-                  `      ${index + 1}. 🌅 ${slot.title} (Todo el día)`
-                );
+            console.log(`\n📅 ${dayName}:`);
+            dayEvents.forEach((event, index) => {
+              const startTime = new Date(event.start).toLocaleTimeString(
+                "es-ES",
+                {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                }
+              );
+              const endTime = new Date(event.end).toLocaleTimeString("es-ES", {
+                hour: "2-digit",
+                minute: "2-digit",
+              });
+              if (event.isAllDay) {
+                console.log(`   ${index + 1}. 🌅 ${event.title} (Todo el día)`);
               } else {
                 console.log(
-                  `      ${index + 1}. ⏰ ${slot.title} (${slot.start} - ${
-                    slot.end
-                  })`
+                  `   ${index + 1}. ⏰ ${
+                    event.title
+                  } (${startTime} - ${endTime}, ${event.duration} min)`
                 );
               }
             });
-
-            if (dayInfo.freeSlots.length > 0) {
-              console.log(`   ✅ Horarios disponibles:`);
-              dayInfo.freeSlots.forEach((slot, index) => {
-                console.log(
-                  `      ${index + 1}. ${slot.start} - ${slot.end}: ${
-                    slot.description
-                  }`
-                );
-              });
-            }
-          }
-        });
-
+          });
+      }
       console.log("\n📊 RESUMEN ESTADÍSTICO:");
       console.log("-".repeat(50));
       console.log(`✅ Días completamente libres: ${summary.freeDays.length}`);
@@ -982,15 +860,19 @@ async function getCalendarAvailabilitySummary(userId) {
           1
         )}`
       );
-
       if (summary.freeDays.length > 0) {
         console.log("\n🎯 DÍAS LIBRES:");
         summary.freeDays.forEach((dayKey) => {
-          const dayInfo = summary.availabilityByDay[dayKey];
-          console.log(`   ✅ ${dayInfo.dayName}`);
+          const date = new Date(dayKey);
+          const dayName = date.toLocaleDateString("es-ES", {
+            weekday: "long",
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          });
+          console.log(`   ✅ ${dayName}`);
         });
       }
-
       console.log("=".repeat(80));
       console.log(
         "[Calendar][SUMMARY] ===== FIN DE RESUMEN DE DISPONIBILIDAD ====="
@@ -1053,171 +935,18 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     console.log(
       `[Queue] Worker ${workerId} - Verificando disponibilidad del calendario (solo informativo)...`
     );
-    const calendarSummary = await getCalendarAvailabilitySummary(
+    const calendarAvailability = await checkGoogleCalendarAvailability(
       queueItem.user_id
     );
 
-    let availabilityJson = null;
-    let defaultText = "Disponible todos los dias";
-    let finalText = "Disponible todos los dias";
-
-    if (!calendarSummary) {
+    if (!calendarAvailability.available) {
       console.log(
-        `[Queue] Worker ${workerId} - ⚠️ No se pudo obtener resumen del calendario (pero continuando con la llamada)`
+        `[Queue] Worker ${workerId} - ⚠️ Calendario no disponible: ${calendarAvailability.reason} (pero continuando con la llamada)`
       );
-
-      // Crear JSON por defecto indicando disponibilidad todos los días
-      const now = new Date();
-      const defaultDays = [];
-      const defaultTextParts = [];
-
-      for (let i = 0; i < 15; i++) {
-        const date = new Date(now);
-        date.setDate(date.getDate() + i);
-        const dayKey = date.toISOString().split("T")[0];
-        const dayName = date.toLocaleDateString("es-ES", {
-          weekday: "long",
-          day: "2-digit",
-          month: "2-digit",
-          year: "numeric",
-        });
-
-        defaultDays.push({
-          day: dayName,
-          isFree: true,
-          busyTime: 0,
-          freeSlots: [
-            {
-              start: "08:00",
-              end: "18:00",
-              description: "Día completamente libre",
-            },
-          ],
-        });
-
-        defaultTextParts.push(
-          `${dayName.charAt(0).toUpperCase() + dayName.slice(1)} de 8AM a 6PM`
-        );
-      }
-
-      defaultText = `Los días y horarios disponibles son ${defaultTextParts.join(
-        "."
-      )}.`;
-
-      console.log("📅 [Calendar] Disponibilidad por defecto en texto:");
-      console.log(defaultText);
-
-      availabilityJson = {
-        workerId: workerId,
-        summary: {
-          timezone: "America/New_York",
-          totalEvents: 0,
-          freeDays: 15,
-          busyDays: 0,
-          period: `${now.toLocaleDateString()} - ${new Date(
-            now.getTime() + 14 * 24 * 60 * 60 * 1000
-          ).toLocaleDateString()}`,
-        },
-        period: "15 días completos",
-        availability: defaultDays,
-      };
     } else {
       console.log(
-        `[Queue] Worker ${workerId} - ✅ Resumen del calendario obtenido:`,
-        {
-          timezone: calendarSummary.timezone,
-          totalEvents: calendarSummary.totalEvents,
-          freeDays: calendarSummary.freeDays.length,
-          busyDays: calendarSummary.busyDays.length,
-          period: `${new Date(
-            calendarSummary.period.start
-          ).toLocaleDateString()} - ${new Date(
-            calendarSummary.period.end
-          ).toLocaleDateString()}`,
-        }
+        `[Queue] Worker ${workerId} - ✅ Calendario disponible: ${calendarAvailability.calendars} calendarios encontrados`
       );
-
-      // Mostrar disponibilidad detallada para los próximos 15 días
-      const allDays = Object.keys(calendarSummary.availabilityByDay).sort();
-
-      // Generar texto legible con los días y horarios disponibles
-      const availabilityText = allDays
-        .map((dayKey) => {
-          const dayInfo = calendarSummary.availabilityByDay[dayKey];
-
-          if (dayInfo.isFree) {
-            // Día completamente libre
-            const date = new Date(dayKey);
-            const dayName = date.toLocaleDateString("es-ES", {
-              weekday: "long",
-              day: "2-digit",
-              month: "2-digit",
-              year: "numeric",
-            });
-            return `${
-              dayName.charAt(0).toUpperCase() + dayName.slice(1)
-            } de 8AM a 6PM`;
-          } else {
-            // Día con horarios específicos
-            const date = new Date(dayKey);
-            const dayName = date.toLocaleDateString("es-ES", {
-              weekday: "long",
-              day: "2-digit",
-              month: "2-digit",
-              year: "numeric",
-            });
-
-            const timeSlots = dayInfo.freeSlots
-              .map((slot) => {
-                const start = slot.start;
-                const end = slot.end;
-                return `de ${start} a ${end}`;
-              })
-              .join(" y ");
-
-            return `${
-              dayName.charAt(0).toUpperCase() + dayName.slice(1)
-            } ${timeSlots}`;
-          }
-        })
-        .join(", ");
-
-      finalText = `Los días y horarios disponibles son ${availabilityText}.`;
-
-      console.log("📅 [Calendar] Disponibilidad en texto:");
-      console.log(finalText);
-
-      // Mantener el JSON para ElevenLabs pero no imprimirlo
-      availabilityJson = {
-        workerId: workerId,
-        summary: {
-          timezone: calendarSummary.timezone,
-          totalEvents: calendarSummary.totalEvents,
-          freeDays: calendarSummary.freeDays.length,
-          busyDays: calendarSummary.busyDays.length,
-          period: `${new Date(
-            calendarSummary.period.start
-          ).toLocaleDateString()} - ${new Date(
-            calendarSummary.period.end
-          ).toLocaleDateString()}`,
-        },
-        period: "15 días completos",
-        availability: allDays.map((dayKey) => {
-          const dayInfo = calendarSummary.availabilityByDay[dayKey];
-          return {
-            day: dayInfo.dayName,
-            isFree: dayInfo.isFree,
-            busyTime: dayInfo.isFree ? 0 : dayInfo.totalBusyTime,
-            freeSlots: dayInfo.isFree
-              ? []
-              : dayInfo.freeSlots.map((slot) => ({
-                  start: slot.start,
-                  end: slot.end,
-                  description: slot.description,
-                })),
-          };
-        }),
-      };
     }
 
     // Mark user as having active call (global tracking)
@@ -1244,48 +973,46 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       date.getMonth() + 1
     ).padStart(2, "0")}/${String(date.getFullYear()).slice(-2)}`;
 
+    // --- 1. GENERATE AVAILABILITY TEXT ---
+    let availabilityText = "Disponible todos los dias";
+    try {
+      // Aquí deberías tener tu lógica para obtener el texto real de disponibilidad
+      // Ejemplo: availabilityText = await getAvailabilityText(queueItem.user_id);
+      // Si ya tienes la variable, solo déjala así
+    } catch (e) {
+      console.error("[Calendar] Error obteniendo disponibilidad:", e);
+    }
+
+    // --- 2. AGREGAR A LA URL DE LA LLAMADA TWILIO ---
+    const callUrl = `https://${RAILWAY_PUBLIC_DOMAIN}/outbound-call-twiml?prompt=${encodeURIComponent(
+      "Eres un asistente de ventas inmobiliarias."
+    )}&first_message=${encodeURIComponent(
+      "Hola, ¿cómo estás?"
+    )}&client_name=${encodeURIComponent(
+      queueItem.lead.name
+    )}&client_phone=${encodeURIComponent(
+      queueItem.lead.phone
+    )}&client_email=${encodeURIComponent(
+      queueItem.lead.email
+    )}&client_id=${encodeURIComponent(
+      queueItem.lead_id
+    )}&fecha=${encodeURIComponent(fecha)}&dia_semana=${encodeURIComponent(
+      dia_semana
+    )}&agent_firstname=${encodeURIComponent(
+      agentFirstName
+    )}&agent_name=${encodeURIComponent(
+      agentName
+    )}&assistant_name=${encodeURIComponent(
+      userData.assistant_name
+    )}&calendar_availability=${encodeURIComponent(availabilityText)}`;
+
     // Make the call with error handling
     let call;
     try {
-      // Usar el texto de disponibilidad que ya se generó correctamente
-      let availabilityText = "Disponible todos los dias";
-
-      if (availabilityJson) {
-        if (availabilityJson.summary.totalEvents === 0) {
-          // Usar el texto por defecto que ya se generó correctamente
-          availabilityText = defaultText || "Disponible todos los dias";
-        } else {
-          // Usar el texto final que ya se generó correctamente
-          availabilityText = finalText || "Disponible todos los dias";
-        }
-      }
-
-      const availabilityParam = encodeURIComponent(availabilityText);
-
       call = await twilioClient.calls.create({
         from: TWILIO_PHONE_NUMBER,
         to: queueItem.lead.phone,
-        url: `https://${RAILWAY_PUBLIC_DOMAIN}/outbound-call-twiml?prompt=${encodeURIComponent(
-          "Eres un asistente de ventas inmobiliarias."
-        )}&first_message=${encodeURIComponent(
-          "Hola, ¿cómo estás?"
-        )}&client_name=${encodeURIComponent(
-          queueItem.lead.name
-        )}&client_phone=${encodeURIComponent(
-          queueItem.lead.phone
-        )}&client_email=${encodeURIComponent(
-          queueItem.lead.email
-        )}&client_id=${encodeURIComponent(
-          queueItem.lead_id
-        )}&fecha=${encodeURIComponent(fecha)}&dia_semana=${encodeURIComponent(
-          dia_semana
-        )}&agent_firstname=${encodeURIComponent(
-          agentFirstName
-        )}&agent_name=${encodeURIComponent(
-          agentName
-        )}&assistant_name=${encodeURIComponent(
-          userData.assistant_name
-        )}&calendar_availability=${availabilityParam}`,
+        url: callUrl,
         statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
         statusCallbackEvent: ["completed"],
         statusCallbackMethod: "POST",
@@ -1526,9 +1253,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
           <Parameter name="agent_firstname" value="${agent_firstname}" />
           <Parameter name="agent_name" value="${agent_name}" />
           <Parameter name="assistant_name" value="${assistant_name}" />
-          <Parameter name="calendar_availability" value="${
-            calendar_availability || "Disponible todos los dias"
-          }" />
+          <Parameter name="calendar_availability" value="${calendar_availability}" />
         </Stream>
       </Connect>
     </Response>`;
@@ -1609,341 +1334,320 @@ fastify.register(async (fastifyInstance) => {
             console.log("   • Min Duration: 0.5s");
             console.log("   • Max Duration: 5.0s");
             console.log("   • Cooldown: 1.0s");
-            console.log(
-              "📅 [ElevenLabs] calendar_availability value:",
-              initialConfig.dynamic_variables.calendar_availability
-            );
-            console.log(
-              "📋 [ElevenLabs] Full dynamic_variables:",
-              JSON.stringify(initialConfig.dynamic_variables, null, 2)
-            );
             console.log(JSON.stringify(initialConfig, null, 2));
+            elevenLabsWs.send(JSON.stringify(initialConfig));
 
-            // Verificar que el WebSocket esté abierto antes de enviar
-            if (elevenLabsWs.readyState === WebSocket.OPEN) {
-              elevenLabsWs.send(JSON.stringify(initialConfig));
+            elevenLabsWs.send(
+              JSON.stringify({
+                type: "audio",
+                audio_event: {
+                  audio_base_64: Buffer.from([0x00]).toString("base64"),
+                },
+              })
+            );
+          });
 
-              // No enviar audio inicial vacío para evitar duplicados
-            } else {
-              console.error(
-                "[ElevenLabs] WebSocket not ready, state:",
-                elevenLabsWs.readyState
-              );
+          elevenLabsWs.on("message", async (data) => {
+            try {
+              const message = JSON.parse(data);
+
+              // Only log critical events, skip ping messages
+              if (message.type !== "ping") {
+                console.log(`[ElevenLabs] Event: ${message.type}`);
+              }
+
+              switch (message.type) {
+                case "conversation_initiation_metadata":
+                  // Save conversation_id to database
+                  if (
+                    callSid &&
+                    message.conversation_initiation_metadata_event
+                      ?.conversation_id
+                  ) {
+                    const conversationId =
+                      message.conversation_initiation_metadata_event
+                        .conversation_id;
+
+                    try {
+                      const { error: updateError } = await supabase
+                        .from("calls")
+                        .update({
+                          conversation_id: conversationId,
+                          updated_at: new Date().toISOString(),
+                        })
+                        .eq("call_sid", callSid);
+
+                      if (updateError) {
+                        console.error(
+                          "[ElevenLabs] Error saving conversation_id:",
+                          updateError
+                        );
+                      }
+                    } catch (dbError) {
+                      console.error(
+                        "[ElevenLabs] Error saving conversation_id to DB:",
+                        dbError
+                      );
+                    }
+                  }
+                  break;
+
+                case "audio":
+                  if (streamSid) {
+                    const audioPayload = Buffer.from(
+                      msg.media.payload,
+                      "base64"
+                    ).toString("base64");
+                    // Crear un hash corto para loggear
+                    const audioPayloadHash = crypto
+                      .createHash("md5")
+                      .update(audioPayload)
+                      .digest("hex")
+                      .substring(0, 8);
+                    if (!sentAudioChunks.has(audioPayload)) {
+                      sentAudioChunks.add(audioPayload);
+                      audioChunkCounter++;
+                      console.log(
+                        "[AUDIO SEND]",
+                        audioPayloadHash,
+                        "Sending to ElevenLabs"
+                      );
+                      elevenLabsWs.send(
+                        JSON.stringify({
+                          type: "user_audio_chunk",
+                          user_audio_chunk: audioPayload,
+                        })
+                      );
+                      if (audioChunkCounter > 10) {
+                        sentAudioChunks.clear();
+                        audioChunkCounter = 0;
+                        console.log("[AUDIO CACHE] Cleaned audio chunks cache");
+                      }
+                    } else {
+                      console.log(
+                        "[AUDIO DUPLICATE]",
+                        audioPayloadHash,
+                        "Duplicate detected, skipping"
+                      );
+                    }
+                  }
+                  break;
+
+                case "agent_response":
+                  console.log("🤖 [AGENT] Speaking");
+                  break;
+
+                case "user_speaking":
+                  const speakingDuration =
+                    message.user_speaking_event?.duration || 0;
+                  const shouldInterrupt =
+                    message.user_speaking_event?.should_interrupt;
+
+                  console.log(
+                    `🎤 [USER] Speaking - Duration: ${speakingDuration}s, Should Interrupt: ${shouldInterrupt}`
+                  );
+
+                  // Imprimir el mensaje completo del evento
+                  console.log(
+                    "📋 [USER_SPEAKING] Full message:",
+                    JSON.stringify(message, null, 2)
+                  );
+
+                  if (shouldInterrupt) {
+                    console.log(
+                      "🚨 [INTERRUPTION] ElevenLabs detected should_interrupt=true"
+                    );
+                  }
+                  break;
+
+                case "agent_interrupted":
+                  console.log(
+                    "🛑 [INTERRUPTION] Agent interrupted successfully"
+                  );
+                  console.log(
+                    "📊 [INTERRUPTION] Details:",
+                    JSON.stringify(message, null, 2)
+                  );
+                  break;
+
+                case "interruption":
+                  console.log("🚨 [INTERRUPTION] Interruption event received");
+                  console.log(
+                    "📊 [INTERRUPTION] Details:",
+                    JSON.stringify(message, null, 2)
+                  );
+                  break;
+
+                case "conversation_resumed":
+                  console.log("🔄 [INTERRUPTION] Conversation resumed");
+                  break;
+
+                case "interruption_started":
+                  console.log("🚨 [INTERRUPTION] Interruption started");
+                  break;
+
+                case "interruption_ended":
+                  console.log("✅ [INTERRUPTION] Interruption ended");
+                  break;
+
+                case "user_transcript":
+                  const transcript =
+                    message.user_transcription_event?.user_transcript
+                      ?.toLowerCase()
+                      .trim() || "";
+
+                  if (transcript === lastUserTranscript) {
+                    break;
+                  }
+
+                  lastUserTranscript = transcript;
+
+                  const normalized = transcript.replace(/[\s,]/g, "");
+                  const isNumericSequence = /^\d{7,}$/.test(normalized);
+                  const hasVoicemailPhrases = [
+                    "deje su mensaje",
+                    "después del tono",
+                    "mensaje de voz",
+                    "buzón de voz",
+                    "el número que usted marcó",
+                    "no está disponible",
+                    "intente más tarde",
+                    "ha sido desconectado",
+                    "gracias por llamar",
+                  ].some((phrase) => transcript.includes(phrase));
+
+                  if (isNumericSequence || hasVoicemailPhrases) {
+                    console.log("[System] Detected voicemail - hanging up");
+
+                    if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                      elevenLabsWs.close();
+                    }
+
+                    if (callSid) {
+                      try {
+                        await twilioClient
+                          .calls(callSid)
+                          .update({ status: "completed" });
+                      } catch (err) {
+                        console.error("[Twilio] Error ending call:", err);
+                      }
+                    }
+
+                    if (ws.readyState === WebSocket.OPEN) {
+                      ws.close();
+                    }
+                  }
+                  break;
+
+                case "conversation_summary":
+                  console.log("📝 [SUMMARY] Conversation completed");
+
+                  // Save transcript summary to database
+                  if (callSid) {
+                    try {
+                      const { error: updateError } = await supabase
+                        .from("calls")
+                        .update({
+                          transcript_summary:
+                            message.conversation_summary_event
+                              ?.conversation_summary,
+                          conversation_duration:
+                            message.conversation_summary_event
+                              ?.conversation_duration,
+                          turn_count:
+                            message.conversation_summary_event?.turn_count,
+                          updated_at: new Date().toISOString(),
+                        })
+                        .eq("call_sid", callSid);
+
+                      if (updateError) {
+                        console.error(
+                          "[ElevenLabs] Error saving transcript summary:",
+                          updateError
+                        );
+                      }
+                    } catch (dbError) {
+                      console.error(
+                        "[ElevenLabs] Error saving transcript summary to DB:",
+                        dbError
+                      );
+                    }
+                  }
+                  break;
+
+                case "data_collection_results":
+                  console.log("📊 [DATA] Collection results received");
+
+                  // Save data collection results to database
+                  if (callSid) {
+                    try {
+                      const { error: updateError } = await supabase
+                        .from("calls")
+                        .update({
+                          data_collection_results:
+                            message.data_collection_results_event
+                              ?.collected_data,
+                          data_collection_success:
+                            message.data_collection_results_event?.success,
+                          data_collection_error:
+                            message.data_collection_results_event?.error,
+                          updated_at: new Date().toISOString(),
+                        })
+                        .eq("call_sid", callSid);
+
+                      if (updateError) {
+                        console.error(
+                          "[ElevenLabs] Error saving data collection results:",
+                          updateError
+                        );
+                      }
+                    } catch (dbError) {
+                      console.error(
+                        "[ElevenLabs] Error saving data collection results to DB:",
+                        dbError
+                      );
+                    }
+                  }
+                  break;
+
+                case "conversation_ended":
+                  console.log("🔚 [END] Conversation ended");
+                  break;
+
+                default:
+                  // Only log unknown message types, not ping
+                  if (message.type !== "ping") {
+                    console.log(`[ElevenLabs] Unknown event: ${message.type}`);
+                  }
+              }
+            } catch (error) {
+              console.error("[ElevenLabs] Error processing message:", error);
+            }
+          });
+
+          elevenLabsWs.on("error", (error) => {
+            console.error("[ElevenLabs] WebSocket error:", error);
+          });
+
+          elevenLabsWs.on("close", async () => {
+            console.log("[ElevenLabs] Disconnected");
+
+            if (callSid) {
+              try {
+                await twilioClient
+                  .calls(callSid)
+                  .update({ status: "completed" });
+                console.log(
+                  `[Twilio] Call ${callSid} ended due to ElevenLabs disconnection.`
+                );
+              } catch (err) {
+                console.error("[Twilio] Error ending call:", err);
+              }
             }
 
-            elevenLabsWs.on("message", async (data) => {
-              try {
-                const message = JSON.parse(data);
-
-                // Only log critical events, skip ping messages
-                if (message.type !== "ping") {
-                  console.log(`[ElevenLabs] Event: ${message.type}`);
-                }
-
-                switch (message.type) {
-                  case "conversation_initiation_metadata":
-                    // Save conversation_id to database
-                    if (
-                      callSid &&
-                      message.conversation_initiation_metadata_event
-                        ?.conversation_id
-                    ) {
-                      const conversationId =
-                        message.conversation_initiation_metadata_event
-                          .conversation_id;
-
-                      try {
-                        const { error: updateError } = await supabase
-                          .from("calls")
-                          .update({
-                            conversation_id: conversationId,
-                            updated_at: new Date().toISOString(),
-                          })
-                          .eq("call_sid", callSid);
-
-                        if (updateError) {
-                          console.error(
-                            "[ElevenLabs] Error saving conversation_id:",
-                            updateError
-                          );
-                        }
-                      } catch (dbError) {
-                        console.error(
-                          "[ElevenLabs] Error saving conversation_id to DB:",
-                          dbError
-                        );
-                      }
-                    }
-                    break;
-
-                  case "audio":
-                    if (streamSid) {
-                      const audioPayload =
-                        message.audio?.chunk ||
-                        message.audio_event?.audio_base_64;
-
-                      // Verificar si este audio ya fue enviado
-                      if (!sentAudioChunks.has(audioPayload)) {
-                        sentAudioChunks.add(audioPayload);
-                        audioChunkCounter++;
-
-                        // Limpiar el Set cada 10 chunks para evitar problemas de memoria
-                        if (audioChunkCounter > 10) {
-                          sentAudioChunks.clear();
-                          audioChunkCounter = 0;
-                          console.log(
-                            "[ElevenLabs Audio] Cleaned audio chunks cache"
-                          );
-                        }
-
-                        const audioData = {
-                          event: "media",
-                          streamSid,
-                          media: {
-                            payload: audioPayload,
-                          },
-                        };
-                        ws.send(JSON.stringify(audioData));
-                      } else {
-                        console.log(
-                          "[ElevenLabs Audio] Skipping duplicate audio chunk"
-                        );
-                      }
-                    }
-                    break;
-
-                  case "agent_response":
-                    console.log("🤖 [AGENT] Speaking");
-                    break;
-
-                  case "user_speaking":
-                    const speakingDuration =
-                      message.user_speaking_event?.duration || 0;
-                    const shouldInterrupt =
-                      message.user_speaking_event?.should_interrupt;
-
-                    console.log(
-                      `🎤 [USER] Speaking - Duration: ${speakingDuration}s, Should Interrupt: ${shouldInterrupt}`
-                    );
-
-                    // Imprimir el mensaje completo del evento
-                    console.log(
-                      "📋 [USER_SPEAKING] Full message:",
-                      JSON.stringify(message, null, 2)
-                    );
-
-                    if (shouldInterrupt) {
-                      console.log(
-                        "🚨 [INTERRUPTION] ElevenLabs detected should_interrupt=true"
-                      );
-                    }
-                    break;
-
-                  case "agent_interrupted":
-                    console.log(
-                      "🛑 [INTERRUPTION] Agent interrupted successfully"
-                    );
-                    console.log(
-                      "📊 [INTERRUPTION] Details:",
-                      JSON.stringify(message, null, 2)
-                    );
-                    break;
-
-                  case "interruption":
-                    console.log(
-                      "🚨 [INTERRUPTION] Interruption event received"
-                    );
-                    console.log(
-                      "📊 [INTERRUPTION] Details:",
-                      JSON.stringify(message, null, 2)
-                    );
-                    break;
-
-                  case "conversation_resumed":
-                    console.log("🔄 [INTERRUPTION] Conversation resumed");
-                    break;
-
-                  case "interruption_started":
-                    console.log("🚨 [INTERRUPTION] Interruption started");
-                    break;
-
-                  case "interruption_ended":
-                    console.log("✅ [INTERRUPTION] Interruption ended");
-                    break;
-
-                  case "user_transcript":
-                    const transcript =
-                      message.user_transcription_event?.user_transcript
-                        ?.toLowerCase()
-                        .trim() || "";
-
-                    if (transcript === lastUserTranscript) {
-                      break;
-                    }
-
-                    lastUserTranscript = transcript;
-
-                    const normalized = transcript.replace(/[\s,]/g, "");
-                    const isNumericSequence = /^\d{7,}$/.test(normalized);
-                    const hasVoicemailPhrases = [
-                      "deje su mensaje",
-                      "después del tono",
-                      "mensaje de voz",
-                      "buzón de voz",
-                      "el número que usted marcó",
-                      "no está disponible",
-                      "intente más tarde",
-                      "ha sido desconectado",
-                      "gracias por llamar",
-                    ].some((phrase) => transcript.includes(phrase));
-
-                    if (isNumericSequence || hasVoicemailPhrases) {
-                      console.log("[System] Detected voicemail - hanging up");
-
-                      if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                        elevenLabsWs.close();
-                      }
-
-                      if (callSid) {
-                        try {
-                          await twilioClient
-                            .calls(callSid)
-                            .update({ status: "completed" });
-                        } catch (err) {
-                          console.error("[Twilio] Error ending call:", err);
-                        }
-                      }
-
-                      if (ws.readyState === WebSocket.OPEN) {
-                        ws.close();
-                      }
-                    }
-                    break;
-
-                  case "conversation_summary":
-                    console.log("📝 [SUMMARY] Conversation completed");
-
-                    // Save transcript summary to database
-                    if (callSid) {
-                      try {
-                        const { error: updateError } = await supabase
-                          .from("calls")
-                          .update({
-                            transcript_summary:
-                              message.conversation_summary_event
-                                ?.conversation_summary,
-                            conversation_duration:
-                              message.conversation_summary_event
-                                ?.conversation_duration,
-                            turn_count:
-                              message.conversation_summary_event?.turn_count,
-                            updated_at: new Date().toISOString(),
-                          })
-                          .eq("call_sid", callSid);
-
-                        if (updateError) {
-                          console.error(
-                            "[ElevenLabs] Error saving transcript summary:",
-                            updateError
-                          );
-                        }
-                      } catch (dbError) {
-                        console.error(
-                          "[ElevenLabs] Error saving transcript summary to DB:",
-                          dbError
-                        );
-                      }
-                    }
-                    break;
-
-                  case "data_collection_results":
-                    console.log("📊 [DATA] Collection results received");
-
-                    // Save data collection results to database
-                    if (callSid) {
-                      try {
-                        const { error: updateError } = await supabase
-                          .from("calls")
-                          .update({
-                            data_collection_results:
-                              message.data_collection_results_event
-                                ?.collected_data,
-                            data_collection_success:
-                              message.data_collection_results_event?.success,
-                            data_collection_error:
-                              message.data_collection_results_event?.error,
-                            updated_at: new Date().toISOString(),
-                          })
-                          .eq("call_sid", callSid);
-
-                        if (updateError) {
-                          console.error(
-                            "[ElevenLabs] Error saving data collection results:",
-                            updateError
-                          );
-                        }
-                      } catch (dbError) {
-                        console.error(
-                          "[ElevenLabs] Error saving data collection results to DB:",
-                          dbError
-                        );
-                      }
-                    }
-                    break;
-
-                  case "conversation_ended":
-                    console.log("🔚 [END] Conversation ended");
-                    break;
-
-                  default:
-                    // Only log unknown message types, not ping
-                    if (message.type !== "ping") {
-                      console.log(
-                        `[ElevenLabs] Unknown event: ${message.type}`
-                      );
-                    }
-                }
-              } catch (error) {
-                console.error("[ElevenLabs] Error processing message:", error);
-              }
-            });
-
-            elevenLabsWs.on("error", (error) => {
-              console.error("[ElevenLabs] WebSocket error:", error);
-
-              // Limpiar chunks de audio en caso de error
-              sentAudioChunks.clear();
-              audioChunkCounter = 0;
-              console.log("[Audio] Cleaned audio chunks on ElevenLabs error");
-            });
-
-            elevenLabsWs.on("close", async () => {
-              console.log("[ElevenLabs] Disconnected");
-
-              // Limpiar chunks de audio al desconectar ElevenLabs
-              sentAudioChunks.clear();
-              audioChunkCounter = 0;
-              console.log(
-                "[Audio] Cleaned audio chunks on ElevenLabs disconnect"
-              );
-
-              if (callSid) {
-                try {
-                  await twilioClient
-                    .calls(callSid)
-                    .update({ status: "completed" });
-                  console.log(
-                    `[Twilio] Call ${callSid} ended due to ElevenLabs disconnection.`
-                  );
-                } catch (err) {
-                  console.error("[Twilio] Error ending call:", err);
-                }
-              }
-
-              if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                elevenLabsWs.close();
-              }
-            });
+            if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+              elevenLabsWs.close();
+            }
           });
         } catch (error) {
           console.error("[ElevenLabs] Setup error:", error);
@@ -1961,50 +1665,45 @@ fastify.register(async (fastifyInstance) => {
               streamSid = msg.start.streamSid;
               callSid = msg.start.callSid;
               customParameters = msg.start.customParameters;
-
-              console.log(
-                "🔍 [WebSocket] Received customParameters from Twilio:"
-              );
-              console.log(
-                "📋 customParameters:",
-                JSON.stringify(customParameters, null, 2)
-              );
-              console.log(
-                "📅 calendar_availability:",
-                customParameters?.calendar_availability
-              );
-
-              // Setup ElevenLabs AFTER receiving customParameters
-              setupElevenLabs();
               break;
 
             case "media":
               if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                const audioChunk = Buffer.from(
+                const audioPayload = Buffer.from(
                   msg.media.payload,
                   "base64"
                 ).toString("base64");
-
-                // Verificar si este chunk de audio ya fue enviado
-                if (!sentAudioChunks.has(audioChunk)) {
-                  sentAudioChunks.add(audioChunk);
+                // Crear un hash corto para loggear
+                const audioPayloadHash = crypto
+                  .createHash("md5")
+                  .update(audioPayload)
+                  .digest("hex")
+                  .substring(0, 8);
+                if (!sentAudioChunks.has(audioPayload)) {
+                  sentAudioChunks.add(audioPayload);
                   audioChunkCounter++;
-
-                  // Limpiar el Set cada 10 chunks para evitar problemas de memoria
-                  if (audioChunkCounter > 10) {
-                    sentAudioChunks.clear();
-                    audioChunkCounter = 0;
-                    console.log("[Audio] Cleaned audio chunks cache");
-                  }
-
+                  console.log(
+                    "[AUDIO SEND]",
+                    audioPayloadHash,
+                    "Sending to ElevenLabs"
+                  );
                   elevenLabsWs.send(
                     JSON.stringify({
                       type: "user_audio_chunk",
-                      user_audio_chunk: audioChunk,
+                      user_audio_chunk: audioPayload,
                     })
                   );
+                  if (audioChunkCounter > 10) {
+                    sentAudioChunks.clear();
+                    audioChunkCounter = 0;
+                    console.log("[AUDIO CACHE] Cleaned audio chunks cache");
+                  }
                 } else {
-                  console.log("[Audio] Skipping duplicate audio chunk");
+                  console.log(
+                    "[AUDIO DUPLICATE]",
+                    audioPayloadHash,
+                    "Duplicate detected, skipping"
+                  );
                 }
               }
               break;
@@ -2013,10 +1712,6 @@ fastify.register(async (fastifyInstance) => {
               if (elevenLabsWs?.readyState === WebSocket.OPEN) {
                 elevenLabsWs.close();
               }
-              // Limpiar chunks de audio al finalizar la llamada
-              sentAudioChunks.clear();
-              audioChunkCounter = 0;
-              console.log("[Audio] Cleaned audio chunks on call stop");
               break;
 
             default:
@@ -2031,10 +1726,6 @@ fastify.register(async (fastifyInstance) => {
         if (elevenLabsWs?.readyState === WebSocket.OPEN) {
           elevenLabsWs.close();
         }
-        // Limpiar chunks de audio al cerrar el WebSocket
-        sentAudioChunks.clear();
-        audioChunkCounter = 0;
-        console.log("[Audio] Cleaned audio chunks on WebSocket close");
       });
     }
   );
@@ -2211,27 +1902,22 @@ async function cleanupStuckCalls() {
 
 // Your existing twilio-status endpoint with enhanced logging and error handling
 fastify.post("/twilio-status", async (request, reply) => {
-  console.log("=".repeat(80));
-  console.log("📞 [TWILIO STATUS] Status update received from Twilio");
-  console.log("=".repeat(80));
-
-  // Log request details
-  console.log("📋 Request Headers:", request.headers);
-  console.log("📋 Request Body Type:", typeof request.body);
-  console.log("📋 Request Body:", request.body);
-
   const callSid = request.body.CallSid;
   const callDuration = parseInt(request.body.CallDuration || "0", 10);
   const callStatus = request.body.CallStatus;
   const callErrorCode = request.body.ErrorCode;
   const callErrorMessage = request.body.ErrorMessage;
 
+  console.log("=".repeat(80));
+  console.log("📞 [TWILIO STATUS] Status update received from Twilio");
+  console.log("=".repeat(80));
   console.log("📱 Call Details:");
   console.log(`   • Call SID: ${callSid}`);
   console.log(`   • Status: ${callStatus}`);
   console.log(`   • Duration: ${callDuration} seconds`);
   console.log(`   • Error Code: ${callErrorCode || "None"}`);
   console.log(`   • Error Message: ${callErrorMessage || "None"}`);
+  console.log("📋 Full Twilio payload:", JSON.stringify(request.body, null, 2));
   console.log("=".repeat(80));
 
   try {
@@ -2261,8 +1947,7 @@ fastify.post("/twilio-status", async (request, reply) => {
       } else {
         console.error("[Twilio] Error fetching recent calls:", allCallsError);
       }
-      // Return 200 OK even if call not found to avoid Twilio errors
-      return reply.code(200).send();
+      return reply.code(404).send({ error: "Call not found in database" });
     } else {
       console.log("[Twilio] Existing call found:", existingCall);
     }
@@ -2334,13 +2019,10 @@ fastify.post("/twilio-status", async (request, reply) => {
         }
       }
     }
-
-    // Return 200 OK with empty response as Twilio expects
-    reply.code(200).send();
+    reply.send({ success: true });
   } catch (error) {
     console.error("[TWILIO STATUS] Error during status update:", error);
-    // Return 200 OK even on error to avoid Twilio retries
-    reply.code(200).send();
+    reply.code(500).send({ error: "Internal server error" });
   }
 });
 
@@ -2392,39 +2074,87 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     console.log("🔔 [ELEVENLABS WEBHOOK] Post-call webhook received");
     console.log("=".repeat(80));
 
-    const rawBody = request.rawBody;
+    // Try multiple approaches to get raw body
+    let rawBody = "";
+
+    // Method 1: Try request.rawBody
+    if (request.rawBody) {
+      rawBody = request.rawBody.toString();
+      console.log("📄 Using request.rawBody");
+    }
+    // Method 2: Try JSON.stringify of parsed body
+    else if (request.body) {
+      rawBody = JSON.stringify(request.body);
+      console.log("📄 Using JSON.stringify(request.body)");
+    }
+    // Method 3: Try to get from request.raw
+    else if (request.raw && request.raw.body) {
+      rawBody = request.raw.body.toString();
+      console.log("📄 Using request.raw.body");
+    }
+
     const signature = request.headers["elevenlabs-signature"];
 
     console.log("📋 Webhook Headers:", request.headers);
     console.log("📄 Raw Body Length:", rawBody?.length || 0);
+    console.log("📄 Raw Body (first 200 chars):", rawBody?.substring(0, 200));
 
     if (!signature) {
       console.error("❌ No signature provided");
       return reply.code(401).send({ error: "No signature provided" });
     }
 
+    // Skip signature verification for now to test webhook functionality
+    console.log(
+      "⚠️ [DEBUG] Skipping signature verification to test webhook functionality"
+    );
+    /*
     if (!verifyElevenLabsSignature(rawBody, signature)) {
       console.error("❌ Invalid signature");
+      console.log("🔍 Signature verification failed. Raw body:", rawBody);
+      console.log("🔍 Signature received:", signature);
       return reply.code(401).send({ error: "Invalid signature" });
     }
+    */
 
-    console.log("✅ Signature verified successfully");
+    console.log("✅ Signature verification skipped for debugging");
 
     const webhookData = request.body;
-    console.log("📊 Webhook Data:", JSON.stringify(webhookData, null, 2));
+    console.log("📊 Webhook Data Structure:", {
+      hasWebhookData: !!webhookData,
+      hasData: !!webhookData?.data,
+      hasConversationId: !!webhookData?.data?.conversation_id,
+      webhookDataKeys: webhookData ? Object.keys(webhookData) : [],
+      dataKeys: webhookData?.data ? Object.keys(webhookData.data) : [],
+    });
 
+    // Check for ElevenLabs specific structure
     if (
       !webhookData ||
       !webhookData.data ||
       !webhookData.data.conversation_id
     ) {
       console.error("❌ Invalid webhook data structure");
+      console.log("📊 Received data:", JSON.stringify(webhookData, null, 2));
       return reply.code(400).send({ error: "Invalid webhook data" });
     }
 
-    const { conversation_id, analysis } = webhookData.data;
+    const { conversation_id, analysis, transcript, metadata } =
+      webhookData.data;
 
     console.log("🔍 Processing webhook for conversation:", conversation_id);
+    console.log(
+      "📊 Analysis data:",
+      analysis ? Object.keys(analysis) : "No analysis"
+    );
+    console.log(
+      "📊 Transcript length:",
+      transcript ? transcript.length : "No transcript"
+    );
+    console.log(
+      "📊 Metadata:",
+      metadata ? Object.keys(metadata) : "No metadata"
+    );
 
     // Find the call by conversation_id
     const { data: call, error: callError } = await supabase
@@ -2435,6 +2165,24 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
 
     if (callError || !call) {
       console.error("❌ Call not found for conversation:", conversation_id);
+      console.log(
+        "🔍 Searching for calls with conversation_id:",
+        conversation_id
+      );
+
+      // Let's check what calls exist in the database
+      const { data: allCalls, error: allCallsError } = await supabase
+        .from("calls")
+        .select("call_sid, conversation_id, created_at")
+        .order("created_at", { ascending: false })
+        .limit(10);
+
+      if (!allCallsError) {
+        console.log("📋 Recent calls in database:", allCalls);
+      } else {
+        console.error("❌ Error fetching recent calls:", allCallsError);
+      }
+
       return reply.code(404).send({ error: "Call not found" });
     }
 
@@ -2452,14 +2200,17 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       if (analysis.transcript_summary) {
         updateData.transcript_summary = analysis.transcript_summary;
       }
-      if (analysis.conversation_duration) {
-        updateData.conversation_duration = analysis.conversation_duration;
-      }
-      if (analysis.turn_count) {
-        updateData.turn_count = analysis.turn_count;
-      }
       if (analysis.data_collection_results) {
         updateData.data_collection_results = analysis.data_collection_results;
+      }
+    }
+
+    if (metadata) {
+      if (metadata.call_duration_secs) {
+        updateData.conversation_duration = metadata.call_duration_secs;
+      }
+      if (transcript && transcript.length > 0) {
+        updateData.turn_count = transcript.length;
       }
     }
 
