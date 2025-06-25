@@ -1244,39 +1244,16 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     // Make the call with error handling
     let call;
     try {
-      // Generar texto de disponibilidad para enviar a ElevenLabs
+      // Usar el texto de disponibilidad que ya se generó correctamente
       let availabilityText = "Disponible todos los dias";
 
       if (availabilityJson) {
         if (availabilityJson.summary.totalEvents === 0) {
-          // Caso por defecto - todos los días disponibles
-          availabilityText = "Disponible todos los dias";
+          // Usar el texto por defecto que ya se generó correctamente
+          availabilityText = defaultText || "Disponible todos los dias";
         } else {
-          // Caso con datos reales del calendario
-          const allDays = Object.keys(availabilityJson.availability).sort();
-          const availabilityTextParts = allDays
-            .map((dayKey) => {
-              const dayInfo = availabilityJson.availability.find((d) =>
-                d.day.includes(dayKey.split("-")[2])
-              ); // Buscar por día
-              if (!dayInfo) return null;
-
-              if (dayInfo.isFree) {
-                return `${dayInfo.day} de 8AM a 6PM`;
-              } else {
-                const timeSlots = dayInfo.freeSlots
-                  .map((slot) => {
-                    return `de ${slot.start} a ${slot.end}`;
-                  })
-                  .join(" y ");
-                return `${dayInfo.day} ${timeSlots}`;
-              }
-            })
-            .filter(Boolean);
-
-          availabilityText = `Los días y horarios disponibles son ${availabilityTextParts.join(
-            "."
-          )}.`;
+          // Usar el texto final que ya se generó correctamente
+          availabilityText = finalText || "Disponible todos los dias";
         }
       }
 
@@ -1627,6 +1604,14 @@ fastify.register(async (fastifyInstance) => {
             console.log("   • Min Duration: 0.5s");
             console.log("   • Max Duration: 5.0s");
             console.log("   • Cooldown: 1.0s");
+            console.log(
+              "📅 [ElevenLabs] calendar_availability value:",
+              initialConfig.dynamic_variables.calendar_availability
+            );
+            console.log(
+              "📋 [ElevenLabs] Full dynamic_variables:",
+              JSON.stringify(initialConfig.dynamic_variables, null, 2)
+            );
             console.log(JSON.stringify(initialConfig, null, 2));
             elevenLabsWs.send(JSON.stringify(initialConfig));
 
@@ -1932,6 +1917,21 @@ fastify.register(async (fastifyInstance) => {
               streamSid = msg.start.streamSid;
               callSid = msg.start.callSid;
               customParameters = msg.start.customParameters;
+
+              console.log(
+                "🔍 [WebSocket] Received customParameters from Twilio:"
+              );
+              console.log(
+                "📋 customParameters:",
+                JSON.stringify(customParameters, null, 2)
+              );
+              console.log(
+                "📅 calendar_availability:",
+                customParameters?.calendar_availability
+              );
+
+              // Setup ElevenLabs AFTER receiving customParameters
+              setupElevenLabs();
               break;
 
             case "media":
