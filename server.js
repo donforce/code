@@ -2641,6 +2641,16 @@ Responde en formato JSON con la siguiente estructura:
       throw new Error("No analysis content received from OpenAI");
     }
 
+    // Log the complete OpenAI response for debugging
+    console.log("🤖 [OPENAI] Complete response from OpenAI:");
+    console.log("📄 Raw analysis content:");
+    console.log(analysisContent);
+    console.log("📊 Response structure:", {
+      model: openAIData.model,
+      usage: openAIData.usage,
+      finish_reason: openAIData.choices[0]?.finish_reason,
+    });
+
     // Try to parse JSON response
     try {
       const parsedAnalysis = JSON.parse(analysisContent);
@@ -2655,6 +2665,9 @@ Responde en formato JSON con la siguiente estructura:
       console.warn(
         "⚠️ [OPENAI] Could not parse JSON response, returning raw text"
       );
+      console.error("❌ [OPENAI] JSON Parse Error:", parseError.message);
+      console.log("🔍 [OPENAI] Attempted to parse this content:");
+      console.log(analysisContent);
       return {
         raw_analysis: analysisContent,
         parse_error: parseError.message,
