@@ -2568,35 +2568,34 @@ async function analyzeCallWithOpenAI(webhookData, call) {
 
     // Prepare analysis prompt
     const analysisPrompt = `
-Analiza la siguiente conversación de ventas inmobiliarias y proporciona un análisis detallado:
-
-CONVERSACIÓN:
-${fullTranscript}
-
+Eres un experto en Identificar clientes potenciales y agendar citas. Analiza conversaciones con clientes potenciales interesados en invesrsiones inmobiliarias y proporciona insights valiosos en formato JSON.
+RESUMEN DE LA LLAMADA:
+${analysis?.transcript_summary}
 METADATOS DE LA LLAMADA:
-- Duración: ${metadata?.call_duration_secs || 0} segundos
-- Turnos de conversación: ${transcript?.length || 0}
-- Éxito de la llamada: ${analysis?.call_successful ? "Sí" : "No"}
-
-Por favor proporciona un análisis estructurado que incluya:
-
-1. RESUMEN EJECUTIVO (2-3 oraciones)
-2. PUNTOS CLAVE DE LA CONVERSACIÓN
-3. INTERÉS DEL CLIENTE (Alto/Medio/Bajo)
-4. OBJECIONES IDENTIFICADAS
-5. SIGUIENTES PASOS RECOMENDADOS
-6. CALIFICACIÓN DE LA OPORTUNIDAD (1-10)
-7. OBSERVACIONES ADICIONALES
-
+- Éxito de la llamada si se logro agendar la cita: ${
+      analysis?.call_successful ? "Sí" : "No"
+    }
+Por favor proporciona un análisis de la llamada que incluya:
+1. INTERÉS DEL CLIENTE:
+ (Alto/Medio/Bajo)
+2. OBJECIONES IDENTIFICADAS
+3. SIGUIENTES PASOS RECOMENDADOS:
+ En caso de llamada incompleta, indica que se debe volver a llamar. Si se agendo cita, indica enviar convocatoria con fecha y hora de la cita.
+4. CITA AGENDADA:
+- Fecha
+- Hora
+- Nombre del cliente
+- Teléfono del cliente
+- Email del cliente
 Responde en formato JSON con la siguiente estructura:
 {
-  "resumen_ejecutivo": "string",
-  "puntos_clave": ["string"],
   "interes_cliente": "Alto/Medio/Bajo",
   "objeciones": ["string"],
   "siguientes_pasos": ["string"],
-  "calificacion_oportunidad": number,
-  "observaciones": "string"
+  "cita_agendada": {
+    "fecha": "string",
+    "hora": "string"
+  }
 }
 `;
 
@@ -2615,7 +2614,7 @@ Responde en formato JSON con la siguiente estructura:
             {
               role: "system",
               content:
-                "Eres un analista experto en ventas inmobiliarias. Analiza conversaciones de ventas y proporciona insights valiosos en formato JSON.",
+                "Eres un experto en identificar clientes potenciales y agendar citas. Analiza conversaciones con clientes potenciales interesados en invesrsiones inmobiliarias y proporciona insights valiosos en formato JSON.",
             },
             {
               role: "user",
