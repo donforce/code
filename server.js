@@ -1910,10 +1910,22 @@ fastify.register(async (fastifyInstance) => {
 
             elevenLabsWs.on("error", (error) => {
               console.error("[ElevenLabs] WebSocket error:", error);
+
+              // Limpiar chunks de audio en caso de error
+              sentAudioChunks.clear();
+              audioChunkCounter = 0;
+              console.log("[Audio] Cleaned audio chunks on ElevenLabs error");
             });
 
             elevenLabsWs.on("close", async () => {
               console.log("[ElevenLabs] Disconnected");
+
+              // Limpiar chunks de audio al desconectar ElevenLabs
+              sentAudioChunks.clear();
+              audioChunkCounter = 0;
+              console.log(
+                "[Audio] Cleaned audio chunks on ElevenLabs disconnect"
+              );
 
               if (callSid) {
                 try {
@@ -2001,6 +2013,10 @@ fastify.register(async (fastifyInstance) => {
               if (elevenLabsWs?.readyState === WebSocket.OPEN) {
                 elevenLabsWs.close();
               }
+              // Limpiar chunks de audio al finalizar la llamada
+              sentAudioChunks.clear();
+              audioChunkCounter = 0;
+              console.log("[Audio] Cleaned audio chunks on call stop");
               break;
 
             default:
@@ -2015,6 +2031,10 @@ fastify.register(async (fastifyInstance) => {
         if (elevenLabsWs?.readyState === WebSocket.OPEN) {
           elevenLabsWs.close();
         }
+        // Limpiar chunks de audio al cerrar el WebSocket
+        sentAudioChunks.clear();
+        audioChunkCounter = 0;
+        console.log("[Audio] Cleaned audio chunks on WebSocket close");
       });
     }
   );
