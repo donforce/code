@@ -77,15 +77,52 @@ fastify.register(fastifyWs);
 
 // Add custom middleware to capture raw body for webhooks
 fastify.addHook("onRequest", (request, reply, done) => {
+  console.log("🔍 [MIDDLEWARE] Request received:", {
+    url: request.url,
+    method: request.method,
+    headers: Object.keys(request.headers),
+    userAgent: request.headers["user-agent"],
+    timestamp: new Date().toISOString(),
+  });
+
   if (request.url === "/webhook/elevenlabs") {
+    console.log(
+      "🎯 [MIDDLEWARE] ElevenLabs webhook detected - capturing raw body"
+    );
+
     // For webhook endpoint, capture raw body manually before Fastify processes it
     const chunks = [];
-    request.raw.on("data", (chunk) => chunks.push(chunk));
+    let totalSize = 0;
+
+    request.raw.on("data", (chunk) => {
+      chunks.push(chunk);
+      totalSize += chunk.length;
+      console.log(
+        `📦 [MIDDLEWARE] Received chunk: ${chunk.length} bytes, total: ${totalSize} bytes`
+      );
+    });
+
     request.raw.on("end", () => {
-      request.rawBody = Buffer.concat(chunks).toString();
+      const rawBody = Buffer.concat(chunks).toString();
+      request.rawBody = rawBody;
+      console.log("✅ [MIDDLEWARE] Raw body captured successfully:", {
+        totalChunks: chunks.length,
+        totalSize: totalSize,
+        rawBodyLength: rawBody.length,
+        rawBodyPreview:
+          rawBody.substring(0, 200) + (rawBody.length > 200 ? "..." : ""),
+      });
+      done();
+    });
+
+    request.raw.on("error", (error) => {
+      console.error("❌ [MIDDLEWARE] Error capturing raw body:", error);
       done();
     });
   } else {
+    console.log(
+      "⏭️ [MIDDLEWARE] Not a webhook request, skipping raw body capture"
+    );
     done();
   }
 });
