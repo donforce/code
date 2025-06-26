@@ -102,9 +102,7 @@ const globalActiveCalls = new Map();
 const userActiveCalls = new Map();
 const workerPool = new Set();
 
-console.log("[Queue] Optimized configuration:", QUEUE_CONFIG);
-
-// Optimized signature verification - reduced logging
+// Optimized signature verification - minimal logging
 function verifyElevenLabsSignature(rawBody, signature) {
   try {
     let timestamp = null;
@@ -137,7 +135,7 @@ function verifyElevenLabsSignature(rawBody, signature) {
   }
 }
 
-// Optimized queue subscription with reduced logging
+// Optimized queue subscription with minimal logging
 const queueChannel = supabase
   .channel("server-queue")
   .on(
@@ -163,24 +161,15 @@ const queueChannel = supabase
   )
   .subscribe();
 
-// Optimized queue processing with reduced database queries
+// Optimized queue processing with minimal logging
 async function processAllPendingQueues() {
   try {
-    console.log("[Queue] 🔄 Starting queue processing...");
-    console.log(
-      `[Queue] 📊 Current active calls: ${globalActiveCalls.size}/${QUEUE_CONFIG.maxConcurrentCalls}`
-    );
-
     // Check if we can process more calls
     if (globalActiveCalls.size >= QUEUE_CONFIG.maxConcurrentCalls) {
-      console.log(
-        "[Queue] ⏸️ Max concurrent calls reached, skipping processing"
-      );
       return;
     }
 
     // Get all pending queue items with optimized query
-    console.log("[Queue] 🔍 Fetching pending queue items...");
     const { data: pendingQueues, error } = await supabase
       .from("call_queue")
       .select(
@@ -208,18 +197,11 @@ async function processAllPendingQueues() {
     }
 
     if (!pendingQueues || pendingQueues.length === 0) {
-      console.log("[Queue] ℹ️ No pending queues found");
       return;
     }
 
-    console.log(`[Queue] 📋 Found ${pendingQueues.length} pending queue items`);
-
     // Get user data in single query for all users
     const userIds = [...new Set(pendingQueues.map((item) => item.user_id))];
-    console.log(
-      `[Queue] 👥 Fetching data for ${userIds.length} users:`,
-      userIds
-    );
 
     const { data: usersData, error: usersError } = await supabase
       .from("users")
@@ -233,8 +215,6 @@ async function processAllPendingQueues() {
       return;
     }
 
-    console.log(`[Queue] ✅ Found ${usersData?.length || 0} users with data`);
-
     // Create optimized user lookup map
     const usersMap = new Map(usersData?.map((user) => [user.id, user]) || []);
 
@@ -244,48 +224,24 @@ async function processAllPendingQueues() {
 
     for (const item of pendingQueues) {
       const user = usersMap.get(item.user_id);
-      console.log(
-        `[Queue] 🔍 Checking item ${item.id} for user ${item.user_id}:`,
-        {
-          hasUser: !!user,
-          availableMinutes: user?.available_minutes || 0,
-          hasActiveCall: userActiveCalls.has(item.user_id),
-          alreadyProcessed: processedUsers.has(item.user_id),
-        }
-      );
 
       if (!user || user.available_minutes <= 0) {
-        console.log(
-          `[Queue] ❌ User ${item.user_id} not eligible: no user data or no minutes`
-        );
         continue;
       }
       if (userActiveCalls.has(item.user_id)) {
-        console.log(
-          `[Queue] ❌ User ${item.user_id} not eligible: already has active call`
-        );
         continue;
       }
       if (processedUsers.has(item.user_id)) {
-        console.log(
-          `[Queue] ❌ User ${item.user_id} not eligible: already processed`
-        );
         continue;
       }
 
       eligibleItems.push(item);
       processedUsers.add(item.user_id);
-      console.log(
-        `[Queue] ✅ Item ${item.id} for user ${item.user_id} is eligible`
-      );
     }
 
     if (eligibleItems.length === 0) {
-      console.log("[Queue] ℹ️ No eligible items found");
       return;
     }
-
-    console.log(`[Queue] 🎯 Found ${eligibleItems.length} eligible items`);
 
     // Process items concurrently with optimized batch size
     const itemsToProcess = eligibleItems.slice(
@@ -293,13 +249,8 @@ async function processAllPendingQueues() {
       QUEUE_CONFIG.maxConcurrentCalls - globalActiveCalls.size
     );
 
-    console.log(
-      `[Queue] 🚀 Processing ${itemsToProcess.length} items concurrently`
-    );
-
     // Process items concurrently without waiting for all to complete
     itemsToProcess.forEach(async (item) => {
-      console.log(`[Queue] 🔄 Starting processing for item ${item.id}`);
       processQueueItemWithRetry(item).catch((error) => {
         console.error(`[Queue] ❌ Error processing item ${item.id}:`, error);
       });
@@ -309,7 +260,7 @@ async function processAllPendingQueues() {
   }
 }
 
-// Optimized queue item processing with reduced logging
+// Optimized queue item processing with minimal logging
 async function processQueueItemWithRetry(queueItem, attempt = 1) {
   const workerId = `worker_${Date.now()}_${Math.random()
     .toString(36)
@@ -2391,21 +2342,9 @@ fastify.post("/queue/cleanup", async (request, reply) => {
 // Add webhook endpoint for ElevenLabs
 fastify.post("/webhook/elevenlabs", async (request, reply) => {
   try {
-    console.log("=".repeat(80));
-    console.log("🔔 [ELEVENLABS WEBHOOK] Post-call webhook received");
-    console.log("=".repeat(80));
-
-    console.log("📋 Webhook Headers:", request.headers);
-    console.log("📄 Request Body:", request.body);
+    console.log("🔔 [ELEVENLABS] Webhook received");
 
     const webhookData = request.body;
-    console.log("📊 Webhook Data Structure:", {
-      hasWebhookData: !!webhookData,
-      hasData: !!webhookData?.data,
-      hasConversationId: !!webhookData?.data?.conversation_id,
-      webhookDataKeys: webhookData ? Object.keys(webhookData) : [],
-      dataKeys: webhookData?.data ? Object.keys(webhookData.data) : [],
-    });
 
     // Check for ElevenLabs specific structure
     if (
@@ -2414,26 +2353,39 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       !webhookData.data.conversation_id
     ) {
       console.error("❌ Invalid webhook data structure");
-      console.log("📊 Received data:", JSON.stringify(webhookData, null, 2));
       return reply.code(400).send({ error: "Invalid webhook data" });
     }
 
     const { conversation_id, analysis, transcript, metadata } =
       webhookData.data;
 
-    console.log("🔍 Processing webhook for conversation:", conversation_id);
-    console.log(
-      "📊 Analysis data:",
-      analysis ? Object.keys(analysis) : "No analysis"
-    );
-    console.log(
-      "📊 Transcript length:",
-      transcript ? transcript.length : "No transcript"
-    );
-    console.log(
-      "📊 Metadata:",
-      metadata ? Object.keys(metadata) : "No metadata"
-    );
+    console.log("📞 [ELEVENLABS] Processing conversation:", conversation_id);
+
+    // Log essential audio/transcript data
+    if (transcript && transcript.length > 0) {
+      console.log(
+        "🎵 [ELEVENLABS] Audio transcript available:",
+        transcript.length,
+        "turns"
+      );
+      // Log first few turns for debugging
+      transcript.slice(0, 3).forEach((turn, index) => {
+        console.log(
+          `   Turn ${index + 1}: ${turn.speaker} - ${turn.text?.substring(
+            0,
+            100
+          )}${turn.text?.length > 100 ? "..." : ""}`
+        );
+      });
+    }
+
+    if (analysis?.transcript_summary) {
+      console.log(
+        "📝 [ELEVENLABS] Summary:",
+        analysis.transcript_summary.substring(0, 200) +
+          (analysis.transcript_summary.length > 200 ? "..." : "")
+      );
+    }
 
     // Find the call by conversation_id
     const { data: call, error: callError } = await supabase
@@ -2444,28 +2396,8 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
 
     if (callError || !call) {
       console.error("❌ Call not found for conversation:", conversation_id);
-      console.log(
-        "🔍 Searching for calls with conversation_id:",
-        conversation_id
-      );
-
-      // Let's check what calls exist in the database
-      const { data: allCalls, error: allCallsError } = await supabase
-        .from("calls")
-        .select("call_sid, conversation_id, created_at")
-        .order("created_at", { ascending: false })
-        .limit(10);
-
-      if (!allCallsError) {
-        console.log("📋 Recent calls in database:", allCalls);
-      } else {
-        console.error("❌ Error fetching recent calls:", allCallsError);
-      }
-
       return reply.code(404).send({ error: "Call not found" });
     }
-
-    console.log("✅ Found call:", call.call_sid);
 
     // Update call with webhook data
     const updateData = {
@@ -2493,8 +2425,6 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       }
     }
 
-    console.log("📝 Updating call with data:", updateData);
-
     const { error: updateError } = await supabase
       .from("calls")
       .update(updateData)
@@ -2505,54 +2435,21 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       return reply.code(500).send({ error: "Failed to update call" });
     }
 
-    console.log("✅ Call updated successfully");
+    console.log("✅ [ELEVENLABS] Call updated successfully");
 
-    // 🔍 ANALYZE CALL WITH OPENAI
-    console.log("🤖 [OPENAI] Starting call analysis...");
-    // try {
-    //   // Comentado: Uso de analyzeCallWithOpenAI
-    //   // const openAIAnalysis = await analyzeCallWithOpenAI(webhookData, call);
-    //   // if (openAIAnalysis) {
-    //   //   console.log("✅ [OPENAI] Analysis completed successfully");
-    //   //   // Update call with OpenAI analysis
-    //   //   const { error: openAIUpdateError } = await supabase
-    //   //     .from("calls")
-    //   //     .update({
-    //   //       openai_analysis: openAIAnalysis,
-    //   //       updated_at: new Date().toISOString(),
-    //   //     })
-    //   //     .eq("conversation_id", conversation_id);
-    //   //   if (openAIUpdateError) {
-    //   //     console.error(
-    //   //       "❌ Error updating call with OpenAI analysis:",
-    //   //       openAIUpdateError
-    //   //     );
-    //   //   } else {
-    //   //     console.log("✅ Call updated with OpenAI analysis");
-    //   //   }
-    //   // }
-    // } catch (openAIError) {
-    //   console.error("❌ Error analyzing call with OpenAI:", openAIError);
-    // }
-
-    // 🔍 CHECK FOR SCHEDULED CALL IN SUMMARY (independent of OpenAI analysis)
-    console.log("📅 [CALENDAR] Checking for scheduled call in summary...");
+    // 🔍 CHECK FOR SCHEDULED CALL IN SUMMARY
     try {
       const scheduledCallInfo = await checkForScheduledCall(webhookData, call);
 
       if (scheduledCallInfo) {
         console.log(
-          "✅ [CALENDAR] Scheduled call detected, creating calendar event"
+          "📅 [CALENDAR] Scheduled call detected, creating calendar event"
         );
         await createCalendarEvent(scheduledCallInfo, call);
-      } else {
-        console.log("ℹ️ [CALENDAR] No scheduled call detected in summary");
       }
     } catch (calendarError) {
       console.error("❌ Error processing calendar event:", calendarError);
     }
-
-    console.log("=".repeat(80));
 
     reply.send({ success: true, message: "Webhook processed successfully" });
   } catch (error) {
@@ -2595,33 +2492,10 @@ fastify.post("/webhook/elevenlabs/test", async (request, reply) => {
 // Start the server
 const start = async () => {
   try {
-    console.log("🚀 Starting server...");
-    console.log("📊 Queue Configuration:", QUEUE_CONFIG);
-    console.log("🔧 Environment Check:");
-    console.log(
-      `   • ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY ? "✅ Set" : "❌ Missing"}`
-    );
-    console.log(
-      `   • ELEVENLABS_AGENT_ID: ${
-        ELEVENLABS_AGENT_ID ? "✅ Set" : "❌ Missing"
-      }`
-    );
-    console.log(
-      `   • TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID ? "✅ Set" : "❌ Missing"}`
-    );
-    console.log(
-      `   • RAILWAY_PUBLIC_DOMAIN: ${
-        RAILWAY_PUBLIC_DOMAIN ? "✅ Set" : "❌ Missing"
-      }`
-    );
-    console.log(
-      `   • OPENAI_API_KEY: ${OPENAI_API_KEY ? "✅ Set" : "❌ Missing"}`
-    );
+    console.log("🚀 Server starting on port", PORT);
 
     await fastify.listen({ port: PORT, host: "0.0.0.0" });
-    console.log(`✅ Server running on port ${PORT}`);
-    console.log("🔄 Queue processing interval set to:", QUEUE_INTERVAL, "ms");
-    console.log("🧹 Cleanup interval set to:", CLEANUP_INTERVAL, "ms");
+    console.log("✅ Server running");
   } catch (err) {
     console.error("❌ Error starting server:", err);
     process.exit(1);
@@ -2633,19 +2507,10 @@ start();
 // Function to check for scheduled call in ElevenLabs summary
 async function checkForScheduledCall(webhookData, call) {
   try {
-    console.log(
-      "🔍 [CALENDAR] Analyzing ElevenLabs transcript summary for scheduled call..."
-    );
-
     // Get the transcript summary from ElevenLabs
     const summary = webhookData.data.analysis?.transcript_summary || "";
-    console.log(
-      "📄 [CALENDAR] ElevenLabs transcript summary to analyze:",
-      summary
-    );
 
     if (!summary || summary.trim() === "") {
-      console.log("ℹ️ [CALENDAR] No transcript summary available");
       return null;
     }
 
@@ -2673,25 +2538,13 @@ async function checkForScheduledCall(webhookData, call) {
     );
 
     if (!hasSchedulingKeywords) {
-      console.log(
-        "ℹ️ [CALENDAR] No scheduling keywords found in transcript summary"
-      );
       return null;
     }
-
-    console.log(
-      "✅ [CALENDAR] Scheduling keywords detected in transcript summary, extracting date and time..."
-    );
 
     // Extract date and time using OpenAI from the transcript summary
     const dateTimeInfo = await extractDateTimeFromSummary(summary);
 
     if (dateTimeInfo) {
-      console.log(
-        "✅ [CALENDAR] Date and time extracted from transcript summary:",
-        dateTimeInfo
-      );
-
       // Get lead information
       const { data: lead, error: leadError } = await supabase
         .from("leads")
@@ -2722,8 +2575,6 @@ async function checkForScheduledCall(webhookData, call) {
 // Function to extract date and time from summary using OpenAI
 async function extractDateTimeFromSummary(summary) {
   try {
-    console.log("🤖 [OPENAI] Extracting date and time from summary...");
-
     const extractionPrompt = `
 Extrae la fecha y hora de la siguiente conversación de programación de llamada:
 
@@ -2784,11 +2635,6 @@ Usa "America/New_York" como zona horaria por defecto a menos que se especifique 
       throw new Error("No extraction content received from OpenAI");
     }
 
-    console.log(
-      "📄 [OPENAI] Date/time extraction response:",
-      extractionContent
-    );
-
     // Parse the extraction result
     let jsonContent = extractionContent;
     if (extractionContent.includes("```json")) {
@@ -2801,14 +2647,9 @@ Usa "America/New_York" como zona horaria por defecto a menos que se especifique 
     const parsedExtraction = JSON.parse(jsonContent);
 
     if (parsedExtraction === null) {
-      console.log("ℹ️ [OPENAI] No valid date/time found in summary");
       return null;
     }
 
-    console.log(
-      "✅ [OPENAI] Date/time extracted successfully:",
-      parsedExtraction
-    );
     return parsedExtraction;
   } catch (error) {
     console.error("❌ [OPENAI] Error extracting date/time:", error);
