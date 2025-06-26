@@ -2532,29 +2532,26 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
         } else {
           console.log("✅ Call updated with OpenAI analysis");
         }
-
-        // 🔍 CHECK FOR SCHEDULED CALL IN SUMMARY
-        console.log("📅 [CALENDAR] Checking for scheduled call in summary...");
-        try {
-          const scheduledCallInfo = await checkForScheduledCall(
-            webhookData,
-            call
-          );
-
-          if (scheduledCallInfo) {
-            console.log(
-              "✅ [CALENDAR] Scheduled call detected, creating calendar event"
-            );
-            await createCalendarEvent(scheduledCallInfo, call);
-          } else {
-            console.log("ℹ️ [CALENDAR] No scheduled call detected in summary");
-          }
-        } catch (calendarError) {
-          console.error("❌ Error processing calendar event:", calendarError);
-        }
       }
     } catch (openAIError) {
       console.error("❌ Error analyzing call with OpenAI:", openAIError);
+    }
+
+    // 🔍 CHECK FOR SCHEDULED CALL IN SUMMARY (independent of OpenAI analysis)
+    console.log("📅 [CALENDAR] Checking for scheduled call in summary...");
+    try {
+      const scheduledCallInfo = await checkForScheduledCall(webhookData, call);
+
+      if (scheduledCallInfo) {
+        console.log(
+          "✅ [CALENDAR] Scheduled call detected, creating calendar event"
+        );
+        await createCalendarEvent(scheduledCallInfo, call);
+      } else {
+        console.log("ℹ️ [CALENDAR] No scheduled call detected in summary");
+      }
+    } catch (calendarError) {
+      console.error("❌ Error processing calendar event:", calendarError);
     }
 
     console.log("=".repeat(80));
