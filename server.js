@@ -1573,6 +1573,14 @@ fastify.register(async (fastifyInstance) => {
             );
             console.log(JSON.stringify(initialConfig, null, 2));
 
+            // Log the first message that will be spoken
+            if (customParameters?.first_message) {
+              console.log(
+                "🎯 [AGENT] First message to be spoken:",
+                customParameters.first_message
+              );
+            }
+
             // Verificar que el WebSocket esté abierto antes de enviar
             if (elevenLabsWs.readyState === WebSocket.OPEN) {
               elevenLabsWs.send(JSON.stringify(initialConfig));
@@ -1641,8 +1649,13 @@ fastify.register(async (fastifyInstance) => {
                         sentAudioChunks.add(audioPayload);
                         audioChunkCounter++;
 
-                        // Limpiar el Set cada 10 chunks para evitar problemas de memoria
-                        if (audioChunkCounter > 10) {
+                        // Log agent audio being sent to Twilio
+                        console.log(
+                          `🔊 [AGENT] Sending audio chunk #${audioChunkCounter} to Twilio`
+                        );
+
+                        // Limpiar el Set cada 100 chunks para evitar problemas de memoria
+                        if (audioChunkCounter > 100) {
                           sentAudioChunks.clear();
                           audioChunkCounter = 0;
                           console.log(
@@ -1668,6 +1681,29 @@ fastify.register(async (fastifyInstance) => {
 
                   case "agent_response":
                     console.log("🤖 [AGENT] Speaking");
+                    // Log agent response details if available
+                    if (message.agent_response_event) {
+                      console.log(
+                        "📝 [AGENT] Response details:",
+                        JSON.stringify(message.agent_response_event, null, 2)
+                      );
+
+                      // Log the actual text the agent is speaking
+                      if (message.agent_response_event.text) {
+                        console.log(
+                          "🗣️ [AGENT] Text being spoken:",
+                          message.agent_response_event.text
+                        );
+                      }
+
+                      // Log the speech text if available
+                      if (message.agent_response_event.speech_text) {
+                        console.log(
+                          "🎯 [AGENT] Speech text:",
+                          message.agent_response_event.speech_text
+                        );
+                      }
+                    }
                     break;
 
                   case "user_speaking":
@@ -1678,12 +1714,6 @@ fastify.register(async (fastifyInstance) => {
 
                     console.log(
                       `🎤 [USER] Speaking - Duration: ${speakingDuration}s, Should Interrupt: ${shouldInterrupt}`
-                    );
-
-                    // Imprimir el mensaje completo del evento
-                    console.log(
-                      "📋 [USER_SPEAKING] Full message:",
-                      JSON.stringify(message, null, 2)
                     );
 
                     if (shouldInterrupt) {
@@ -1697,19 +1727,11 @@ fastify.register(async (fastifyInstance) => {
                     console.log(
                       "🛑 [INTERRUPTION] Agent interrupted successfully"
                     );
-                    console.log(
-                      "📊 [INTERRUPTION] Details:",
-                      JSON.stringify(message, null, 2)
-                    );
                     break;
 
                   case "interruption":
                     console.log(
                       "🚨 [INTERRUPTION] Interruption event received"
-                    );
-                    console.log(
-                      "📊 [INTERRUPTION] Details:",
-                      JSON.stringify(message, null, 2)
                     );
                     break;
 
@@ -1736,6 +1758,11 @@ fastify.register(async (fastifyInstance) => {
                     }
 
                     lastUserTranscript = transcript;
+
+                    // Log user transcript in real-time
+                    if (transcript) {
+                      console.log("🎤 [USER] Said:", transcript);
+                    }
 
                     const normalized = transcript.replace(/[\s,]/g, "");
                     const isNumericSequence = /^\d{7,}$/.test(normalized);
@@ -1944,8 +1971,8 @@ fastify.register(async (fastifyInstance) => {
                   sentAudioChunks.add(audioChunk);
                   audioChunkCounter++;
 
-                  // Limpiar el Set cada 10 chunks para evitar problemas de memoria
-                  if (audioChunkCounter > 10) {
+                  // Limpiar el Set cada 100 chunks para evitar problemas de memoria
+                  if (audioChunkCounter > 100) {
                     sentAudioChunks.clear();
                     audioChunkCounter = 0;
                     console.log("[Audio] Cleaned audio chunks cache");
