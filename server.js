@@ -2882,7 +2882,7 @@ Extrae la información en formato JSON con la siguiente estructura:
 {
   "date": "YYYY-MM-DD",
   "time": "HH:MM",
-  "timezone": "America/Mexico_City",
+  "timezone": "America/New_York",
   "title": "Llamada con [Nombre del Cliente]",
   "description": "Llamada programada desde conversación telefónica",
   "attendees": ["email_del_cliente@ejemplo.com"]
@@ -2890,7 +2890,7 @@ Extrae la información en formato JSON con la siguiente estructura:
 
 Si no puedes extraer una fecha y hora válida, devuelve null.
 Si la fecha es relativa (ej: "tomorrow", "next Thursday"), conviértela a fecha absoluta.
-Usa "America/Mexico_City" como zona horaria por defecto a menos que se especifique otra en la conversación.
+Usa "America/New_York" como zona horaria por defecto a menos que se especifique otra en la conversación.
 `;
 
     const openAIResponse = await fetch(
@@ -3056,11 +3056,11 @@ async function createCalendarEvent(scheduledCallInfo, call) {
 
     const calendar = google.calendar({ version: "v3", auth: oauth2Client });
 
-    // Get user timezone (default to America/Mexico_City if not specified)
+    // Get user timezone (default to America/New_York if not specified)
     const userTimeZone =
       scheduledCallInfo.timezone ||
       calendarSettings.calendar_timezone ||
-      "America/Mexico_City";
+      "America/New_York";
 
     console.log("🔍 [CALENDAR] User timezone:", userTimeZone);
 
