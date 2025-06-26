@@ -3212,31 +3212,47 @@ async function createCalendarEvent(scheduledCallInfo, call) {
 
     console.log("🔍 [CALENDAR] User timezone:", userTimeZone);
 
-    // Create date objects in the user's timezone and convert to the correct format
-    // We need to create the date in the user's timezone and then format it properly
-    const eventDate = new Date(
-      `${scheduledCallInfo.date}T${scheduledCallInfo.time}`
-    );
+    // CORREGIDO: Crear fecha correctamente en la zona horaria del usuario
+    // Construir la fecha en la zona horaria del usuario
+    const dateTimeString = `${scheduledCallInfo.date}T${scheduledCallInfo.time}`;
+
+    // Crear la fecha interpretándola en la zona horaria del usuario
+    const eventDate = new Date(dateTimeString + " " + userTimeZone);
     const endDate = new Date(eventDate.getTime() + 30 * 60 * 1000); // 30 minutes duration
 
-    // Format dates in the user's timezone for Google Calendar
-    const formatDateInTimezone = (date, timezone) => {
-      return date
-        .toLocaleString("sv-SE", { timeZone: timezone })
-        .replace(" ", "T")
-        .replace(/\.\d+$/, "");
+    // Formatear fechas en formato ISO para Google Calendar
+    const formatDateForGoogleCalendar = (date, timezone) => {
+      // Convertir a la zona horaria especificada y formatear como ISO
+      const options = {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        timeZone: timezone,
+        hour12: false,
+      };
+
+      const localDate = new Date(date.toLocaleString("en-US", options));
+      return localDate.toISOString().replace(/\.\d{3}Z$/, "");
     };
 
-    const startDateTime = formatDateInTimezone(eventDate, userTimeZone);
-    const endDateTime = formatDateInTimezone(endDate, userTimeZone);
+    const startDateTime = formatDateForGoogleCalendar(eventDate, userTimeZone);
+    const endDateTime = formatDateForGoogleCalendar(endDate, userTimeZone);
 
     console.log("🔍 [CALENDAR] Date calculations:", {
       originalDate: `${scheduledCallInfo.date}T${scheduledCallInfo.time}`,
-      eventDateLocal: eventDate.toString(),
+      userTimeZone: userTimeZone,
       startDateTimeFormatted: startDateTime,
       endDateTimeFormatted: endDateTime,
-      timezone: userTimeZone,
     });
+
+    // CORREGIDO: Usar el email real del cliente como invitado
+    const attendees = [];
+    if (scheduledCallInfo.lead && scheduledCallInfo.lead.email) {
+      attendees.push({ email: scheduledCallInfo.lead.email });
+    }
 
     const event = {
       summary: scheduledCallInfo.title,
@@ -3249,9 +3265,7 @@ async function createCalendarEvent(scheduledCallInfo, call) {
         dateTime: endDateTime,
         timeZone: userTimeZone,
       },
-      attendees: scheduledCallInfo.attendees
-        ? scheduledCallInfo.attendees.map((email) => ({ email }))
-        : [],
+      attendees: attendees,
       reminders: {
         useDefault: false,
         overrides: [
