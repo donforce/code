@@ -2723,6 +2723,37 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                 };
               }
 
+              // NUEVO: Si auto_call es true, agregar a la cola si no está pendiente
+              if (data.auto_call) {
+                // Buscar si ya está en la cola pendiente
+                const { data: queueItem, error: queueError } = await supabase
+                  .from("call_queue")
+                  .select("id")
+                  .eq("user_id", userId)
+                  .eq("lead_id", existingLead.id)
+                  .eq("status", "pending")
+                  .maybeSingle();
+                if (!queueItem) {
+                  // Obtener la última posición en la cola
+                  const { data: existingQueue } = await supabase
+                    .from("call_queue")
+                    .select("queue_position")
+                    .order("queue_position", { ascending: false })
+                    .limit(1);
+                  const nextPosition =
+                    existingQueue && existingQueue.length > 0
+                      ? (existingQueue[0]?.queue_position || 0) + 1
+                      : 1;
+                  await supabase.from("call_queue").insert({
+                    user_id: userId,
+                    lead_id: existingLead.id,
+                    queue_position: nextPosition,
+                    status: "pending",
+                    created_at: new Date().toISOString(),
+                  });
+                }
+              }
+
               return {
                 index,
                 success: true,
