@@ -2509,33 +2509,31 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
 
     // 🔍 ANALYZE CALL WITH OPENAI
     console.log("🤖 [OPENAI] Starting call analysis...");
-    try {
-      const openAIAnalysis = await analyzeCallWithOpenAI(webhookData, call);
-
-      if (openAIAnalysis) {
-        console.log("✅ [OPENAI] Analysis completed successfully");
-
-        // Update call with OpenAI analysis
-        const { error: openAIUpdateError } = await supabase
-          .from("calls")
-          .update({
-            openai_analysis: openAIAnalysis,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("conversation_id", conversation_id);
-
-        if (openAIUpdateError) {
-          console.error(
-            "❌ Error updating call with OpenAI analysis:",
-            openAIUpdateError
-          );
-        } else {
-          console.log("✅ Call updated with OpenAI analysis");
-        }
-      }
-    } catch (openAIError) {
-      console.error("❌ Error analyzing call with OpenAI:", openAIError);
-    }
+    // try {
+    //   // Comentado: Uso de analyzeCallWithOpenAI
+    //   // const openAIAnalysis = await analyzeCallWithOpenAI(webhookData, call);
+    //   // if (openAIAnalysis) {
+    //   //   console.log("✅ [OPENAI] Analysis completed successfully");
+    //   //   // Update call with OpenAI analysis
+    //   //   const { error: openAIUpdateError } = await supabase
+    //   //     .from("calls")
+    //   //     .update({
+    //   //       openai_analysis: openAIAnalysis,
+    //   //       updated_at: new Date().toISOString(),
+    //   //     })
+    //   //     .eq("conversation_id", conversation_id);
+    //   //   if (openAIUpdateError) {
+    //   //     console.error(
+    //   //       "❌ Error updating call with OpenAI analysis:",
+    //   //       openAIUpdateError
+    //   //     );
+    //   //   } else {
+    //   //     console.log("✅ Call updated with OpenAI analysis");
+    //   //   }
+    //   // }
+    // } catch (openAIError) {
+    //   console.error("❌ Error analyzing call with OpenAI:", openAIError);
+    // }
 
     // 🔍 CHECK FOR SCHEDULED CALL IN SUMMARY (independent of OpenAI analysis)
     console.log("📅 [CALENDAR] Checking for scheduled call in summary...");
@@ -2564,157 +2562,10 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
 });
 
 // Function to analyze call with OpenAI
-async function analyzeCallWithOpenAI(webhookData, call) {
-  try {
-    console.log("🤖 [OPENAI] Preparing analysis request...");
-
-    const { conversation_id, analysis, transcript, metadata } =
-      webhookData.data;
-
-    // Prepare the conversation transcript for analysis
-    let fullTranscript = "";
-    if (transcript && transcript.length > 0) {
-      fullTranscript = transcript
-        .map((turn) => {
-          const speaker = turn.speaker === "user" ? "Cliente" : "Agente";
-          const text = turn.text || "";
-          return `${speaker}: ${text}`;
-        })
-        .join("\n");
-    }
-
-    // Prepare analysis prompt
-    const analysisPrompt = `
-Analiza la siguiente conversación de ventas inmobiliarias y proporciona un análisis detallado:
-
-CONVERSACIÓN:
-${fullTranscript}
-
-METADATOS DE LA LLAMADA:
-- Duración: ${metadata?.call_duration_secs || 0} segundos
-- Turnos de conversación: ${transcript?.length || 0}
-- Éxito de la llamada: ${analysis?.call_successful ? "Sí" : "No"}
-
-Por favor proporciona un análisis estructurado que incluya:
-
-1. RESUMEN EJECUTIVO (2-3 oraciones)
-2. PUNTOS CLAVE DE LA CONVERSACIÓN
-3. INTERÉS DEL CLIENTE (Alto/Medio/Bajo)
-4. OBJECIONES IDENTIFICADAS
-5. SIGUIENTES PASOS RECOMENDADOS
-6. CALIFICACIÓN DE LA OPORTUNIDAD (1-10)
-7. OBSERVACIONES ADICIONALES
-
-Responde en formato JSON con la siguiente estructura:
-{
-  "resumen_ejecutivo": "string",
-  "puntos_clave": ["string"],
-  "interes_cliente": "Alto/Medio/Bajo",
-  "objeciones": ["string"],
-  "siguientes_pasos": ["string"],
-  "calificacion_oportunidad": number,
-  "observaciones": "string"
-}
-`;
-
-    // Call OpenAI API
-    const openAIResponse = await fetch(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [
-            {
-              role: "system",
-              content:
-                "Eres un analista experto en ventas inmobiliarias. Analiza conversaciones de ventas y proporciona insights valiosos en formato JSON.",
-            },
-            {
-              role: "user",
-              content: analysisPrompt,
-            },
-          ],
-          temperature: 0.3,
-          max_tokens: 1000,
-        }),
-      }
-    );
-
-    if (!openAIResponse.ok) {
-      throw new Error(
-        `OpenAI API error: ${openAIResponse.status} ${openAIResponse.statusText}`
-      );
-    }
-
-    const openAIData = await openAIResponse.json();
-    const analysisContent = openAIData.choices[0]?.message?.content;
-
-    if (!analysisContent) {
-      throw new Error("No analysis content received from OpenAI");
-    }
-
-    // Log the complete OpenAI response for debugging
-    console.log("🤖 [OPENAI] Complete response from OpenAI:");
-    console.log("📄 Raw analysis content:");
-    console.log(analysisContent);
-    console.log("📊 Response structure:", {
-      model: openAIData.model,
-      usage: openAIData.usage,
-      finish_reason: openAIData.choices[0]?.finish_reason,
-    });
-
-    // Try to parse JSON response
-    try {
-      let jsonContent = analysisContent;
-
-      // Check if response is wrapped in markdown code blocks
-      if (analysisContent.includes("```json")) {
-        console.log(
-          "🔍 [OPENAI] Detected markdown code block, extracting JSON..."
-        );
-        const jsonMatch = analysisContent.match(/```json\s*([\s\S]*?)\s*```/);
-        if (jsonMatch && jsonMatch[1]) {
-          jsonContent = jsonMatch[1].trim();
-          console.log(
-            "✅ [OPENAI] Successfully extracted JSON from markdown block"
-          );
-        } else {
-          console.warn(
-            "⚠️ [OPENAI] Could not extract JSON from markdown block"
-          );
-        }
-      }
-
-      const parsedAnalysis = JSON.parse(jsonContent);
-      console.log("✅ [OPENAI] Analysis parsed successfully:", {
-        resumen_ejecutivo:
-          parsedAnalysis.resumen_ejecutivo?.substring(0, 100) + "...",
-        interes_cliente: parsedAnalysis.interes_cliente,
-        calificacion_oportunidad: parsedAnalysis.calificacion_oportunidad,
-      });
-      return parsedAnalysis;
-    } catch (parseError) {
-      console.warn(
-        "⚠️ [OPENAI] Could not parse JSON response, returning raw text"
-      );
-      console.error("❌ [OPENAI] JSON Parse Error:", parseError.message);
-      console.log("🔍 [OPENAI] Attempted to parse this content:");
-      console.log(analysisContent);
-      return {
-        raw_analysis: analysisContent,
-        parse_error: parseError.message,
-      };
-    }
-  } catch (error) {
-    console.error("❌ [OPENAI] Error in analysis:", error);
-    throw error;
-  }
-}
+// Comentado: Definición de analyzeCallWithOpenAI
+// async function analyzeCallWithOpenAI(webhookData, call) {
+//   ...
+// }
 
 // Add test endpoint for webhook debugging
 fastify.get("/webhook/elevenlabs/test", async (request, reply) => {
