@@ -1014,6 +1014,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     let availabilityJson = null;
     let defaultText = "Disponible todos los dias";
     let finalText = "Disponible todos los dias";
+    let calendarTimezone = "America/New_York"; // Default timezone
 
     if (!calendarSummary) {
       console.log(
@@ -1064,7 +1065,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       availabilityJson = {
         workerId: workerId,
         summary: {
-          timezone: "America/New_York",
+          timezone: calendarTimezone,
           totalEvents: 0,
           freeDays: 15,
           busyDays: 0,
@@ -1090,6 +1091,9 @@ async function processQueueItem(queueItem, workerId = "unknown") {
           ).toLocaleDateString()}`,
         }
       );
+
+      // Obtener el timezone del calendario
+      calendarTimezone = calendarSummary.timezone || "America/New_York";
 
       // Mostrar disponibilidad detallada para los próximos 15 días
       const allDays = Object.keys(calendarSummary.availabilityByDay).sort();
@@ -1145,7 +1149,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       availabilityJson = {
         workerId: workerId,
         summary: {
-          timezone: calendarSummary.timezone,
+          timezone: calendarTimezone,
           totalEvents: calendarSummary.totalEvents,
           freeDays: calendarSummary.freeDays.length,
           busyDays: calendarSummary.busyDays.length,
@@ -1215,6 +1219,9 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       }
 
       const availabilityParam = encodeURIComponent(availabilityText);
+      const timezoneParam = encodeURIComponent(calendarTimezone);
+      const clientPhoneParam = encodeURIComponent(queueItem.lead.phone);
+      const clientEmailParam = encodeURIComponent(queueItem.lead.email);
 
       call = await twilioClient.calls.create({
         from: TWILIO_PHONE_NUMBER,
@@ -1225,11 +1232,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
           "Hola, ¿cómo estás?"
         )}&client_name=${encodeURIComponent(
           queueItem.lead.name
-        )}&client_phone=${encodeURIComponent(
-          queueItem.lead.phone
-        )}&client_email=${encodeURIComponent(
-          queueItem.lead.email
-        )}&client_id=${encodeURIComponent(
+        )}&client_phone=${clientPhoneParam}&client_email=${clientEmailParam}&client_id=${encodeURIComponent(
           queueItem.lead_id
         )}&fecha=${encodeURIComponent(fecha)}&dia_semana=${encodeURIComponent(
           dia_semana
@@ -1239,7 +1242,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
           agentName
         )}&assistant_name=${encodeURIComponent(
           userData.assistant_name
-        )}&calendar_availability=${availabilityParam}`,
+        )}&calendar_availability=${availabilityParam}&calendar_timezone=${timezoneParam}`,
         statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
         statusCallbackEvent: ["completed"],
         statusCallbackMethod: "POST",
@@ -1463,6 +1466,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     agent_name,
     assistant_name,
     calendar_availability,
+    calendar_timezone,
   } = request.query;
 
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
@@ -1482,6 +1486,9 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
           <Parameter name="assistant_name" value="${assistant_name}" />
           <Parameter name="calendar_availability" value="${
             calendar_availability || "Disponible todos los dias"
+          }" />
+          <Parameter name="calendar_timezone" value="${
+            calendar_timezone || "America/New_York"
           }" />
         </Stream>
       </Connect>
@@ -1548,6 +1555,8 @@ fastify.register(async (fastifyInstance) => {
                 calendar_availability:
                   customParameters?.calendar_availability ||
                   "Disponible todos los dias",
+                calendar_timezone:
+                  customParameters?.calendar_timezone || "America/New_York",
               },
               usage: {
                 no_ip_reason: "user_ip_not_collected",
@@ -1566,6 +1575,18 @@ fastify.register(async (fastifyInstance) => {
             console.log(
               "📅 [ElevenLabs] calendar_availability value:",
               initialConfig.dynamic_variables.calendar_availability
+            );
+            console.log(
+              "🌍 [ElevenLabs] calendar_timezone value:",
+              initialConfig.dynamic_variables.calendar_timezone
+            );
+            console.log(
+              "📞 [ElevenLabs] client_phone value:",
+              initialConfig.dynamic_variables.client_phone
+            );
+            console.log(
+              "📧 [ElevenLabs] client_email value:",
+              initialConfig.dynamic_variables.client_email
             );
             console.log(
               "📋 [ElevenLabs] Full dynamic_variables:",
@@ -2514,6 +2535,383 @@ fastify.post("/webhook/elevenlabs/test", async (request, reply) => {
     timestamp: new Date().toISOString(),
     server: "code-production",
   });
+});
+
+// API Integration endpoints for leads
+fastify.post("/api/integration/leads", async (request, reply) => {
+  try {
+    console.log("📞 [API] POST /api/integration/leads - Creating lead");
+
+    // Obtener API key del header
+    const apiKey =
+      request.headers["x-api-key"] ||
+      request.headers.authorization?.replace("Bearer ", "");
+
+    if (!apiKey) {
+      return reply.code(401).send({
+        error: "API key requerida",
+        message:
+          "Incluye tu API key en el header: x-api-key o Authorization: Bearer <api_key>",
+      });
+    }
+
+    // Validar API key
+    const { data: apiKeyData, error: apiKeyError } = await supabase
+      .from("api_keys")
+      .select("user_id, is_active")
+      .eq("api_key", apiKey)
+      .single();
+
+    if (apiKeyError || !apiKeyData || !apiKeyData.is_active) {
+      return reply.code(401).send({
+        error: "API key inválida o inactiva",
+        message: "Verifica que tu API key sea correcta y esté activa",
+      });
+    }
+
+    const userId = apiKeyData.user_id;
+
+    // Obtener datos del body
+    const body = request.body;
+
+    // Verificar si es un array (creación masiva) o un objeto (creación individual)
+    const isBulkOperation = Array.isArray(body);
+    const leadsData = isBulkOperation ? body : [body];
+
+    // Validar límite de leads por petición
+    if (leadsData.length > 100) {
+      return reply.code(400).send({
+        error: "Demasiados leads",
+        message:
+          "Máximo 100 leads por petición. Divide tu lote en peticiones más pequeñas.",
+      });
+    }
+
+    // Validar y procesar cada lead
+    const processedLeads = [];
+    const errors = [];
+
+    for (let i = 0; i < leadsData.length; i++) {
+      const leadData = leadsData[i];
+      const {
+        name,
+        phone,
+        email,
+        auto_call = false,
+        source = "api",
+        notes,
+        external_id,
+      } = leadData;
+
+      // Validar campos requeridos
+      if (!name || !phone || !email) {
+        errors.push({
+          index: i,
+          error: "Campos requeridos faltantes",
+          message: "name, phone y email son campos obligatorios",
+        });
+        continue;
+      }
+
+      // Validar formato de teléfono
+      const cleanPhone = phone.replace(/[\s\-\(\)]/g, "");
+      if (!/^\d{7,15}$/.test(cleanPhone)) {
+        errors.push({
+          index: i,
+          error: "Teléfono inválido",
+          message: "El teléfono debe tener entre 7 y 15 dígitos",
+        });
+        continue;
+      }
+
+      // Validar formato de email
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        errors.push({
+          index: i,
+          error: "Email inválido",
+          message: "El formato del email no es válido",
+        });
+        continue;
+      }
+
+      // Limpiar y formatear el teléfono
+      const formattedPhone = cleanPhone.startsWith("+")
+        ? cleanPhone
+        : `+${cleanPhone}`;
+
+      processedLeads.push({
+        index: i,
+        data: {
+          name,
+          phone: formattedPhone,
+          email,
+          auto_call,
+          source,
+          notes: notes || null,
+          external_id: external_id || null,
+        },
+      });
+    }
+
+    // Si hay errores de validación, retornarlos
+    if (errors.length > 0) {
+      return reply.code(400).send({
+        error: "Errores de validación",
+        errors,
+        message: `${errors.length} lead(s) con errores de validación`,
+      });
+    }
+
+    // Procesar leads en lotes para mejor rendimiento
+    const results = [];
+    const batchSize = 10;
+
+    for (let i = 0; i < processedLeads.length; i += batchSize) {
+      const batch = processedLeads.slice(i, i + batchSize);
+
+      const batchResults = await Promise.all(
+        batch.map(async ({ index, data }) => {
+          try {
+            // Buscar lead existente por external_id o email
+            let existingLead = null;
+
+            if (data.external_id) {
+              const { data: externalLead } = await supabase
+                .from("leads")
+                .select("id")
+                .eq("user_id", userId)
+                .eq("external_id", data.external_id)
+                .maybeSingle();
+
+              existingLead = externalLead;
+            }
+
+            if (!existingLead) {
+              const { data: emailLead } = await supabase
+                .from("leads")
+                .select("id")
+                .eq("user_id", userId)
+                .eq("email", data.email)
+                .maybeSingle();
+
+              existingLead = emailLead;
+            }
+
+            if (existingLead) {
+              // Actualizar lead existente
+              const { data: updatedLead, error: updateError } = await supabase
+                .from("leads")
+                .update({
+                  name: data.name,
+                  phone: data.phone,
+                  auto_call: data.auto_call,
+                  source: data.source,
+                  notes: data.notes,
+                  external_id: data.external_id,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", existingLead.id)
+                .select()
+                .single();
+
+              if (updateError) {
+                return {
+                  index,
+                  success: false,
+                  error: "Error al actualizar lead existente",
+                  details: updateError.message,
+                };
+              }
+
+              return {
+                index,
+                success: true,
+                data: updatedLead,
+                action: "updated",
+              };
+            } else {
+              // Crear nuevo lead
+              const { data: newLead, error: insertError } = await supabase
+                .from("leads")
+                .insert({
+                  user_id: userId,
+                  name: data.name,
+                  phone: data.phone,
+                  email: data.email,
+                  auto_call: data.auto_call,
+                  source: data.source,
+                  notes: data.notes,
+                  external_id: data.external_id,
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                })
+                .select()
+                .single();
+
+              if (insertError) {
+                return {
+                  index,
+                  success: false,
+                  error: "Error al crear lead",
+                  details: insertError.message,
+                };
+              }
+
+              return {
+                index,
+                success: true,
+                data: newLead,
+                action: "created",
+              };
+            }
+          } catch (error) {
+            return {
+              index,
+              success: false,
+              error: "Error inesperado",
+              details:
+                error instanceof Error ? error.message : "Error desconocido",
+            };
+          }
+        })
+      );
+
+      results.push(...batchResults);
+    }
+
+    // Preparar respuesta
+    const successfulLeads = results.filter((r) => r.success);
+    const failedLeads = results.filter((r) => !r.success);
+
+    if (isBulkOperation) {
+      return reply.send({
+        success: true,
+        message: `Procesamiento completado. ${successfulLeads.length} exitosos, ${failedLeads.length} errores`,
+        data: {
+          total: leadsData.length,
+          successful: successfulLeads.length,
+          failed: failedLeads.length,
+          results: results,
+        },
+      });
+    } else {
+      const result = results[0];
+      if (result.success) {
+        return reply.send({
+          success: true,
+          message: "Lead creado exitosamente",
+          data: result.data,
+        });
+      } else {
+        return reply.code(400).send({
+          success: false,
+          error: result.error,
+          message: result.details,
+        });
+      }
+    }
+  } catch (error) {
+    console.error("❌ [API] Error en POST /api/integration/leads:", error);
+    return reply.code(500).send({
+      error: "Error interno del servidor",
+      message: "Error inesperado al procesar la petición",
+    });
+  }
+});
+
+fastify.get("/api/integration/leads", async (request, reply) => {
+  try {
+    console.log("📞 [API] GET /api/integration/leads - Getting leads");
+
+    // Obtener API key del header
+    const apiKey =
+      request.headers["x-api-key"] ||
+      request.headers.authorization?.replace("Bearer ", "");
+
+    if (!apiKey) {
+      return reply.code(401).send({
+        error: "API key requerida",
+        message:
+          "Incluye tu API key en el header: x-api-key o Authorization: Bearer <api_key>",
+      });
+    }
+
+    // Validar API key
+    const { data: apiKeyData, error: apiKeyError } = await supabase
+      .from("api_keys")
+      .select("user_id, is_active")
+      .eq("api_key", apiKey)
+      .single();
+
+    if (apiKeyError || !apiKeyData || !apiKeyData.is_active) {
+      return reply.code(401).send({
+        error: "API key inválida o inactiva",
+        message: "Verifica que tu API key sea correcta y esté activa",
+      });
+    }
+
+    const userId = apiKeyData.user_id;
+
+    // Obtener parámetros de consulta
+    const page = parseInt(request.query.page || "1");
+    const limit = Math.min(parseInt(request.query.limit || "10"), 100);
+    const search = request.query.search || "";
+    const source = request.query.source || "";
+    const externalId = request.query.external_id || "";
+
+    // Construir consulta
+    let query = supabase
+      .from("leads")
+      .select("*", { count: "exact" })
+      .eq("user_id", userId);
+
+    // Aplicar filtros
+    if (search) {
+      query = query.or(
+        `name.ilike.%${search}%,phone.ilike.%${search}%,email.ilike.%${search}%`
+      );
+    }
+    if (source) {
+      query = query.eq("source", source);
+    }
+    if (externalId) {
+      query = query.eq("external_id", externalId);
+    }
+
+    // Aplicar paginación
+    const offset = (page - 1) * limit;
+    query = query
+      .range(offset, offset + limit - 1)
+      .order("created_at", { ascending: false });
+
+    const { data: leads, error, count } = await query;
+
+    if (error) {
+      return reply.code(500).send({
+        error: "Error al obtener leads",
+        message: error.message,
+      });
+    }
+
+    return reply.send({
+      success: true,
+      data: {
+        leads: leads || [],
+        pagination: {
+          page,
+          limit,
+          total: count || 0,
+          total_pages: Math.ceil((count || 0) / limit),
+        },
+      },
+    });
+  } catch (error) {
+    console.error("❌ [API] Error en GET /api/integration/leads:", error);
+    return reply.code(500).send({
+      error: "Error interno del servidor",
+      message: "Error inesperado al obtener leads",
+    });
+  }
 });
 
 // Start the server
