@@ -2532,6 +2532,26 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
         } else {
           console.log("✅ Call updated with OpenAI analysis");
         }
+
+        // 🔍 CHECK FOR SCHEDULED CALL IN SUMMARY
+        console.log("📅 [CALENDAR] Checking for scheduled call in summary...");
+        try {
+          const scheduledCallInfo = await checkForScheduledCall(
+            webhookData,
+            call
+          );
+
+          if (scheduledCallInfo) {
+            console.log(
+              "✅ [CALENDAR] Scheduled call detected, creating calendar event"
+            );
+            await createCalendarEvent(scheduledCallInfo, call);
+          } else {
+            console.log("ℹ️ [CALENDAR] No scheduled call detected in summary");
+          }
+        } catch (calendarError) {
+          console.error("❌ Error processing calendar event:", calendarError);
+        }
       }
     } catch (openAIError) {
       console.error("❌ Error analyzing call with OpenAI:", openAIError);
@@ -2568,34 +2588,35 @@ async function analyzeCallWithOpenAI(webhookData, call) {
 
     // Prepare analysis prompt
     const analysisPrompt = `
-Eres un experto en Identificar clientes potenciales y agendar citas. Analiza conversaciones con clientes potenciales interesados en invesrsiones inmobiliarias y proporciona insights valiosos en formato JSON.
-RESUMEN DE LA LLAMADA:
-${analysis?.transcript_summary}
+Analiza la siguiente conversación de ventas inmobiliarias y proporciona un análisis detallado:
+
+CONVERSACIÓN:
+${fullTranscript}
+
 METADATOS DE LA LLAMADA:
-- Éxito de la llamada si se logro agendar la cita: ${
-      analysis?.call_successful ? "Sí" : "No"
-    }
-Por favor proporciona un análisis de la llamada que incluya:
-1. INTERÉS DEL CLIENTE:
- (Alto/Medio/Bajo)
-2. OBJECIONES IDENTIFICADAS
-3. SIGUIENTES PASOS RECOMENDADOS:
- En caso de llamada incompleta, indica que se debe volver a llamar. Si se agendo cita, indica enviar convocatoria con fecha y hora de la cita.
-4. CITA AGENDADA:
-- Fecha
-- Hora
-- Nombre del cliente
-- Teléfono del cliente
-- Email del cliente
+- Duración: ${metadata?.call_duration_secs || 0} segundos
+- Turnos de conversación: ${transcript?.length || 0}
+- Éxito de la llamada: ${analysis?.call_successful ? "Sí" : "No"}
+
+Por favor proporciona un análisis estructurado que incluya:
+
+1. RESUMEN EJECUTIVO (2-3 oraciones)
+2. PUNTOS CLAVE DE LA CONVERSACIÓN
+3. INTERÉS DEL CLIENTE (Alto/Medio/Bajo)
+4. OBJECIONES IDENTIFICADAS
+5. SIGUIENTES PASOS RECOMENDADOS
+6. CALIFICACIÓN DE LA OPORTUNIDAD (1-10)
+7. OBSERVACIONES ADICIONALES
+
 Responde en formato JSON con la siguiente estructura:
 {
+  "resumen_ejecutivo": "string",
+  "puntos_clave": ["string"],
   "interes_cliente": "Alto/Medio/Bajo",
   "objeciones": ["string"],
   "siguientes_pasos": ["string"],
-  "cita_agendada": {
-    "fecha": "string",
-    "hora": "string"
-  }
+  "calificacion_oportunidad": number,
+  "observaciones": "string"
 }
 `;
 
@@ -2614,7 +2635,7 @@ Responde en formato JSON con la siguiente estructura:
             {
               role: "system",
               content:
-                "Eres un experto en identificar clientes potenciales y agendar citas. Analiza conversaciones con clientes potenciales interesados en invesrsiones inmobiliarias y proporciona insights valiosos en formato JSON.",
+                "Eres un analista experto en ventas inmobiliarias. Analiza conversaciones de ventas y proporciona insights valiosos en formato JSON.",
             },
             {
               role: "user",
@@ -2760,3 +2781,348 @@ const start = async () => {
 };
 
 start();
+
+// Function to check for scheduled call in ElevenLabs summary
+async function checkForScheduledCall(webhookData, call) {
+  try {
+    console.log(
+      "🔍 [CALENDAR] Analyzing ElevenLabs transcript summary for scheduled call..."
+    );
+
+    // Get the transcript summary from ElevenLabs
+    const summary = webhookData.data.analysis?.transcript_summary || "";
+    console.log(
+      "📄 [CALENDAR] ElevenLabs transcript summary to analyze:",
+      summary
+    );
+
+    if (!summary || summary.trim() === "") {
+      console.log("ℹ️ [CALENDAR] No transcript summary available");
+      return null;
+    }
+
+    // Check if summary contains scheduling keywords
+    const schedulingKeywords = [
+      "scheduled a call",
+      "programó una llamada",
+      "agendó una llamada",
+      "scheduled for",
+      "programado para",
+      "agendado para",
+      "confirmed the time",
+      "confirmó la hora",
+      "confirmed for",
+      "confirmó para",
+      "set up a call",
+      "programó una cita",
+      "agendó una cita",
+      "booked a call",
+      "reservó una llamada",
+    ];
+
+    const hasSchedulingKeywords = schedulingKeywords.some((keyword) =>
+      summary.toLowerCase().includes(keyword.toLowerCase())
+    );
+
+    if (!hasSchedulingKeywords) {
+      console.log(
+        "ℹ️ [CALENDAR] No scheduling keywords found in transcript summary"
+      );
+      return null;
+    }
+
+    console.log(
+      "✅ [CALENDAR] Scheduling keywords detected in transcript summary, extracting date and time..."
+    );
+
+    // Extract date and time using OpenAI from the transcript summary
+    const dateTimeInfo = await extractDateTimeFromSummary(summary);
+
+    if (dateTimeInfo) {
+      console.log(
+        "✅ [CALENDAR] Date and time extracted from transcript summary:",
+        dateTimeInfo
+      );
+
+      // Get lead information
+      const { data: lead, error: leadError } = await supabase
+        .from("leads")
+        .select("name, phone, email")
+        .eq("id", call.lead_id)
+        .single();
+
+      if (leadError || !lead) {
+        console.error("❌ [CALENDAR] Error fetching lead:", leadError);
+        return null;
+      }
+
+      return {
+        ...dateTimeInfo,
+        lead: lead,
+        call: call,
+        summary: summary,
+      };
+    }
+
+    return null;
+  } catch (error) {
+    console.error("❌ [CALENDAR] Error checking for scheduled call:", error);
+    return null;
+  }
+}
+
+// Function to extract date and time from summary using OpenAI
+async function extractDateTimeFromSummary(summary) {
+  try {
+    console.log("🤖 [OPENAI] Extracting date and time from summary...");
+
+    const extractionPrompt = `
+Extrae la fecha y hora de la siguiente conversación de programación de llamada:
+
+TEXTO: "${summary}"
+
+Extrae la información en formato JSON con la siguiente estructura:
+{
+  "date": "YYYY-MM-DD",
+  "time": "HH:MM",
+  "timezone": "America/New_York",
+  "title": "Llamada con [Nombre del Cliente]",
+  "description": "Llamada programada desde conversación telefónica",
+  "attendees": ["email_del_cliente@ejemplo.com"]
+}
+
+Si no puedes extraer una fecha y hora válida, devuelve null.
+Si la fecha es relativa (ej: "tomorrow", "next Thursday"), conviértela a fecha absoluta.
+`;
+
+    const openAIResponse = await fetch(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "system",
+              content:
+                "Eres un asistente experto en extraer fechas y horas de texto. Responde solo en formato JSON válido.",
+            },
+            {
+              role: "user",
+              content: extractionPrompt,
+            },
+          ],
+          temperature: 0.1,
+          max_tokens: 500,
+        }),
+      }
+    );
+
+    if (!openAIResponse.ok) {
+      throw new Error(
+        `OpenAI API error: ${openAIResponse.status} ${openAIResponse.statusText}`
+      );
+    }
+
+    const openAIData = await openAIResponse.json();
+    const extractionContent = openAIData.choices[0]?.message?.content;
+
+    if (!extractionContent) {
+      throw new Error("No extraction content received from OpenAI");
+    }
+
+    console.log(
+      "📄 [OPENAI] Date/time extraction response:",
+      extractionContent
+    );
+
+    // Parse the extraction result
+    let jsonContent = extractionContent;
+    if (extractionContent.includes("```json")) {
+      const jsonMatch = extractionContent.match(/```json\s*([\s\S]*?)\s*```/);
+      if (jsonMatch && jsonMatch[1]) {
+        jsonContent = jsonMatch[1].trim();
+      }
+    }
+
+    const parsedExtraction = JSON.parse(jsonContent);
+
+    if (parsedExtraction === null) {
+      console.log("ℹ️ [OPENAI] No valid date/time found in summary");
+      return null;
+    }
+
+    console.log(
+      "✅ [OPENAI] Date/time extracted successfully:",
+      parsedExtraction
+    );
+    return parsedExtraction;
+  } catch (error) {
+    console.error("❌ [OPENAI] Error extracting date/time:", error);
+    return null;
+  }
+}
+
+// Function to create calendar event
+async function createCalendarEvent(scheduledCallInfo, call) {
+  try {
+    console.log("📅 [CALENDAR] Creating calendar event...");
+
+    // Get user calendar settings
+    const { data: calendarSettings, error: settingsError } = await supabase
+      .from("user_calendar_settings")
+      .select(
+        "access_token, refresh_token, calendar_enabled, calendar_timezone"
+      )
+      .eq("user_id", call.user_id)
+      .single();
+
+    if (settingsError || !calendarSettings) {
+      console.error(
+        "❌ [CALENDAR] No calendar settings found for user:",
+        call.user_id
+      );
+      return;
+    }
+
+    if (!calendarSettings.calendar_enabled) {
+      console.log("ℹ️ [CALENDAR] Calendar not enabled for user:", call.user_id);
+      return;
+    }
+
+    // Verify and refresh token if needed
+    try {
+      const tokenInfoResponse = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?access_token=${calendarSettings.access_token}`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (!tokenInfoResponse.ok) {
+        console.log("🔄 [CALENDAR] Token expired, refreshing...");
+        const { google } = await import("googleapis");
+        const oauth2Client = new google.auth.OAuth2(
+          process.env.GOOGLE_CLIENT_ID,
+          process.env.GOOGLE_CLIENT_SECRET
+        );
+
+        oauth2Client.setCredentials({
+          access_token: calendarSettings.access_token,
+          refresh_token: calendarSettings.refresh_token,
+        });
+
+        const { credentials } = await oauth2Client.refreshAccessToken();
+
+        if (!credentials.access_token) {
+          console.error("❌ [CALENDAR] Failed to refresh token");
+          return;
+        }
+
+        // Update token in database
+        await supabase
+          .from("user_calendar_settings")
+          .update({
+            access_token: credentials.access_token,
+            refresh_token:
+              credentials.refresh_token || calendarSettings.refresh_token,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("user_id", call.user_id);
+
+        calendarSettings.access_token = credentials.access_token;
+        console.log("✅ [CALENDAR] Token refreshed successfully");
+      }
+    } catch (tokenError) {
+      console.error("❌ [CALENDAR] Error refreshing token:", tokenError);
+      return;
+    }
+
+    // Create calendar event
+    const { google } = await import("googleapis");
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET
+    );
+
+    oauth2Client.setCredentials({
+      access_token: calendarSettings.access_token,
+    });
+
+    const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
+    // Prepare event data
+    const eventDate = new Date(
+      `${scheduledCallInfo.date}T${scheduledCallInfo.time}`
+    );
+    const endDate = new Date(eventDate.getTime() + 30 * 60 * 1000); // 30 minutes duration
+
+    const event = {
+      summary: scheduledCallInfo.title,
+      description: `${scheduledCallInfo.description}\n\nCliente: ${scheduledCallInfo.lead.name}\nTeléfono: ${scheduledCallInfo.lead.phone}\nEmail: ${scheduledCallInfo.lead.email}\n\nResumen de la conversación: ${scheduledCallInfo.summary}`,
+      start: {
+        dateTime: eventDate.toISOString(),
+        timeZone:
+          scheduledCallInfo.timezone ||
+          calendarSettings.calendar_timezone ||
+          "America/New_York",
+      },
+      end: {
+        dateTime: endDate.toISOString(),
+        timeZone:
+          scheduledCallInfo.timezone ||
+          calendarSettings.calendar_timezone ||
+          "America/New_York",
+      },
+      attendees: scheduledCallInfo.attendees
+        ? scheduledCallInfo.attendees.map((email) => ({ email }))
+        : [],
+      reminders: {
+        useDefault: false,
+        overrides: [
+          { method: "email", minutes: 24 * 60 }, // 1 day before
+          { method: "popup", minutes: 15 }, // 15 minutes before
+        ],
+      },
+    };
+
+    console.log("📅 [CALENDAR] Creating event:", {
+      title: event.summary,
+      start: event.start.dateTime,
+      end: event.end.dateTime,
+      attendees: event.attendees.length,
+    });
+
+    const calendarResponse = await calendar.events.insert({
+      calendarId: "primary",
+      resource: event,
+      sendUpdates: "all",
+    });
+
+    console.log("✅ [CALENDAR] Event created successfully:", {
+      eventId: calendarResponse.data.id,
+      htmlLink: calendarResponse.data.htmlLink,
+    });
+
+    // Update call with calendar event info
+    await supabase
+      .from("calls")
+      .update({
+        calendar_event_id: calendarResponse.data.id,
+        calendar_event_link: calendarResponse.data.htmlLink,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("conversation_id", call.conversation_id);
+
+    console.log("✅ [CALENDAR] Call updated with calendar event info");
+  } catch (error) {
+    console.error("❌ [CALENDAR] Error creating calendar event:", error);
+  }
+}
