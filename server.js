@@ -3222,20 +3222,16 @@ async function createCalendarEvent(scheduledCallInfo, call) {
 
     // Formatear fechas en formato ISO para Google Calendar
     const formatDateForGoogleCalendar = (date, timezone) => {
-      // Convertir a la zona horaria especificada y formatear como ISO
-      const options = {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        timeZone: timezone,
-        hour12: false,
-      };
-
-      const localDate = new Date(date.toLocaleString("en-US", options));
-      return localDate.toISOString().replace(/\.\d{3}Z$/, "");
+      try {
+        // Crear una fecha en la zona horaria especificada
+        const dateStr = date.toLocaleString("sv-SE", { timeZone: timezone });
+        const [datePart, timePart] = dateStr.split(" ");
+        return `${datePart}T${timePart}`;
+      } catch (error) {
+        console.error("❌ [CALENDAR] Error formatting date:", error);
+        // Fallback: usar la fecha original sin conversión de zona horaria
+        return date.toISOString().replace(/\.\d{3}Z$/, "");
+      }
     };
 
     const startDateTime = formatDateForGoogleCalendar(eventDate, userTimeZone);
