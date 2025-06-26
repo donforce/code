@@ -2882,7 +2882,7 @@ Extrae la información en formato JSON con la siguiente estructura:
 {
   "date": "YYYY-MM-DD",
   "time": "HH:MM",
-  "timezone": "America/New_York",
+  "timezone": "America/Mexico_City",
   "title": "Llamada con [Nombre del Cliente]",
   "description": "Llamada programada desde conversación telefónica",
   "attendees": ["email_del_cliente@ejemplo.com"]
@@ -2890,6 +2890,7 @@ Extrae la información en formato JSON con la siguiente estructura:
 
 Si no puedes extraer una fecha y hora válida, devuelve null.
 Si la fecha es relativa (ej: "tomorrow", "next Thursday"), conviértela a fecha absoluta.
+Usa "America/Mexico_City" como zona horaria por defecto a menos que se especifique otra en la conversación.
 `;
 
     const openAIResponse = await fetch(
@@ -3055,28 +3056,50 @@ async function createCalendarEvent(scheduledCallInfo, call) {
 
     const calendar = google.calendar({ version: "v3", auth: oauth2Client });
 
-    // Prepare event data
+    // Get user timezone (default to America/Mexico_City if not specified)
+    const userTimeZone =
+      scheduledCallInfo.timezone ||
+      calendarSettings.calendar_timezone ||
+      "America/Mexico_City";
+
+    console.log("🔍 [CALENDAR] User timezone:", userTimeZone);
+
+    // Create date objects in the user's timezone and convert to the correct format
+    // We need to create the date in the user's timezone and then format it properly
     const eventDate = new Date(
       `${scheduledCallInfo.date}T${scheduledCallInfo.time}`
     );
     const endDate = new Date(eventDate.getTime() + 30 * 60 * 1000); // 30 minutes duration
 
+    // Format dates in the user's timezone for Google Calendar
+    const formatDateInTimezone = (date, timezone) => {
+      return date
+        .toLocaleString("sv-SE", { timeZone: timezone })
+        .replace(" ", "T")
+        .replace(/\.\d+$/, "");
+    };
+
+    const startDateTime = formatDateInTimezone(eventDate, userTimeZone);
+    const endDateTime = formatDateInTimezone(endDate, userTimeZone);
+
+    console.log("🔍 [CALENDAR] Date calculations:", {
+      originalDate: `${scheduledCallInfo.date}T${scheduledCallInfo.time}`,
+      eventDateLocal: eventDate.toString(),
+      startDateTimeFormatted: startDateTime,
+      endDateTimeFormatted: endDateTime,
+      timezone: userTimeZone,
+    });
+
     const event = {
       summary: scheduledCallInfo.title,
       description: `${scheduledCallInfo.description}\n\nCliente: ${scheduledCallInfo.lead.name}\nTeléfono: ${scheduledCallInfo.lead.phone}\nEmail: ${scheduledCallInfo.lead.email}\n\nResumen de la conversación: ${scheduledCallInfo.summary}`,
       start: {
-        dateTime: eventDate.toISOString(),
-        timeZone:
-          scheduledCallInfo.timezone ||
-          calendarSettings.calendar_timezone ||
-          "America/New_York",
+        dateTime: startDateTime,
+        timeZone: userTimeZone,
       },
       end: {
-        dateTime: endDate.toISOString(),
-        timeZone:
-          scheduledCallInfo.timezone ||
-          calendarSettings.calendar_timezone ||
-          "America/New_York",
+        dateTime: endDateTime,
+        timeZone: userTimeZone,
       },
       attendees: scheduledCallInfo.attendees
         ? scheduledCallInfo.attendees.map((email) => ({ email }))
@@ -3094,6 +3117,7 @@ async function createCalendarEvent(scheduledCallInfo, call) {
       title: event.summary,
       start: event.start.dateTime,
       end: event.end.dateTime,
+      timezone: userTimeZone,
       attendees: event.attendees.length,
     });
 
@@ -3106,6 +3130,8 @@ async function createCalendarEvent(scheduledCallInfo, call) {
     console.log("✅ [CALENDAR] Event created successfully:", {
       eventId: calendarResponse.data.id,
       htmlLink: calendarResponse.data.htmlLink,
+      start: calendarResponse.data.start,
+      end: calendarResponse.data.end,
     });
 
     // Update call with calendar event info
