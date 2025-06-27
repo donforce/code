@@ -1748,21 +1748,27 @@ fastify.register(async (fastifyInstance) => {
                     console.log(
                       "🛑 [INTERRUPTION] Agent interrupted successfully"
                     );
-
+                    // Detener audio de Twilio y reanudar después
+                    //await stopTwilioAudio(callSid);
+                    //resumeTwilioCall(callSid, 1000);
                     break;
 
                   case "interruption_detected":
                     console.log(
                       "🚨 [INTERRUPTION] Interruption event received"
                     );
-                    ws.send(JSON.stringify({ event: "stop_audio" }));
+                    // Detener audio de Twilio y reanudar después
+                    // await stopTwilioAudio(callSid);
+                    // resumeTwilioCall(callSid, 1000);
                     break;
 
                   case "interruption":
                     console.log(
                       "🚨 [INTERRUPTION] Interruption event received"
                     );
-                    ws.send(JSON.stringify({ event: "stop_audio" }));
+                    // Detener audio de Twilio y reanudar después
+                    await stopTwilioAudio(callSid);
+                    resumeTwilioCall(callSid, 1000);
                     break;
 
                   case "conversation_resumed":
@@ -3752,3 +3758,79 @@ async function createCalendarEvent(scheduledCallInfo, call) {
     console.error("❌ [CALENDAR] Error creating calendar event:", error);
   }
 }
+
+// Función para detener el audio actual de Twilio
+const stopTwilioAudio = async (callSid) => {
+  if (!callSid) return;
+  try {
+    await twilioClient.calls(callSid).update({
+      url: `https://${RAILWAY_PUBLIC_DOMAIN}/twiml/stop-audio`,
+      method: "POST",
+    });
+    console.log(`🛑 [TWILIO] Audio detenido para callSid: ${callSid}`);
+  } catch (err) {
+    console.error("❌ [TWILIO] Error deteniendo audio:", err);
+  }
+};
+
+// Función para reanudar la llamada después de pausa
+const resumeTwilioCall = async (callSid, delayMs = 1000) => {
+  if (!callSid) return;
+  setTimeout(async () => {
+    try {
+      await twilioClient.calls(callSid).update({
+        url: `https://${RAILWAY_PUBLIC_DOMAIN}/twiml/resume`,
+        method: "POST",
+      });
+      console.log(`🔄 [TWILIO] Llamada reanudada para callSid: ${callSid}`);
+    } catch (err) {
+      console.error("❌ [TWILIO] Error reanudando llamada:", err);
+    }
+  }, delayMs);
+};
+
+// Add test endpoint for webhook debugging
+fastify.get("/webhook/elevenlabs/test", async (request, reply) => {
+  console.log("🧪 [WEBHOOK TEST] Test endpoint accessed");
+  return reply.send({
+    status: "ok",
+    message: "Webhook endpoint is accessible",
+    timestamp: new Date().toISOString(),
+    server: "code-production",
+  });
+});
+
+// Add POST test endpoint for webhook debugging
+fastify.post("/webhook/elevenlabs/test", async (request, reply) => {
+  console.log("🧪 [WEBHOOK TEST] POST test endpoint accessed");
+  console.log("📋 Headers:", request.headers);
+  console.log("📄 Body:", request.body);
+  return reply.send({
+    status: "ok",
+    message: "Webhook POST endpoint is accessible",
+    received_data: request.body,
+    timestamp: new Date().toISOString(),
+    server: "code-production",
+  });
+});
+
+// TwiML endpoint para pausar y cortar audio actual
+fastify.post("/twiml/stop-audio", async (request, reply) => {
+  console.log("🛑 [TWIML] Stop audio endpoint called");
+  const VoiceResponse = Twilio.twiml.VoiceResponse;
+  const twiml = new VoiceResponse();
+  twiml.pause({ length: 1 });
+  reply.type("text/xml").send(twiml.toString());
+});
+
+// TwiML endpoint para reanudar <Stream>
+fastify.post("/twiml/resume", async (request, reply) => {
+  console.log("🔄 [TWIML] Resume endpoint called");
+  const VoiceResponse = Twilio.twiml.VoiceResponse;
+  const twiml = new VoiceResponse();
+  twiml.stream({
+    url: `wss://${RAILWAY_PUBLIC_DOMAIN}/outbound-media-stream`,
+    name: "media-stream",
+  });
+  reply.type("text/xml").send(twiml.toString());
+});
