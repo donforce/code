@@ -2963,10 +2963,25 @@ start();
 // Function to check for scheduled call in ElevenLabs summary
 async function checkForScheduledCall(webhookData, call) {
   try {
+    console.log(
+      "🔍 [CALENDAR] ===== INICIO DE BÚSQUEDA DE LLAMADA PROGRAMADA ====="
+    );
+    console.log("📞 [CALENDAR] Call SID:", call.call_sid);
+    console.log("👤 [CALENDAR] User ID:", call.user_id);
+    console.log("📋 [CALENDAR] Lead ID:", call.lead_id);
+
     // Get the transcript summary from ElevenLabs
     const summary = webhookData.data.analysis?.transcript_summary || "";
+    console.log("📄 [CALENDAR] Summary length:", summary.length);
+    console.log(
+      "📄 [CALENDAR] Summary preview:",
+      summary.substring(0, 200) + (summary.length > 200 ? "..." : "")
+    );
 
     if (!summary || summary.trim() === "") {
+      console.log(
+        "❌ [CALENDAR] No summary available - skipping calendar check"
+      );
       return null;
     }
 
@@ -2989,18 +3004,37 @@ async function checkForScheduledCall(webhookData, call) {
       "reservó una llamada",
     ];
 
-    const hasSchedulingKeywords = schedulingKeywords.some((keyword) =>
-      summary.toLowerCase().includes(keyword.toLowerCase())
-    );
+    console.log("🔍 [CALENDAR] Checking for scheduling keywords...");
+    const foundKeywords = [];
 
-    if (!hasSchedulingKeywords) {
+    schedulingKeywords.forEach((keyword) => {
+      if (summary.toLowerCase().includes(keyword.toLowerCase())) {
+        foundKeywords.push(keyword);
+      }
+    });
+
+    console.log("🎯 [CALENDAR] Found keywords:", foundKeywords);
+
+    if (foundKeywords.length === 0) {
+      console.log(
+        "❌ [CALENDAR] No scheduling keywords found - skipping calendar check"
+      );
       return null;
     }
 
-    // Extract date and time using OpenAI from the transcript summary
+    console.log(
+      "✅ [CALENDAR] Scheduling keywords detected - proceeding with date/time extraction"
+    );
+
+    // Extract date and time using direct text parsing
     const dateTimeInfo = await extractDateTimeFromSummary(summary);
 
     if (dateTimeInfo) {
+      console.log(
+        "✅ [CALENDAR] Date/time extracted successfully:",
+        dateTimeInfo
+      );
+
       // Get lead information
       const { data: lead, error: leadError } = await supabase
         .from("leads")
@@ -3013,17 +3047,44 @@ async function checkForScheduledCall(webhookData, call) {
         return null;
       }
 
-      return {
+      console.log("✅ [CALENDAR] Lead information retrieved:", {
+        name: lead.name,
+        phone: lead.phone,
+        email: lead.email,
+      });
+
+      const result = {
         ...dateTimeInfo,
         lead: lead,
         call: call,
         summary: summary,
       };
+
+      console.log("🎉 [CALENDAR] ===== FINAL RESULT =====");
+      console.log("📅 [CALENDAR] Date:", result.date);
+      console.log("⏰ [CALENDAR] Time:", result.time);
+      console.log("🌍 [CALENDAR] Timezone:", result.timezone);
+      console.log("👤 [CALENDAR] Lead:", result.lead.name);
+      console.log("📞 [CALENDAR] Phone:", result.lead.phone);
+      console.log("📧 [CALENDAR] Email:", result.lead.email);
+      console.log(
+        "🔍 [CALENDAR] ===== FIN DE BÚSQUEDA DE LLAMADA PROGRAMADA ====="
+      );
+
+      return result;
+    } else {
+      console.log("❌ [CALENDAR] Could not extract date/time from summary");
+      console.log(
+        "🔍 [CALENDAR] ===== FIN DE BÚSQUEDA DE LLAMADA PROGRAMADA ====="
+      );
     }
 
     return null;
   } catch (error) {
     console.error("❌ [CALENDAR] Error checking for scheduled call:", error);
+    console.log(
+      "🔍 [CALENDAR] ===== FIN DE BÚSQUEDA DE LLAMADA PROGRAMADA (ERROR) ====="
+    );
     return null;
   }
 }
@@ -3032,16 +3093,20 @@ async function checkForScheduledCall(webhookData, call) {
 async function extractDateTimeFromSummary(summary) {
   try {
     console.log(
-      "🔍 [CALENDAR] Extracting date and time directly from summary..."
+      "🔍 [CALENDAR][EXTRACT] ===== INICIO DE EXTRACCIÓN DE FECHA/HORA ====="
     );
-    console.log("📄 [CALENDAR] Summary to analyze:", summary);
+    console.log("📄 [CALENDAR][EXTRACT] Summary to analyze:", summary);
 
     if (!summary || summary.trim() === "") {
-      console.log("ℹ️ [CALENDAR] No summary available");
+      console.log("❌ [CALENDAR][EXTRACT] No summary available");
       return null;
     }
 
     const text = summary.toLowerCase();
+    console.log(
+      "📝 [CALENDAR][EXTRACT] Normalized text (first 300 chars):",
+      text.substring(0, 300)
+    );
 
     // Patterns for date extraction
     const datePatterns = [
@@ -3097,20 +3162,33 @@ async function extractDateTimeFromSummary(summary) {
     let extractedDate = null;
     let extractedTime = null;
 
+    console.log("🔍 [CALENDAR][EXTRACT] Searching for date patterns...");
+
     // Extract date
     for (const datePattern of datePatterns) {
       const matches = [...text.matchAll(datePattern.pattern)];
       if (matches.length > 0) {
         const match = matches[0];
         console.log(
-          `📅 [CALENDAR] Date pattern found: ${datePattern.type}`,
+          `📅 [CALENDAR][EXTRACT] Date pattern found: ${datePattern.type}`,
           match
         );
 
         extractedDate = parseDateFromMatch(match, datePattern.type);
-        if (extractedDate) break;
+        if (extractedDate) {
+          console.log(
+            `✅ [CALENDAR][EXTRACT] Date extracted: ${extractedDate}`
+          );
+          break;
+        } else {
+          console.log(
+            `❌ [CALENDAR][EXTRACT] Failed to parse date from pattern: ${datePattern.type}`
+          );
+        }
       }
     }
+
+    console.log("🔍 [CALENDAR][EXTRACT] Searching for time patterns...");
 
     // Extract time
     for (const timePattern of timePatterns) {
@@ -3118,30 +3196,45 @@ async function extractDateTimeFromSummary(summary) {
       if (matches.length > 0) {
         const match = matches[0];
         console.log(
-          `⏰ [CALENDAR] Time pattern found: ${timePattern.type}`,
+          `⏰ [CALENDAR][EXTRACT] Time pattern found: ${timePattern.type}`,
           match
         );
 
         extractedTime = parseTimeFromMatch(match, timePattern.type);
-        if (extractedTime) break;
+        if (extractedTime) {
+          console.log(
+            `✅ [CALENDAR][EXTRACT] Time extracted: ${extractedTime}`
+          );
+          break;
+        } else {
+          console.log(
+            `❌ [CALENDAR][EXTRACT] Failed to parse time from pattern: ${timePattern.type}`
+          );
+        }
       }
     }
 
     if (!extractedDate || !extractedTime) {
       console.log(
-        "ℹ️ [CALENDAR] Could not extract complete date/time information"
+        "❌ [CALENDAR][EXTRACT] Could not extract complete date/time information"
       );
-      console.log("📅 Extracted date:", extractedDate);
-      console.log("⏰ Extracted time:", extractedTime);
+      console.log("📅 [CALENDAR][EXTRACT] Extracted date:", extractedDate);
+      console.log("⏰ [CALENDAR][EXTRACT] Extracted time:", extractedTime);
+      console.log(
+        "🔍 [CALENDAR][EXTRACT] ===== FIN DE EXTRACCIÓN DE FECHA/HORA (INCOMPLETA) ====="
+      );
       return null;
     }
 
-    console.log("✅ [CALENDAR] Successfully extracted date and time:", {
-      date: extractedDate,
-      time: extractedTime,
-    });
+    console.log(
+      "✅ [CALENDAR][EXTRACT] Successfully extracted date and time:",
+      {
+        date: extractedDate,
+        time: extractedTime,
+      }
+    );
 
-    return {
+    const result = {
       date: extractedDate,
       time: extractedTime,
       timezone: "America/New_York",
@@ -3149,8 +3242,21 @@ async function extractDateTimeFromSummary(summary) {
       description: "Llamada programada desde conversación telefónica",
       attendees: [],
     };
+
+    console.log("🎉 [CALENDAR][EXTRACT] ===== RESULTADO FINAL =====");
+    console.log("📅 [CALENDAR][EXTRACT] Date:", result.date);
+    console.log("⏰ [CALENDAR][EXTRACT] Time:", result.time);
+    console.log("🌍 [CALENDAR][EXTRACT] Timezone:", result.timezone);
+    console.log(
+      "🔍 [CALENDAR][EXTRACT] ===== FIN DE EXTRACCIÓN DE FECHA/HORA ====="
+    );
+
+    return result;
   } catch (error) {
-    console.error("❌ [CALENDAR] Error extracting date/time:", error);
+    console.error("❌ [CALENDAR][EXTRACT] Error extracting date/time:", error);
+    console.log(
+      "🔍 [CALENDAR][EXTRACT] ===== FIN DE EXTRACCIÓN DE FECHA/HORA (ERROR) ====="
+    );
     return null;
   }
 }
