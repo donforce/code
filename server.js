@@ -2969,6 +2969,11 @@ async function checkForScheduledCall(webhookData, call) {
     console.log("📞 [CALENDAR] Call SID:", call.call_sid);
     console.log("👤 [CALENDAR] User ID:", call.user_id);
     console.log("📋 [CALENDAR] Lead ID:", call.lead_id);
+    console.log("📊 [CALENDAR] Call Status:", call.status);
+    console.log(
+      "✅ [CALENDAR] Call Successful:",
+      webhookData.data.analysis?.call_successful
+    );
 
     // Get the transcript summary from ElevenLabs
     const summary = webhookData.data.analysis?.transcript_summary || "";
@@ -2985,46 +2990,89 @@ async function checkForScheduledCall(webhookData, call) {
       return null;
     }
 
-    // Check if summary contains scheduling keywords
-    const schedulingKeywords = [
-      "scheduled a call",
-      "programó una llamada",
-      "agendó una llamada",
-      "scheduled for",
-      "programado para",
-      "agendado para",
-      "confirmed the time",
-      "confirmó la hora",
-      "confirmed for",
-      "confirmó para",
-      "set up a call",
-      "programó una cita",
-      "agendó una cita",
-      "booked a call",
-      "reservó una llamada",
-    ];
+    // Check if call was successful (this indicates successful scheduling)
+    const isCallSuccessful =
+      webhookData.data.analysis?.call_successful === true;
+    console.log("🎯 [CALENDAR] Call successful indicator:", isCallSuccessful);
 
-    console.log("🔍 [CALENDAR] Checking for scheduling keywords...");
-    const foundKeywords = [];
-
-    schedulingKeywords.forEach((keyword) => {
-      if (summary.toLowerCase().includes(keyword.toLowerCase())) {
-        foundKeywords.push(keyword);
-      }
-    });
-
-    console.log("🎯 [CALENDAR] Found keywords:", foundKeywords);
-
-    if (foundKeywords.length === 0) {
+    // If call is successful, proceed directly to extract date/time from summary
+    if (isCallSuccessful) {
       console.log(
-        "❌ [CALENDAR] No scheduling keywords found - skipping calendar check"
+        "✅ [CALENDAR] Call marked as successful - proceeding with date/time extraction"
       );
-      return null;
-    }
+    } else {
+      // Only check for scheduling keywords if call is not marked as successful
+      const schedulingKeywords = [
+        "scheduled a call",
+        "programó una llamada",
+        "agendó una llamada",
+        "scheduled for",
+        "programado para",
+        "agendado para",
+        "confirmed the time",
+        "confirmó la hora",
+        "confirmed for",
+        "confirmó para",
+        "set up a call",
+        "programó una cita",
+        "agendó una cita",
+        "booked a call",
+        "reservó una llamada",
+        "scheduled it for",
+        "programó para",
+        "agendó para",
+        "scheduled for",
+        "programado el",
+        "agendado el",
+        "confirmed appointment",
+        "confirmó la cita",
+        "set appointment",
+        "estableció cita",
+        "made appointment",
+        "hizo cita",
+        "booked appointment",
+        "reservó cita",
+        "scheduled appointment",
+        "programó cita",
+        "agendó cita",
+        "scheduled a call for",
+        "programó una llamada para",
+        "agendó una llamada para",
+        "set up a call for",
+        "programó una cita para",
+        "agendó una cita para",
+        "booked a call for",
+        "reservó una llamada para",
+        "made a call for",
+        "hizo una llamada para",
+        "arranged a call for",
+        "organizó una llamada para",
+        "planned a call for",
+        "planificó una llamada para",
+      ];
 
-    console.log(
-      "✅ [CALENDAR] Scheduling keywords detected - proceeding with date/time extraction"
-    );
+      console.log("🔍 [CALENDAR] Checking for scheduling keywords...");
+      const foundKeywords = [];
+
+      schedulingKeywords.forEach((keyword) => {
+        if (summary.toLowerCase().includes(keyword.toLowerCase())) {
+          foundKeywords.push(keyword);
+        }
+      });
+
+      console.log("🎯 [CALENDAR] Found keywords:", foundKeywords);
+
+      if (foundKeywords.length === 0) {
+        console.log(
+          "❌ [CALENDAR] No scheduling keywords found and call not marked as successful - skipping calendar check"
+        );
+        return null;
+      }
+
+      console.log(
+        "✅ [CALENDAR] Scheduling keywords detected - proceeding with date/time extraction"
+      );
+    }
 
     // Extract date and time using direct text parsing
     const dateTimeInfo = await extractDateTimeFromSummary(summary);
