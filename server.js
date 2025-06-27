@@ -1751,6 +1751,13 @@ fastify.register(async (fastifyInstance) => {
 
                     break;
 
+                  case "interruption_detected":
+                    console.log(
+                      "🚨 [INTERRUPTION] Interruption event received"
+                    );
+                    ws.send(JSON.stringify({ event: "stop_audio" }));
+                    break;
+
                   case "interruption":
                     console.log(
                       "🚨 [INTERRUPTION] Interruption event received"
