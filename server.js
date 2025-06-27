@@ -3238,7 +3238,7 @@ async function extractDateTimeFromSummary(summary) {
       date: extractedDate,
       time: extractedTime,
       timezone: "America/New_York",
-      title: "Llamada programada",
+      title: "Llamada inversión inmobiliaria",
       description: "Llamada programada desde conversación telefónica",
       attendees: [],
     };
@@ -3661,7 +3661,7 @@ async function createCalendarEvent(scheduledCallInfo, call) {
 
     const event = {
       summary: scheduledCallInfo.title,
-      description: `${scheduledCallInfo.description}\n\nCliente: ${scheduledCallInfo.lead.name}\nTeléfono: ${scheduledCallInfo.lead.phone}\nEmail: ${scheduledCallInfo.lead.email}\n\nResumen de la conversación: ${scheduledCallInfo.summary}`,
+      description: `${scheduledCallInfo.description}\n\nCliente: ${scheduledCallInfo.lead.name}`,
       start: {
         dateTime: startDateTime,
         timeZone: userTimeZone,
@@ -3675,6 +3675,8 @@ async function createCalendarEvent(scheduledCallInfo, call) {
         useDefault: false,
         overrides: [
           { method: "email", minutes: 24 * 60 }, // 1 day before
+          { method: "email", minutes: 1 * 60 }, // 1 hour before
+          { method: "popup", minutes: 1 * 60 }, // 1 hour before
           { method: "popup", minutes: 15 }, // 15 minutes before
         ],
       },
