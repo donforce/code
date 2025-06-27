@@ -2992,7 +2992,7 @@ async function checkForScheduledCall(webhookData, call) {
 
     // Check if call was successful (this indicates successful scheduling)
     const isCallSuccessful =
-      webhookData.data.analysis?.call_successful === true;
+      webhookData.data.analysis?.call_successful === "success";
     console.log("🎯 [CALENDAR] Call successful indicator:", isCallSuccessful);
 
     // If call is successful, proceed directly to extract date/time from summary
