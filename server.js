@@ -1748,12 +1748,14 @@ fastify.register(async (fastifyInstance) => {
                     console.log(
                       "🛑 [INTERRUPTION] Agent interrupted successfully"
                     );
+
                     break;
 
                   case "interruption":
                     console.log(
                       "🚨 [INTERRUPTION] Interruption event received"
                     );
+                    ws.send(JSON.stringify({ event: "stop_audio" }));
                     break;
 
                   case "conversation_resumed":
