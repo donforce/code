@@ -3606,24 +3606,40 @@ async function createCalendarEvent(scheduledCallInfo, call) {
 
     console.log("🔍 [CALENDAR] User timezone:", userTimeZone);
 
-    // CORREGIDO: Crear fecha correctamente en la zona horaria del usuario
-    // Construir la fecha en la zona horaria del usuario
-    const dateTimeString = `${scheduledCallInfo.date}T${scheduledCallInfo.time}`;
+    const dateTimeString = `${scheduledCallInfo.date}T${scheduledCallInfo.time}:00`;
 
-    // Crear la fecha interpretándola en la zona horaria del usuario
-    const eventDate = new Date(dateTimeString + " " + userTimeZone);
-    const endDate = new Date(eventDate.getTime() + 30 * 60 * 1000); // 30 minutes duration
+    // Descomponer la fecha y hora para evitar ambigüedad con zonas horarias locales
+    const [year, month, day] = scheduledCallInfo.date.split("-").map(Number);
+    const [hour, minute] = scheduledCallInfo.time.split(":").map(Number);
 
-    // Formatear fechas en formato ISO para Google Calendar
+    // Crear la fecha en UTC como base neutral
+    const eventDate = new Date(Date.UTC(year, month - 1, day, hour, minute));
+    const endDate = new Date(eventDate.getTime() + 30 * 60 * 1000); // 30 minutos
+
+    // Formatear fechas en formato ISO ajustado a la zona horaria del usuario
     const formatDateForGoogleCalendar = (date, timezone) => {
       try {
-        // Crear una fecha en la zona horaria especificada
-        const dateStr = date.toLocaleString("sv-SE", { timeZone: timezone });
-        const [datePart, timePart] = dateStr.split(" ");
-        return `${datePart}T${timePart}`;
+        const options = {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+          timeZone: timezone,
+        };
+
+        const formatter = new Intl.DateTimeFormat("en-CA", options);
+        const parts = formatter.formatToParts(date);
+
+        const get = (type) => parts.find((p) => p.type === type)?.value;
+
+        const formatted = `${get("year")}-${get("month")}-${get("day")}T${get(
+          "hour"
+        )}:${get("minute")}:00`;
+        return formatted;
       } catch (error) {
         console.error("❌ [CALENDAR] Error formatting date:", error);
-        // Fallback: usar la fecha original sin conversión de zona horaria
         return date.toISOString().replace(/\.\d{3}Z$/, "");
       }
     };
