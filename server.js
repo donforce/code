@@ -3616,35 +3616,12 @@ async function createCalendarEvent(scheduledCallInfo, call) {
     const endDate = new Date(eventDate.getTime() + 30 * 60 * 1000); // 30 minutos
 
     // Formatear fechas en formato ISO ajustado a la zona horaria del usuario
-    const formatDateForGoogleCalendar = (date, timezone) => {
-      try {
-        const options = {
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: false,
-          timeZone: timezone,
-        };
-
-        const formatter = new Intl.DateTimeFormat("en-CA", options);
-        const parts = formatter.formatToParts(date);
-
-        const get = (type) => parts.find((p) => p.type === type)?.value;
-
-        const formatted = `${get("year")}-${get("month")}-${get("day")}T${get(
-          "hour"
-        )}:${get("minute")}:00`;
-        return formatted;
-      } catch (error) {
-        console.error("❌ [CALENDAR] Error formatting date:", error);
-        return date.toISOString().replace(/\.\d{3}Z$/, "");
-      }
+    const formatDateForGoogleCalendar = (date) => {
+      return date.toISOString();
     };
 
-    const startDateTime = formatDateForGoogleCalendar(eventDate, userTimeZone);
-    const endDateTime = formatDateForGoogleCalendar(endDate, userTimeZone);
+    const startDateTime = formatDateForGoogleCalendar(eventDate);
+    const endDateTime = formatDateForGoogleCalendar(endDate);
 
     console.log("🔍 [CALENDAR] Date calculations:", {
       originalDate: `${scheduledCallInfo.date}T${scheduledCallInfo.time}`,
