@@ -3612,7 +3612,7 @@ async function createCalendarEvent(scheduledCallInfo, call) {
     const [year, month, day] = scheduledCallInfo.date.split("-").map(Number);
     const [hour, minute] = scheduledCallInfo.time.split(":").map(Number);
 
-    const eventDate = new Date(year, month - 1, day, hour, minute);
+    const eventDate = new Date(year, month - 1, day, hour + 4, minute);
     const endDate = new Date(eventDate.getTime() + 30 * 60 * 1000); // 30 minutos
 
     // Formatear fechas en formato ISO ajustado a la zona horaria del usuario
