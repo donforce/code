@@ -3028,89 +3028,377 @@ async function checkForScheduledCall(webhookData, call) {
   }
 }
 
-// Function to extract date and time from summary using OpenAI
+// Function to extract date and time from summary using direct text parsing
 async function extractDateTimeFromSummary(summary) {
   try {
-    const extractionPrompt = `
-Extrae la fecha y hora de la siguiente conversación de programación de llamada:
-
-TEXTO: "${summary}"
-
-Extrae la información en formato JSON con la siguiente estructura:
-{
-  "date": "YYYY-MM-DD",
-  "time": "HH:MM",
-  "timezone": "America/New_York",
-  "title": "Llamada con [Nombre del Cliente]",
-  "description": "Llamada programada desde conversación telefónica",
-  "attendees": ["email_del_cliente@ejemplo.com"]
-}
-
-Si no puedes extraer una fecha y hora válida, devuelve null.
-Si la fecha es relativa (ej: "tomorrow", "next Thursday"), conviértela a fecha absoluta.
-Usa "America/New_York" como zona horaria por defecto a menos que se especifique otra en la conversación.
-`;
-
-    const openAIResponse = await fetch(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [
-            {
-              role: "system",
-              content:
-                "Eres un asistente experto en extraer fechas y horas de texto. Responde solo en formato JSON válido.",
-            },
-            {
-              role: "user",
-              content: extractionPrompt,
-            },
-          ],
-          temperature: 0.1,
-          max_tokens: 500,
-        }),
-      }
+    console.log(
+      "🔍 [CALENDAR] Extracting date and time directly from summary..."
     );
+    console.log("📄 [CALENDAR] Summary to analyze:", summary);
 
-    if (!openAIResponse.ok) {
-      throw new Error(
-        `OpenAI API error: ${openAIResponse.status} ${openAIResponse.statusText}`
-      );
-    }
-
-    const openAIData = await openAIResponse.json();
-    const extractionContent = openAIData.choices[0]?.message?.content;
-
-    if (!extractionContent) {
-      throw new Error("No extraction content received from OpenAI");
-    }
-
-    // Parse the extraction result
-    let jsonContent = extractionContent;
-    if (extractionContent.includes("```json")) {
-      const jsonMatch = extractionContent.match(/```json\s*([\s\S]*?)\s*```/);
-      if (jsonMatch && jsonMatch[1]) {
-        jsonContent = jsonMatch[1].trim();
-      }
-    }
-
-    const parsedExtraction = JSON.parse(jsonContent);
-
-    if (parsedExtraction === null) {
+    if (!summary || summary.trim() === "") {
+      console.log("ℹ️ [CALENDAR] No summary available");
       return null;
     }
 
-    return parsedExtraction;
+    const text = summary.toLowerCase();
+
+    // Patterns for date extraction
+    const datePatterns = [
+      // Specific dates: "Friday", "Monday", etc.
+      {
+        pattern:
+          /(monday|tuesday|wednesday|thursday|friday|saturday|sunday|lunes|martes|miércoles|jueves|viernes|sábado|domingo)/gi,
+        type: "day",
+      },
+      // Tomorrow
+      { pattern: /(tomorrow|mañana)/gi, type: "tomorrow" },
+      // Next day: "next Friday", "next Monday"
+      {
+        pattern:
+          /next\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|lunes|martes|miércoles|jueves|viernes|sábado|domingo)/gi,
+        type: "next_day",
+      },
+      // Specific date formats: "January 15th", "15th of January", "15/01", "01/15"
+      {
+        pattern:
+          /(january|february|march|april|may|june|july|august|september|october|november|december|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(\d{1,2})(?:st|nd|rd|th)?/gi,
+        type: "month_day",
+      },
+      {
+        pattern:
+          /(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(january|february|march|april|may|june|july|august|september|october|november|december|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)/gi,
+        type: "day_month",
+      },
+      { pattern: /(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/gi, type: "date_slash" },
+      { pattern: /(\d{1,2})-(\d{1,2})(?:-(\d{2,4}))?/gi, type: "date_dash" },
+    ];
+
+    // Patterns for time extraction
+    const timePatterns = [
+      // 24-hour format: "14:30", "14.30", "1430"
+      { pattern: /(\d{1,2}):(\d{2})/gi, type: "24hour" },
+      { pattern: /(\d{1,2})\.(\d{2})/gi, type: "24hour_dot" },
+      { pattern: /(\d{4})/gi, type: "24hour_compact" },
+      // 12-hour format: "2:30 PM", "2:30pm", "2 PM", "2pm"
+      { pattern: /(\d{1,2}):(\d{2})\s*(am|pm)/gi, type: "12hour" },
+      { pattern: /(\d{1,2})\s*(am|pm)/gi, type: "12hour_no_minutes" },
+      // Spanish time formats: "2:30 de la tarde", "2:30 de la mañana"
+      {
+        pattern: /(\d{1,2}):(\d{2})\s*(?:de\s+la\s+)?(mañana|tarde|noche)/gi,
+        type: "spanish_time",
+      },
+      {
+        pattern: /(\d{1,2})\s*(?:de\s+la\s+)?(mañana|tarde|noche)/gi,
+        type: "spanish_time_no_minutes",
+      },
+    ];
+
+    let extractedDate = null;
+    let extractedTime = null;
+
+    // Extract date
+    for (const datePattern of datePatterns) {
+      const matches = [...text.matchAll(datePattern.pattern)];
+      if (matches.length > 0) {
+        const match = matches[0];
+        console.log(
+          `📅 [CALENDAR] Date pattern found: ${datePattern.type}`,
+          match
+        );
+
+        extractedDate = parseDateFromMatch(match, datePattern.type);
+        if (extractedDate) break;
+      }
+    }
+
+    // Extract time
+    for (const timePattern of timePatterns) {
+      const matches = [...text.matchAll(timePattern.pattern)];
+      if (matches.length > 0) {
+        const match = matches[0];
+        console.log(
+          `⏰ [CALENDAR] Time pattern found: ${timePattern.type}`,
+          match
+        );
+
+        extractedTime = parseTimeFromMatch(match, timePattern.type);
+        if (extractedTime) break;
+      }
+    }
+
+    if (!extractedDate || !extractedTime) {
+      console.log(
+        "ℹ️ [CALENDAR] Could not extract complete date/time information"
+      );
+      console.log("📅 Extracted date:", extractedDate);
+      console.log("⏰ Extracted time:", extractedTime);
+      return null;
+    }
+
+    console.log("✅ [CALENDAR] Successfully extracted date and time:", {
+      date: extractedDate,
+      time: extractedTime,
+    });
+
+    return {
+      date: extractedDate,
+      time: extractedTime,
+      timezone: "America/New_York",
+      title: "Llamada programada",
+      description: "Llamada programada desde conversación telefónica",
+      attendees: [],
+    };
   } catch (error) {
-    console.error("❌ [OPENAI] Error extracting date/time:", error);
+    console.error("❌ [CALENDAR] Error extracting date/time:", error);
     return null;
   }
+}
+
+// Helper function to parse date from regex match
+function parseDateFromMatch(match, type) {
+  try {
+    const today = new Date();
+    const currentYear = today.getFullYear();
+
+    switch (type) {
+      case "day":
+        const dayName = match[1].toLowerCase();
+        const dayMap = {
+          monday: 1,
+          lunes: 1,
+          tuesday: 2,
+          martes: 2,
+          wednesday: 3,
+          miércoles: 3,
+          thursday: 4,
+          jueves: 4,
+          friday: 5,
+          viernes: 5,
+          saturday: 6,
+          sábado: 6,
+          sunday: 0,
+          domingo: 0,
+        };
+
+        const targetDay = dayMap[dayName];
+        if (targetDay === undefined) return null;
+
+        const currentDay = today.getDay();
+        let daysToAdd = targetDay - currentDay;
+        if (daysToAdd <= 0) daysToAdd += 7; // Next week
+
+        const targetDate = new Date(today);
+        targetDate.setDate(today.getDate() + daysToAdd);
+
+        return targetDate.toISOString().split("T")[0];
+
+      case "tomorrow":
+        const tomorrow = new Date(today);
+        tomorrow.setDate(today.getDate() + 1);
+        return tomorrow.toISOString().split("T")[0];
+
+      case "next_day":
+        const nextDayName = match[2].toLowerCase();
+        const nextDayMap = {
+          monday: 1,
+          lunes: 1,
+          tuesday: 2,
+          martes: 2,
+          wednesday: 3,
+          miércoles: 3,
+          thursday: 4,
+          jueves: 4,
+          friday: 5,
+          viernes: 5,
+          saturday: 6,
+          sábado: 6,
+          sunday: 0,
+          domingo: 0,
+        };
+
+        const nextTargetDay = nextDayMap[nextDayName];
+        if (nextTargetDay === undefined) return null;
+
+        const nextCurrentDay = today.getDay();
+        let nextDaysToAdd = nextTargetDay - nextCurrentDay;
+        if (nextDaysToAdd <= 0) nextDaysToAdd += 7;
+
+        const nextTargetDate = new Date(today);
+        nextTargetDate.setDate(today.getDate() + nextDaysToAdd);
+
+        return nextTargetDate.toISOString().split("T")[0];
+
+      case "month_day":
+        const monthName = match[1].toLowerCase();
+        const day = parseInt(match[2]);
+        const month = getMonthNumber(monthName);
+        if (month === -1 || day < 1 || day > 31) return null;
+
+        return `${currentYear}-${month.toString().padStart(2, "0")}-${day
+          .toString()
+          .padStart(2, "0")}`;
+
+      case "day_month":
+        const day2 = parseInt(match[1]);
+        const monthName2 = match[2].toLowerCase();
+        const month2 = getMonthNumber(monthName2);
+        if (month2 === -1 || day2 < 1 || day2 > 31) return null;
+
+        return `${currentYear}-${month2.toString().padStart(2, "0")}-${day2
+          .toString()
+          .padStart(2, "0")}`;
+
+      case "date_slash":
+        const month3 = parseInt(match[1]);
+        const day3 = parseInt(match[2]);
+        const year3 = match[3] ? parseInt(match[3]) : currentYear;
+        if (month3 < 1 || month3 > 12 || day3 < 1 || day3 > 31) return null;
+
+        return `${year3}-${month3.toString().padStart(2, "0")}-${day3
+          .toString()
+          .padStart(2, "0")}`;
+
+      case "date_dash":
+        const month4 = parseInt(match[1]);
+        const day4 = parseInt(match[2]);
+        const year4 = match[3] ? parseInt(match[3]) : currentYear;
+        if (month4 < 1 || month4 > 12 || day4 < 1 || day4 > 31) return null;
+
+        return `${year4}-${month4.toString().padStart(2, "0")}-${day4
+          .toString()
+          .padStart(2, "0")}`;
+
+      default:
+        return null;
+    }
+  } catch (error) {
+    console.error("❌ [CALENDAR] Error parsing date:", error);
+    return null;
+  }
+}
+
+// Helper function to parse time from regex match
+function parseTimeFromMatch(match, type) {
+  try {
+    switch (type) {
+      case "24hour":
+        const hour = parseInt(match[1]);
+        const minute = parseInt(match[2]);
+        if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+        return `${hour.toString().padStart(2, "0")}:${minute
+          .toString()
+          .padStart(2, "0")}`;
+
+      case "24hour_dot":
+        const hour2 = parseInt(match[1]);
+        const minute2 = parseInt(match[2]);
+        if (hour2 < 0 || hour2 > 23 || minute2 < 0 || minute2 > 59) return null;
+        return `${hour2.toString().padStart(2, "0")}:${minute2
+          .toString()
+          .padStart(2, "0")}`;
+
+      case "24hour_compact":
+        const timeStr = match[1];
+        if (timeStr.length !== 4) return null;
+        const hour3 = parseInt(timeStr.substring(0, 2));
+        const minute3 = parseInt(timeStr.substring(2, 4));
+        if (hour3 < 0 || hour3 > 23 || minute3 < 0 || minute3 > 59) return null;
+        return `${hour3.toString().padStart(2, "0")}:${minute3
+          .toString()
+          .padStart(2, "0")}`;
+
+      case "12hour":
+        let hour4 = parseInt(match[1]);
+        const minute4 = parseInt(match[2]);
+        const period = match[3].toLowerCase();
+
+        if (hour4 < 1 || hour4 > 12 || minute4 < 0 || minute4 > 59) return null;
+        if (period === "pm" && hour4 !== 12) hour4 += 12;
+        if (period === "am" && hour4 === 12) hour4 = 0;
+
+        return `${hour4.toString().padStart(2, "0")}:${minute4
+          .toString()
+          .padStart(2, "0")}`;
+
+      case "12hour_no_minutes":
+        let hour5 = parseInt(match[1]);
+        const period2 = match[2].toLowerCase();
+
+        if (hour5 < 1 || hour5 > 12) return null;
+        if (period2 === "pm" && hour5 !== 12) hour5 += 12;
+        if (period2 === "am" && hour5 === 12) hour5 = 0;
+
+        return `${hour5.toString().padStart(2, "0")}:00`;
+
+      case "spanish_time":
+        let hour6 = parseInt(match[1]);
+        const minute6 = parseInt(match[2]);
+        const period3 = match[3].toLowerCase();
+
+        if (hour6 < 1 || hour6 > 12 || minute6 < 0 || minute6 > 59) return null;
+        if (period3 === "tarde" || period3 === "noche") {
+          if (hour6 !== 12) hour6 += 12;
+        } else if (period3 === "mañana" && hour6 === 12) {
+          hour6 = 0;
+        }
+
+        return `${hour6.toString().padStart(2, "0")}:${minute6
+          .toString()
+          .padStart(2, "0")}`;
+
+      case "spanish_time_no_minutes":
+        let hour7 = parseInt(match[1]);
+        const period4 = match[2].toLowerCase();
+
+        if (hour7 < 1 || hour7 > 12) return null;
+        if (period4 === "tarde" || period4 === "noche") {
+          if (hour7 !== 12) hour7 += 12;
+        } else if (period4 === "mañana" && hour7 === 12) {
+          hour7 = 0;
+        }
+
+        return `${hour7.toString().padStart(2, "0")}:00`;
+
+      default:
+        return null;
+    }
+  } catch (error) {
+    console.error("❌ [CALENDAR] Error parsing time:", error);
+    return null;
+  }
+}
+
+// Helper function to get month number from month name
+function getMonthNumber(monthName) {
+  const monthMap = {
+    january: 1,
+    enero: 1,
+    february: 2,
+    febrero: 2,
+    march: 3,
+    marzo: 3,
+    april: 4,
+    abril: 4,
+    may: 5,
+    mayo: 5,
+    june: 6,
+    junio: 6,
+    july: 7,
+    julio: 7,
+    august: 8,
+    agosto: 8,
+    september: 9,
+    septiembre: 9,
+    october: 10,
+    octubre: 10,
+    november: 11,
+    noviembre: 11,
+    december: 12,
+    diciembre: 12,
+  };
+
+  return monthMap[monthName.toLowerCase()] || -1;
 }
 
 // Function to create calendar event
