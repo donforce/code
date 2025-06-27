@@ -164,8 +164,13 @@ const queueChannel = supabase
 // Optimized queue processing with minimal logging
 async function processAllPendingQueues() {
   try {
+    console.log("🔍 [Queue] Checking for pending queues...");
+
     // Check if we can process more calls
     if (globalActiveCalls.size >= QUEUE_CONFIG.maxConcurrentCalls) {
+      console.log(
+        `[Queue] Max concurrent calls reached: ${globalActiveCalls.size}/${QUEUE_CONFIG.maxConcurrentCalls}`
+      );
       return;
     }
 
@@ -197,8 +202,11 @@ async function processAllPendingQueues() {
     }
 
     if (!pendingQueues || pendingQueues.length === 0) {
+      console.log("[Queue] No pending queues found");
       return;
     }
+
+    console.log(`[Queue] Found ${pendingQueues.length} pending queues`);
 
     // Get user data in single query for all users
     const userIds = [...new Set(pendingQueues.map((item) => item.user_id))];
@@ -226,12 +234,21 @@ async function processAllPendingQueues() {
       const user = usersMap.get(item.user_id);
 
       if (!user || user.available_minutes <= 0) {
+        console.log(
+          `[Queue] User ${item.user_id} has no available minutes: ${
+            user?.available_minutes || 0
+          }`
+        );
         continue;
       }
       if (userActiveCalls.has(item.user_id)) {
+        console.log(`[Queue] User ${item.user_id} already has active call`);
         continue;
       }
       if (processedUsers.has(item.user_id)) {
+        console.log(
+          `[Queue] User ${item.user_id} already processed in this batch`
+        );
         continue;
       }
 
@@ -240,8 +257,11 @@ async function processAllPendingQueues() {
     }
 
     if (eligibleItems.length === 0) {
+      console.log("[Queue] No eligible items found");
       return;
     }
+
+    console.log(`[Queue] Found ${eligibleItems.length} eligible items`);
 
     // Process items concurrently with optimized batch size
     const itemsToProcess = eligibleItems.slice(
@@ -249,8 +269,13 @@ async function processAllPendingQueues() {
       QUEUE_CONFIG.maxConcurrentCalls - globalActiveCalls.size
     );
 
+    console.log(`[Queue] Processing ${itemsToProcess.length} items`);
+
     // Process items concurrently without waiting for all to complete
     itemsToProcess.forEach(async (item) => {
+      console.log(
+        `[Queue] Starting to process item ${item.id} for user ${item.user_id}`
+      );
       processQueueItemWithRetry(item).catch((error) => {
         console.error(`[Queue] ❌ Error processing item ${item.id}:`, error);
       });
@@ -1618,13 +1643,15 @@ fastify.register(async (fastifyInstance) => {
               try {
                 const message = JSON.parse(data);
 
-                // Only log critical events, skip ping messages
+                // Log all events except ping for debugging
                 if (message.type !== "ping") {
-                  console.log(`[ElevenLabs] Event: ${message.type}`);
+                  console.log(`🔔 [ElevenLabs] Event: ${message.type}`);
+                  console.log(`📋 [ElevenLabs] Full message:`, JSON.stringify(message, null, 2));
                 }
 
                 switch (message.type) {
                   case "conversation_initiation_metadata":
+                    console.log("🚀 [ElevenLabs] Conversation initiated");
                     // Save conversation_id to database
                     if (
                       callSid &&
@@ -1634,6 +1661,8 @@ fastify.register(async (fastifyInstance) => {
                       const conversationId =
                         message.conversation_initiation_metadata_event
                           .conversation_id;
+
+                      console.log(`💾 [ElevenLabs] Saving conversation_id: ${conversationId}`);
 
                       try {
                         const { error: updateError } = await supabase
@@ -1649,6 +1678,8 @@ fastify.register(async (fastifyInstance) => {
                             "[ElevenLabs] Error saving conversation_id:",
                             updateError
                           );
+                        } else {
+                          console.log(`✅ [ElevenLabs] Conversation_id saved successfully`);
                         }
                       } catch (dbError) {
                         console.error(
@@ -1672,7 +1703,7 @@ fastify.register(async (fastifyInstance) => {
 
                         // Log agent audio being sent to Twilio
                         console.log(
-                          `🔊 [AGENT] Sending audio chunk #${audioChunkCounter} to Twilio`
+                          `🔊 [AGENT] Sending audio chunk #${audioChunkCounter} to Twilio (${audioPayload?.substring(0, 50)}...)`
                         );
 
                         // Limpiar el Set cada 100 chunks para evitar problemas de memoria
@@ -1697,6 +1728,8 @@ fastify.register(async (fastifyInstance) => {
                           "[ElevenLabs Audio] Skipping duplicate audio chunk"
                         );
                       }
+                    } else {
+                      console.log("⚠️ [ElevenLabs] Audio received but no streamSid");
                     }
                     break;
 
@@ -1724,6 +1757,8 @@ fastify.register(async (fastifyInstance) => {
                           message.agent_response_event.speech_text
                         );
                       }
+                    } else {
+                      console.log("⚠️ [AGENT] No agent_response_event in message");
                     }
                     break;
 
@@ -1775,6 +1810,7 @@ fastify.register(async (fastifyInstance) => {
                         .trim() || "";
 
                     if (transcript === lastUserTranscript) {
+                      console.log("🔄 [USER] Duplicate transcript, skipping");
                       break;
                     }
 
@@ -1783,6 +1819,8 @@ fastify.register(async (fastifyInstance) => {
                     // Log user transcript in real-time
                     if (transcript) {
                       console.log("🎤 [USER] Said:", transcript);
+                    } else {
+                      console.log("⚠️ [USER] Empty transcript received");
                     }
 
                     const normalized = transcript.replace(/[\s,]/g, "");
@@ -1824,6 +1862,7 @@ fastify.register(async (fastifyInstance) => {
 
                   case "conversation_summary":
                     console.log("📝 [SUMMARY] Conversation completed");
+                    console.log("📋 [SUMMARY] Summary data:", JSON.stringify(message.conversation_summary_event, null, 2));
 
                     // Save transcript summary to database
                     if (callSid) {
@@ -1848,6 +1887,8 @@ fastify.register(async (fastifyInstance) => {
                             "[ElevenLabs] Error saving transcript summary:",
                             updateError
                           );
+                        } else {
+                          console.log("✅ [ElevenLabs] Transcript summary saved successfully");
                         }
                       } catch (dbError) {
                         console.error(
@@ -1860,6 +1901,7 @@ fastify.register(async (fastifyInstance) => {
 
                   case "data_collection_results":
                     console.log("📊 [DATA] Collection results received");
+                    console.log("📋 [DATA] Data collection:", JSON.stringify(message.data_collection_results_event, null, 2));
 
                     // Save data collection results to database
                     if (callSid) {
@@ -1883,6 +1925,8 @@ fastify.register(async (fastifyInstance) => {
                             "[ElevenLabs] Error saving data collection results:",
                             updateError
                           );
+                        } else {
+                          console.log("✅ [ElevenLabs] Data collection results saved successfully");
                         }
                       } catch (dbError) {
                         console.error(
@@ -1898,148 +1942,146 @@ fastify.register(async (fastifyInstance) => {
                     break;
 
                   default:
-                    // Only log unknown message types, not ping
-                    if (message.type !== "ping") {
-                      console.log(
-                        `[ElevenLabs] Unknown event: ${message.type}`
-                      );
-                    }
-                }
-              } catch (error) {
-                console.error("[ElevenLabs] Error processing message:", error);
+                    // Log unknown message types
+                    console.log(
+                      `❓ [ElevenLabs] Unknown event: ${message.type}`
+                    );
+                    console.log(`📋 [ElevenLabs] Unknown message:`, JSON.stringify(message, null, 2));
               }
-            });
-
-            elevenLabsWs.on("error", (error) => {
-              console.error("[ElevenLabs] WebSocket error:", error);
-
-              // Limpiar chunks de audio en caso de error
-              sentAudioChunks.clear();
-              audioChunkCounter = 0;
-              console.log("[Audio] Cleaned audio chunks on ElevenLabs error");
-            });
-
-            elevenLabsWs.on("close", async () => {
-              console.log("[ElevenLabs] Disconnected");
-
-              // Limpiar chunks de audio al desconectar ElevenLabs
-              sentAudioChunks.clear();
-              audioChunkCounter = 0;
-              console.log(
-                "[Audio] Cleaned audio chunks on ElevenLabs disconnect"
-              );
-
-              if (callSid) {
-                try {
-                  await twilioClient
-                    .calls(callSid)
-                    .update({ status: "completed" });
-                  console.log(
-                    `[Twilio] Call ${callSid} ended due to ElevenLabs disconnection.`
-                  );
-                } catch (err) {
-                  console.error("[Twilio] Error ending call:", err);
-                }
-              }
-
-              if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                elevenLabsWs.close();
-              }
-            });
+            } catch (error) {
+              console.error("[ElevenLabs] Error processing message:", error);
+              console.error("[ElevenLabs] Raw message data:", data);
+            }
           });
-        } catch (error) {
-          console.error("[ElevenLabs] Setup error:", error);
-        }
+
+        elevenLabsWs.on("error", (error) => {
+          console.error("[ElevenLabs] WebSocket error:", error);
+
+          // Limpiar chunks de audio en caso de error
+          sentAudioChunks.clear();
+          audioChunkCounter = 0;
+          console.log("[Audio] Cleaned audio chunks on ElevenLabs error");
+        });
+
+        elevenLabsWs.on("close", async () => {
+          console.log("[ElevenLabs] Disconnected");
+
+          // Limpiar chunks de audio al desconectar ElevenLabs
+          sentAudioChunks.clear();
+          audioChunkCounter = 0;
+          console.log(
+            "[Audio] Cleaned audio chunks on ElevenLabs disconnect"
+          );
+
+          if (callSid) {
+            try {
+              await twilioClient
+                .calls(callSid)
+                .update({ status: "completed" });
+              console.log(
+                `[Twilio] Call ${callSid} ended due to ElevenLabs disconnection.`
+              );
+            } catch (err) {
+              console.error("[Twilio] Error ending call:", err);
+            }
+          }
+
+          if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+            elevenLabsWs.close();
+          }
+        });
       };
 
       setupElevenLabs();
-
-      ws.on("message", (message) => {
-        try {
-          const msg = JSON.parse(message);
-
-          switch (msg.event) {
-            case "start":
-              streamSid = msg.start.streamSid;
-              callSid = msg.start.callSid;
-              customParameters = msg.start.customParameters;
-
-              console.log(
-                "🔍 [WebSocket] Received customParameters from Twilio:"
-              );
-              console.log(
-                "📋 customParameters:",
-                JSON.stringify(customParameters, null, 2)
-              );
-              console.log(
-                "📅 calendar_availability:",
-                customParameters?.calendar_availability
-              );
-
-              // Setup ElevenLabs AFTER receiving customParameters
-              setupElevenLabs();
-              break;
-
-            case "media":
-              if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                const audioChunk = Buffer.from(
-                  msg.media.payload,
-                  "base64"
-                ).toString("base64");
-
-                // Verificar si este chunk de audio ya fue enviado
-                if (!sentAudioChunks.has(audioChunk)) {
-                  sentAudioChunks.add(audioChunk);
-                  audioChunkCounter++;
-
-                  // Limpiar el Set cada 100 chunks para evitar problemas de memoria
-                  if (audioChunkCounter > 100) {
-                    sentAudioChunks.clear();
-                    audioChunkCounter = 0;
-                    console.log("[Audio] Cleaned audio chunks cache");
-                  }
-
-                  elevenLabsWs.send(
-                    JSON.stringify({
-                      type: "user_audio_chunk",
-                      user_audio_chunk: audioChunk,
-                    })
-                  );
-                } else {
-                  console.log("[Audio] Skipping duplicate audio chunk");
-                }
-              }
-              break;
-
-            case "stop":
-              if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                elevenLabsWs.close();
-              }
-              // Limpiar chunks de audio al finalizar la llamada
-              sentAudioChunks.clear();
-              audioChunkCounter = 0;
-              console.log("[Audio] Cleaned audio chunks on call stop");
-              break;
-
-            default:
-              console.log(`[Twilio] Unhandled event: ${msg.event}`);
-          }
-        } catch (error) {
-          console.error("[Twilio] Error processing message:", error);
-        }
-      });
-
-      ws.on("close", () => {
-        if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-          elevenLabsWs.close();
-        }
-        // Limpiar chunks de audio al cerrar el WebSocket
-        sentAudioChunks.clear();
-        audioChunkCounter = 0;
-        console.log("[Audio] Cleaned audio chunks on WebSocket close");
-      });
+    } catch (error) {
+      console.error("[ElevenLabs] Setup error:", error);
     }
-  );
+  };
+
+  ws.on("message", (message) => {
+    try {
+      const msg = JSON.parse(message);
+
+      switch (msg.event) {
+        case "start":
+          streamSid = msg.start.streamSid;
+          callSid = msg.start.callSid;
+          customParameters = msg.start.customParameters;
+
+          console.log(
+            "🔍 [WebSocket] Received customParameters from Twilio:"
+          );
+          console.log(
+            "📋 customParameters:",
+            JSON.stringify(customParameters, null, 2)
+          );
+          console.log(
+            "📅 calendar_availability:",
+            customParameters?.calendar_availability
+          );
+
+          // Setup ElevenLabs AFTER receiving customParameters
+          setupElevenLabs();
+          break;
+
+        case "media":
+          if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+            const audioChunk = Buffer.from(
+              msg.media.payload,
+              "base64"
+            ).toString("base64");
+
+            // Verificar si este chunk de audio ya fue enviado
+            if (!sentAudioChunks.has(audioChunk)) {
+              sentAudioChunks.add(audioChunk);
+              audioChunkCounter++;
+
+              // Limpiar el Set cada 100 chunks para evitar problemas de memoria
+              if (audioChunkCounter > 100) {
+                sentAudioChunks.clear();
+                audioChunkCounter = 0;
+                console.log("[Audio] Cleaned audio chunks cache");
+              }
+
+              elevenLabsWs.send(
+                JSON.stringify({
+                  type: "user_audio_chunk",
+                  user_audio_chunk: audioChunk,
+                })
+              );
+            } else {
+              console.log("[Audio] Skipping duplicate audio chunk");
+            }
+          }
+          break;
+
+        case "stop":
+          if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+            elevenLabsWs.close();
+          }
+          // Limpiar chunks de audio al finalizar la llamada
+          sentAudioChunks.clear();
+          audioChunkCounter = 0;
+          console.log("[Audio] Cleaned audio chunks on call stop");
+          break;
+
+        default:
+          console.log(`[Twilio] Unhandled event: ${msg.event}`);
+      }
+    } catch (error) {
+      console.error("[Twilio] Error processing message:", error);
+    }
+  });
+
+  ws.on("close", () => {
+    if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+      elevenLabsWs.close();
+    }
+    // Limpiar chunks de audio al cerrar el WebSocket
+    sentAudioChunks.clear();
+    audioChunkCounter = 0;
+    console.log("[Audio] Cleaned audio chunks on WebSocket close");
+  });
 });
 
 // Function to clean up stuck calls
@@ -2963,10 +3005,18 @@ start();
 // Function to check for scheduled call in ElevenLabs summary
 async function checkForScheduledCall(webhookData, call) {
   try {
+    console.log("🔍 [CALENDAR] ===== INICIO DE BÚSQUEDA DE LLAMADA PROGRAMADA =====");
+    console.log("📞 [CALENDAR] Call SID:", call.call_sid);
+    console.log("👤 [CALENDAR] User ID:", call.user_id);
+    console.log("📋 [CALENDAR] Lead ID:", call.lead_id);
+    
     // Get the transcript summary from ElevenLabs
     const summary = webhookData.data.analysis?.transcript_summary || "";
+    console.log("📄 [CALENDAR] Summary length:", summary.length);
+    console.log("📄 [CALENDAR] Summary preview:", summary.substring(0, 200) + (summary.length > 200 ? "..." : ""));
 
     if (!summary || summary.trim() === "") {
+      console.log("❌ [CALENDAR] No summary available - skipping calendar check");
       return null;
     }
 
@@ -2989,18 +3039,30 @@ async function checkForScheduledCall(webhookData, call) {
       "reservó una llamada",
     ];
 
-    const hasSchedulingKeywords = schedulingKeywords.some((keyword) =>
-      summary.toLowerCase().includes(keyword.toLowerCase())
-    );
+    console.log("🔍 [CALENDAR] Checking for scheduling keywords...");
+    const foundKeywords = [];
+    
+    schedulingKeywords.forEach(keyword => {
+      if (summary.toLowerCase().includes(keyword.toLowerCase())) {
+        foundKeywords.push(keyword);
+      }
+    });
 
-    if (!hasSchedulingKeywords) {
+    console.log("🎯 [CALENDAR] Found keywords:", foundKeywords);
+
+    if (foundKeywords.length === 0) {
+      console.log("❌ [CALENDAR] No scheduling keywords found - skipping calendar check");
       return null;
     }
 
-    // Extract date and time using OpenAI from the transcript summary
+    console.log("✅ [CALENDAR] Scheduling keywords detected - proceeding with date/time extraction");
+
+    // Extract date and time using direct text parsing
     const dateTimeInfo = await extractDateTimeFromSummary(summary);
 
     if (dateTimeInfo) {
+      console.log("✅ [CALENDAR] Date/time extracted successfully:", dateTimeInfo);
+      
       // Get lead information
       const { data: lead, error: leadError } = await supabase
         .from("leads")
@@ -3013,17 +3075,38 @@ async function checkForScheduledCall(webhookData, call) {
         return null;
       }
 
-      return {
+      console.log("✅ [CALENDAR] Lead information retrieved:", {
+        name: lead.name,
+        phone: lead.phone,
+        email: lead.email
+      });
+
+      const result = {
         ...dateTimeInfo,
         lead: lead,
         call: call,
         summary: summary,
       };
+
+      console.log("🎉 [CALENDAR] ===== FINAL RESULT =====");
+      console.log("📅 [CALENDAR] Date:", result.date);
+      console.log("⏰ [CALENDAR] Time:", result.time);
+      console.log("🌍 [CALENDAR] Timezone:", result.timezone);
+      console.log("👤 [CALENDAR] Lead:", result.lead.name);
+      console.log("📞 [CALENDAR] Phone:", result.lead.phone);
+      console.log("📧 [CALENDAR] Email:", result.lead.email);
+      console.log("🔍 [CALENDAR] ===== FIN DE BÚSQUEDA DE LLAMADA PROGRAMADA =====");
+
+      return result;
+    } else {
+      console.log("❌ [CALENDAR] Could not extract date/time from summary");
+      console.log("🔍 [CALENDAR] ===== FIN DE BÚSQUEDA DE LLAMADA PROGRAMADA =====");
     }
 
     return null;
   } catch (error) {
     console.error("❌ [CALENDAR] Error checking for scheduled call:", error);
+    console.log("🔍 [CALENDAR] ===== FIN DE BÚSQUEDA DE LLAMADA PROGRAMADA (ERROR) =====");
     return null;
   }
 }
@@ -3031,17 +3114,16 @@ async function checkForScheduledCall(webhookData, call) {
 // Function to extract date and time from summary using direct text parsing
 async function extractDateTimeFromSummary(summary) {
   try {
-    console.log(
-      "🔍 [CALENDAR] Extracting date and time directly from summary..."
-    );
-    console.log("📄 [CALENDAR] Summary to analyze:", summary);
+    console.log("🔍 [CALENDAR][EXTRACT] ===== INICIO DE EXTRACCIÓN DE FECHA/HORA =====");
+    console.log("📄 [CALENDAR][EXTRACT] Summary to analyze:", summary);
 
     if (!summary || summary.trim() === "") {
-      console.log("ℹ️ [CALENDAR] No summary available");
+      console.log("❌ [CALENDAR][EXTRACT] No summary available");
       return null;
     }
 
     const text = summary.toLowerCase();
+    console.log("📝 [CALENDAR][EXTRACT] Normalized text (first 300 chars):", text.substring(0, 300));
 
     // Patterns for date extraction
     const datePatterns = [
@@ -3097,51 +3179,64 @@ async function extractDateTimeFromSummary(summary) {
     let extractedDate = null;
     let extractedTime = null;
 
+    console.log("🔍 [CALENDAR][EXTRACT] Searching for date patterns...");
+    
     // Extract date
     for (const datePattern of datePatterns) {
       const matches = [...text.matchAll(datePattern.pattern)];
       if (matches.length > 0) {
         const match = matches[0];
         console.log(
-          `📅 [CALENDAR] Date pattern found: ${datePattern.type}`,
+          `📅 [CALENDAR][EXTRACT] Date pattern found: ${datePattern.type}`,
           match
         );
 
         extractedDate = parseDateFromMatch(match, datePattern.type);
-        if (extractedDate) break;
+        if (extractedDate) {
+          console.log(`✅ [CALENDAR][EXTRACT] Date extracted: ${extractedDate}`);
+          break;
+        } else {
+          console.log(`❌ [CALENDAR][EXTRACT] Failed to parse date from pattern: ${datePattern.type}`);
+        }
       }
     }
 
+    console.log("🔍 [CALENDAR][EXTRACT] Searching for time patterns...");
+    
     // Extract time
     for (const timePattern of timePatterns) {
       const matches = [...text.matchAll(timePattern.pattern)];
       if (matches.length > 0) {
         const match = matches[0];
         console.log(
-          `⏰ [CALENDAR] Time pattern found: ${timePattern.type}`,
+          `⏰ [CALENDAR][EXTRACT] Time pattern found: ${timePattern.type}`,
           match
         );
 
         extractedTime = parseTimeFromMatch(match, timePattern.type);
-        if (extractedTime) break;
+        if (extractedTime) {
+          console.log(`✅ [CALENDAR][EXTRACT] Time extracted: ${extractedTime}`);
+          break;
+        } else {
+          console.log(`❌ [CALENDAR][EXTRACT] Failed to parse time from pattern: ${timePattern.type}`);
+        }
       }
     }
 
     if (!extractedDate || !extractedTime) {
-      console.log(
-        "ℹ️ [CALENDAR] Could not extract complete date/time information"
-      );
-      console.log("📅 Extracted date:", extractedDate);
-      console.log("⏰ Extracted time:", extractedTime);
+      console.log("❌ [CALENDAR][EXTRACT] Could not extract complete date/time information");
+      console.log("📅 [CALENDAR][EXTRACT] Extracted date:", extractedDate);
+      console.log("⏰ [CALENDAR][EXTRACT] Extracted time:", extractedTime);
+      console.log("🔍 [CALENDAR][EXTRACT] ===== FIN DE EXTRACCIÓN DE FECHA/HORA (INCOMPLETA) =====");
       return null;
     }
 
-    console.log("✅ [CALENDAR] Successfully extracted date and time:", {
+    console.log("✅ [CALENDAR][EXTRACT] Successfully extracted date and time:", {
       date: extractedDate,
       time: extractedTime,
     });
 
-    return {
+    const result = {
       date: extractedDate,
       time: extractedTime,
       timezone: "America/New_York",
@@ -3149,8 +3244,17 @@ async function extractDateTimeFromSummary(summary) {
       description: "Llamada programada desde conversación telefónica",
       attendees: [],
     };
+
+    console.log("🎉 [CALENDAR][EXTRACT] ===== RESULTADO FINAL =====");
+    console.log("📅 [CALENDAR][EXTRACT] Date:", result.date);
+    console.log("⏰ [CALENDAR][EXTRACT] Time:", result.time);
+    console.log("🌍 [CALENDAR][EXTRACT] Timezone:", result.timezone);
+    console.log("🔍 [CALENDAR][EXTRACT] ===== FIN DE EXTRACCIÓN DE FECHA/HORA =====");
+
+    return result;
   } catch (error) {
-    console.error("❌ [CALENDAR] Error extracting date/time:", error);
+    console.error("❌ [CALENDAR][EXTRACT] Error extracting date/time:", error);
+    console.log("🔍 [CALENDAR][EXTRACT] ===== FIN DE EXTRACCIÓN DE FECHA/HORA (ERROR) =====");
     return null;
   }
 }
