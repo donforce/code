@@ -26,6 +26,8 @@ const {
   // Google Calendar configuration
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
+  // OpenAI configuration
+  OPENAI_API_KEY,
   // Multi-threading configuration
   MAX_CONCURRENT_CALLS,
   MAX_CALLS_PER_USER,
@@ -46,7 +48,8 @@ if (
   !SUPABASE_SERVICE_ROLE_KEY ||
   !RAILWAY_PUBLIC_DOMAIN ||
   !GOOGLE_CLIENT_ID ||
-  !GOOGLE_CLIENT_SECRET
+  !GOOGLE_CLIENT_SECRET ||
+  !OPENAI_API_KEY
 ) {
   console.error("Missing required environment variables");
   throw new Error("Missing required environment variables");
@@ -75,21 +78,6 @@ const fastify = Fastify({
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
-// Add custom middleware to capture raw body for webhooks
-fastify.addHook("onRequest", (request, reply, done) => {
-  if (request.url === "/webhook/elevenlabs") {
-    // For webhook endpoint, capture raw body manually before Fastify processes it
-    const chunks = [];
-    request.raw.on("data", (chunk) => chunks.push(chunk));
-    request.raw.on("end", () => {
-      request.rawBody = Buffer.concat(chunks).toString();
-      done();
-    });
-  } else {
-    done();
-  }
-});
-
 const PORT = process.env.PORT || 8000;
 
 // Optimized metrics tracking - reduced frequency
@@ -114,9 +102,7 @@ const globalActiveCalls = new Map();
 const userActiveCalls = new Map();
 const workerPool = new Set();
 
-console.log("[Queue] Optimized configuration:", QUEUE_CONFIG);
-
-// Optimized signature verification - reduced logging
+// Optimized signature verification - minimal logging
 function verifyElevenLabsSignature(rawBody, signature) {
   try {
     let timestamp = null;
@@ -149,7 +135,7 @@ function verifyElevenLabsSignature(rawBody, signature) {
   }
 }
 
-// Optimized queue subscription with reduced logging
+// Optimized queue subscription with minimal logging
 const queueChannel = supabase
   .channel("server-queue")
   .on(
@@ -175,24 +161,15 @@ const queueChannel = supabase
   )
   .subscribe();
 
-// Optimized queue processing with reduced database queries
+// Optimized queue processing with minimal logging
 async function processAllPendingQueues() {
   try {
-    console.log("[Queue] 🔄 Starting queue processing...");
-    console.log(
-      `[Queue] 📊 Current active calls: ${globalActiveCalls.size}/${QUEUE_CONFIG.maxConcurrentCalls}`
-    );
-
     // Check if we can process more calls
     if (globalActiveCalls.size >= QUEUE_CONFIG.maxConcurrentCalls) {
-      console.log(
-        "[Queue] ⏸️ Max concurrent calls reached, skipping processing"
-      );
       return;
     }
 
     // Get all pending queue items with optimized query
-    console.log("[Queue] 🔍 Fetching pending queue items...");
     const { data: pendingQueues, error } = await supabase
       .from("call_queue")
       .select(
@@ -220,18 +197,11 @@ async function processAllPendingQueues() {
     }
 
     if (!pendingQueues || pendingQueues.length === 0) {
-      console.log("[Queue] ℹ️ No pending queues found");
       return;
     }
 
-    console.log(`[Queue] 📋 Found ${pendingQueues.length} pending queue items`);
-
     // Get user data in single query for all users
     const userIds = [...new Set(pendingQueues.map((item) => item.user_id))];
-    console.log(
-      `[Queue] 👥 Fetching data for ${userIds.length} users:`,
-      userIds
-    );
 
     const { data: usersData, error: usersError } = await supabase
       .from("users")
@@ -245,8 +215,6 @@ async function processAllPendingQueues() {
       return;
     }
 
-    console.log(`[Queue] ✅ Found ${usersData?.length || 0} users with data`);
-
     // Create optimized user lookup map
     const usersMap = new Map(usersData?.map((user) => [user.id, user]) || []);
 
@@ -256,48 +224,24 @@ async function processAllPendingQueues() {
 
     for (const item of pendingQueues) {
       const user = usersMap.get(item.user_id);
-      console.log(
-        `[Queue] 🔍 Checking item ${item.id} for user ${item.user_id}:`,
-        {
-          hasUser: !!user,
-          availableMinutes: user?.available_minutes || 0,
-          hasActiveCall: userActiveCalls.has(item.user_id),
-          alreadyProcessed: processedUsers.has(item.user_id),
-        }
-      );
 
       if (!user || user.available_minutes <= 0) {
-        console.log(
-          `[Queue] ❌ User ${item.user_id} not eligible: no user data or no minutes`
-        );
         continue;
       }
       if (userActiveCalls.has(item.user_id)) {
-        console.log(
-          `[Queue] ❌ User ${item.user_id} not eligible: already has active call`
-        );
         continue;
       }
       if (processedUsers.has(item.user_id)) {
-        console.log(
-          `[Queue] ❌ User ${item.user_id} not eligible: already processed`
-        );
         continue;
       }
 
       eligibleItems.push(item);
       processedUsers.add(item.user_id);
-      console.log(
-        `[Queue] ✅ Item ${item.id} for user ${item.user_id} is eligible`
-      );
     }
 
     if (eligibleItems.length === 0) {
-      console.log("[Queue] ℹ️ No eligible items found");
       return;
     }
-
-    console.log(`[Queue] 🎯 Found ${eligibleItems.length} eligible items`);
 
     // Process items concurrently with optimized batch size
     const itemsToProcess = eligibleItems.slice(
@@ -305,13 +249,8 @@ async function processAllPendingQueues() {
       QUEUE_CONFIG.maxConcurrentCalls - globalActiveCalls.size
     );
 
-    console.log(
-      `[Queue] 🚀 Processing ${itemsToProcess.length} items concurrently`
-    );
-
     // Process items concurrently without waiting for all to complete
     itemsToProcess.forEach(async (item) => {
-      console.log(`[Queue] 🔄 Starting processing for item ${item.id}`);
       processQueueItemWithRetry(item).catch((error) => {
         console.error(`[Queue] ❌ Error processing item ${item.id}:`, error);
       });
@@ -321,7 +260,7 @@ async function processAllPendingQueues() {
   }
 }
 
-// Optimized queue item processing with reduced logging
+// Optimized queue item processing with minimal logging
 async function processQueueItemWithRetry(queueItem, attempt = 1) {
   const workerId = `worker_${Date.now()}_${Math.random()
     .toString(36)
@@ -1075,6 +1014,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     let availabilityJson = null;
     let defaultText = "Disponible todos los dias";
     let finalText = "Disponible todos los dias";
+    let calendarTimezone = "America/New_York"; // Default timezone
 
     if (!calendarSummary) {
       console.log(
@@ -1125,7 +1065,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       availabilityJson = {
         workerId: workerId,
         summary: {
-          timezone: "America/New_York",
+          timezone: calendarTimezone,
           totalEvents: 0,
           freeDays: 15,
           busyDays: 0,
@@ -1151,6 +1091,9 @@ async function processQueueItem(queueItem, workerId = "unknown") {
           ).toLocaleDateString()}`,
         }
       );
+
+      // Obtener el timezone del calendario
+      calendarTimezone = calendarSummary.timezone || "America/New_York";
 
       // Mostrar disponibilidad detallada para los próximos 15 días
       const allDays = Object.keys(calendarSummary.availabilityByDay).sort();
@@ -1206,7 +1149,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       availabilityJson = {
         workerId: workerId,
         summary: {
-          timezone: calendarSummary.timezone,
+          timezone: calendarTimezone,
           totalEvents: calendarSummary.totalEvents,
           freeDays: calendarSummary.freeDays.length,
           busyDays: calendarSummary.busyDays.length,
@@ -1276,6 +1219,9 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       }
 
       const availabilityParam = encodeURIComponent(availabilityText);
+      const timezoneParam = encodeURIComponent(calendarTimezone);
+      const clientPhoneParam = encodeURIComponent(queueItem.lead.phone);
+      const clientEmailParam = encodeURIComponent(queueItem.lead.email);
 
       call = await twilioClient.calls.create({
         from: TWILIO_PHONE_NUMBER,
@@ -1286,11 +1232,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
           "Hola, ¿cómo estás?"
         )}&client_name=${encodeURIComponent(
           queueItem.lead.name
-        )}&client_phone=${encodeURIComponent(
-          queueItem.lead.phone
-        )}&client_email=${encodeURIComponent(
-          queueItem.lead.email
-        )}&client_id=${encodeURIComponent(
+        )}&client_phone=${clientPhoneParam}&client_email=${clientEmailParam}&client_id=${encodeURIComponent(
           queueItem.lead_id
         )}&fecha=${encodeURIComponent(fecha)}&dia_semana=${encodeURIComponent(
           dia_semana
@@ -1300,7 +1242,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
           agentName
         )}&assistant_name=${encodeURIComponent(
           userData.assistant_name
-        )}&calendar_availability=${availabilityParam}`,
+        )}&calendar_availability=${availabilityParam}&calendar_timezone=${timezoneParam}`,
         statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
         statusCallbackEvent: ["completed"],
         statusCallbackMethod: "POST",
@@ -1524,6 +1466,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     agent_name,
     assistant_name,
     calendar_availability,
+    calendar_timezone,
   } = request.query;
 
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
@@ -1543,6 +1486,9 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
           <Parameter name="assistant_name" value="${assistant_name}" />
           <Parameter name="calendar_availability" value="${
             calendar_availability || "Disponible todos los dias"
+          }" />
+          <Parameter name="calendar_timezone" value="${
+            calendar_timezone || "America/New_York"
           }" />
         </Stream>
       </Connect>
@@ -1609,6 +1555,8 @@ fastify.register(async (fastifyInstance) => {
                 calendar_availability:
                   customParameters?.calendar_availability ||
                   "Disponible todos los dias",
+                calendar_timezone:
+                  customParameters?.calendar_timezone || "America/New_York",
               },
               usage: {
                 no_ip_reason: "user_ip_not_collected",
@@ -1629,10 +1577,30 @@ fastify.register(async (fastifyInstance) => {
               initialConfig.dynamic_variables.calendar_availability
             );
             console.log(
+              "🌍 [ElevenLabs] calendar_timezone value:",
+              initialConfig.dynamic_variables.calendar_timezone
+            );
+            console.log(
+              "📞 [ElevenLabs] client_phone value:",
+              initialConfig.dynamic_variables.client_phone
+            );
+            console.log(
+              "📧 [ElevenLabs] client_email value:",
+              initialConfig.dynamic_variables.client_email
+            );
+            console.log(
               "📋 [ElevenLabs] Full dynamic_variables:",
               JSON.stringify(initialConfig.dynamic_variables, null, 2)
             );
             console.log(JSON.stringify(initialConfig, null, 2));
+
+            // Log the first message that will be spoken
+            if (customParameters?.first_message) {
+              console.log(
+                "🎯 [AGENT] First message to be spoken:",
+                customParameters.first_message
+              );
+            }
 
             // Verificar que el WebSocket esté abierto antes de enviar
             if (elevenLabsWs.readyState === WebSocket.OPEN) {
@@ -1702,8 +1670,13 @@ fastify.register(async (fastifyInstance) => {
                         sentAudioChunks.add(audioPayload);
                         audioChunkCounter++;
 
-                        // Limpiar el Set cada 10 chunks para evitar problemas de memoria
-                        if (audioChunkCounter > 10) {
+                        // Log agent audio being sent to Twilio
+                        console.log(
+                          `🔊 [AGENT] Sending audio chunk #${audioChunkCounter} to Twilio`
+                        );
+
+                        // Limpiar el Set cada 100 chunks para evitar problemas de memoria
+                        if (audioChunkCounter > 100) {
                           sentAudioChunks.clear();
                           audioChunkCounter = 0;
                           console.log(
@@ -1729,6 +1702,29 @@ fastify.register(async (fastifyInstance) => {
 
                   case "agent_response":
                     console.log("🤖 [AGENT] Speaking");
+                    // Log agent response details if available
+                    if (message.agent_response_event) {
+                      console.log(
+                        "📝 [AGENT] Response details:",
+                        JSON.stringify(message.agent_response_event, null, 2)
+                      );
+
+                      // Log the actual text the agent is speaking
+                      if (message.agent_response_event.text) {
+                        console.log(
+                          "🗣️ [AGENT] Text being spoken:",
+                          message.agent_response_event.text
+                        );
+                      }
+
+                      // Log the speech text if available
+                      if (message.agent_response_event.speech_text) {
+                        console.log(
+                          "🎯 [AGENT] Speech text:",
+                          message.agent_response_event.speech_text
+                        );
+                      }
+                    }
                     break;
 
                   case "user_speaking":
@@ -1739,12 +1735,6 @@ fastify.register(async (fastifyInstance) => {
 
                     console.log(
                       `🎤 [USER] Speaking - Duration: ${speakingDuration}s, Should Interrupt: ${shouldInterrupt}`
-                    );
-
-                    // Imprimir el mensaje completo del evento
-                    console.log(
-                      "📋 [USER_SPEAKING] Full message:",
-                      JSON.stringify(message, null, 2)
                     );
 
                     if (shouldInterrupt) {
@@ -1758,20 +1748,21 @@ fastify.register(async (fastifyInstance) => {
                     console.log(
                       "🛑 [INTERRUPTION] Agent interrupted successfully"
                     );
+
+                    break;
+
+                  case "interruption_detected":
                     console.log(
-                      "📊 [INTERRUPTION] Details:",
-                      JSON.stringify(message, null, 2)
+                      "🚨 [INTERRUPTION] Interruption event received"
                     );
+                    ws.send(JSON.stringify({ event: "stop_audio" }));
                     break;
 
                   case "interruption":
                     console.log(
                       "🚨 [INTERRUPTION] Interruption event received"
                     );
-                    console.log(
-                      "📊 [INTERRUPTION] Details:",
-                      JSON.stringify(message, null, 2)
-                    );
+                    ws.send(JSON.stringify({ event: "stop_audio" }));
                     break;
 
                   case "conversation_resumed":
@@ -1797,6 +1788,11 @@ fastify.register(async (fastifyInstance) => {
                     }
 
                     lastUserTranscript = transcript;
+
+                    // Log user transcript in real-time
+                    if (transcript) {
+                      console.log("🎤 [USER] Said:", transcript);
+                    }
 
                     const normalized = transcript.replace(/[\s,]/g, "");
                     const isNumericSequence = /^\d{7,}$/.test(normalized);
@@ -2005,8 +2001,8 @@ fastify.register(async (fastifyInstance) => {
                   sentAudioChunks.add(audioChunk);
                   audioChunkCounter++;
 
-                  // Limpiar el Set cada 10 chunks para evitar problemas de memoria
-                  if (audioChunkCounter > 10) {
+                  // Limpiar el Set cada 100 chunks para evitar problemas de memoria
+                  if (audioChunkCounter > 100) {
                     sentAudioChunks.clear();
                     audioChunkCounter = 0;
                     console.log("[Audio] Cleaned audio chunks cache");
@@ -2403,65 +2399,9 @@ fastify.post("/queue/cleanup", async (request, reply) => {
 // Add webhook endpoint for ElevenLabs
 fastify.post("/webhook/elevenlabs", async (request, reply) => {
   try {
-    console.log("=".repeat(80));
-    console.log("🔔 [ELEVENLABS WEBHOOK] Post-call webhook received");
-    console.log("=".repeat(80));
-
-    // Get the raw body that was captured by the middleware
-    const rawBody = request.rawBody;
-    const signature = request.headers["elevenlabs-signature"];
-
-    console.log("📋 Webhook Headers:", request.headers);
-    console.log("📄 Raw Body Length:", rawBody?.length || 0);
-    console.log("📄 Raw Body (first 200 chars):", rawBody?.substring(0, 200));
-    console.log("📄 Raw Body available:", !!rawBody);
-
-    if (!signature) {
-      console.error("❌ No signature provided");
-      return reply.code(401).send({ error: "No signature provided" });
-    }
-
-    if (!rawBody) {
-      console.error("❌ No raw body captured by middleware");
-      console.log("🔍 Trying fallback methods...");
-
-      // Fallback: try to get raw body from request.raw
-      let fallbackRawBody = "";
-      if (request.raw && request.raw.body) {
-        fallbackRawBody = request.raw.body.toString();
-        console.log("📄 Using fallback request.raw.body");
-      } else {
-        console.error("❌ No fallback raw body available");
-        return reply
-          .code(400)
-          .send({ error: "No raw body available for signature verification" });
-      }
-
-      // Use fallback raw body for verification
-      if (!verifyElevenLabsSignature(fallbackRawBody, signature)) {
-        console.error("❌ Invalid signature with fallback raw body");
-        return reply.code(401).send({ error: "Invalid signature" });
-      }
-    } else {
-      // Use middleware raw body for verification
-      if (!verifyElevenLabsSignature(rawBody, signature)) {
-        console.error("❌ Invalid signature");
-        console.log("🔍 Signature verification failed. Raw body:", rawBody);
-        console.log("🔍 Signature received:", signature);
-        return reply.code(401).send({ error: "Invalid signature" });
-      }
-    }
-
-    console.log("✅ Signature verified successfully");
+    console.log("🔔 [ELEVENLABS] Webhook received");
 
     const webhookData = request.body;
-    console.log("📊 Webhook Data Structure:", {
-      hasWebhookData: !!webhookData,
-      hasData: !!webhookData?.data,
-      hasConversationId: !!webhookData?.data?.conversation_id,
-      webhookDataKeys: webhookData ? Object.keys(webhookData) : [],
-      dataKeys: webhookData?.data ? Object.keys(webhookData.data) : [],
-    });
 
     // Check for ElevenLabs specific structure
     if (
@@ -2470,26 +2410,39 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       !webhookData.data.conversation_id
     ) {
       console.error("❌ Invalid webhook data structure");
-      console.log("📊 Received data:", JSON.stringify(webhookData, null, 2));
       return reply.code(400).send({ error: "Invalid webhook data" });
     }
 
     const { conversation_id, analysis, transcript, metadata } =
       webhookData.data;
 
-    console.log("🔍 Processing webhook for conversation:", conversation_id);
-    console.log(
-      "📊 Analysis data:",
-      analysis ? Object.keys(analysis) : "No analysis"
-    );
-    console.log(
-      "📊 Transcript length:",
-      transcript ? transcript.length : "No transcript"
-    );
-    console.log(
-      "📊 Metadata:",
-      metadata ? Object.keys(metadata) : "No metadata"
-    );
+    console.log("📞 [ELEVENLABS] Processing conversation:", conversation_id);
+
+    // Log essential audio/transcript data
+    if (transcript && transcript.length > 0) {
+      console.log(
+        "🎵 [ELEVENLABS] Audio transcript available:",
+        transcript.length,
+        "turns"
+      );
+      // Log first few turns for debugging
+      transcript.slice(0, 3).forEach((turn, index) => {
+        console.log(
+          `   Turn ${index + 1}: ${turn.speaker} - ${turn.text?.substring(
+            0,
+            100
+          )}${turn.text?.length > 100 ? "..." : ""}`
+        );
+      });
+    }
+
+    if (analysis?.transcript_summary) {
+      console.log(
+        "📝 [ELEVENLABS] Summary:",
+        analysis.transcript_summary.substring(0, 200) +
+          (analysis.transcript_summary.length > 200 ? "..." : "")
+      );
+    }
 
     // Find the call by conversation_id
     const { data: call, error: callError } = await supabase
@@ -2500,28 +2453,8 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
 
     if (callError || !call) {
       console.error("❌ Call not found for conversation:", conversation_id);
-      console.log(
-        "🔍 Searching for calls with conversation_id:",
-        conversation_id
-      );
-
-      // Let's check what calls exist in the database
-      const { data: allCalls, error: allCallsError } = await supabase
-        .from("calls")
-        .select("call_sid, conversation_id, created_at")
-        .order("created_at", { ascending: false })
-        .limit(10);
-
-      if (!allCallsError) {
-        console.log("📋 Recent calls in database:", allCalls);
-      } else {
-        console.error("❌ Error fetching recent calls:", allCallsError);
-      }
-
       return reply.code(404).send({ error: "Call not found" });
     }
-
-    console.log("✅ Found call:", call.call_sid);
 
     // Update call with webhook data
     const updateData = {
@@ -2549,8 +2482,6 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       }
     }
 
-    console.log("📝 Updating call with data:", updateData);
-
     const { error: updateError } = await supabase
       .from("calls")
       .update(updateData)
@@ -2561,8 +2492,21 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       return reply.code(500).send({ error: "Failed to update call" });
     }
 
-    console.log("✅ Call updated successfully");
-    console.log("=".repeat(80));
+    console.log("✅ [ELEVENLABS] Call updated successfully");
+
+    // 🔍 CHECK FOR SCHEDULED CALL IN SUMMARY
+    try {
+      const scheduledCallInfo = await checkForScheduledCall(webhookData, call);
+
+      if (scheduledCallInfo) {
+        console.log(
+          "📅 [CALENDAR] Scheduled call detected, creating calendar event"
+        );
+        await createCalendarEvent(scheduledCallInfo, call);
+      }
+    } catch (calendarError) {
+      console.error("❌ Error processing calendar event:", calendarError);
+    }
 
     reply.send({ success: true, message: "Webhook processed successfully" });
   } catch (error) {
@@ -2571,33 +2515,452 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
   }
 });
 
+// Function to analyze call with OpenAI
+// Comentado: Definición de analyzeCallWithOpenAI
+// async function analyzeCallWithOpenAI(webhookData, call) {
+//   ...
+// }
+
+// Add test endpoint for webhook debugging
+fastify.get("/webhook/elevenlabs/test", async (request, reply) => {
+  console.log("🧪 [WEBHOOK TEST] Test endpoint accessed");
+  return reply.send({
+    status: "ok",
+    message: "Webhook endpoint is accessible",
+    timestamp: new Date().toISOString(),
+    server: "code-production",
+  });
+});
+
+// Add POST test endpoint for webhook debugging
+fastify.post("/webhook/elevenlabs/test", async (request, reply) => {
+  console.log("🧪 [WEBHOOK TEST] POST test endpoint accessed");
+  console.log("📋 Headers:", request.headers);
+  console.log("📄 Body:", request.body);
+  return reply.send({
+    status: "ok",
+    message: "Webhook POST endpoint is accessible",
+    received_data: request.body,
+    timestamp: new Date().toISOString(),
+    server: "code-production",
+  });
+});
+
+// API Integration endpoints for leads
+fastify.post("/api/integration/leads", async (request, reply) => {
+  try {
+    console.log("📞 [API] POST /api/integration/leads - Creating lead");
+
+    // Obtener API key del header
+    const apiKey =
+      request.headers["x-api-key"] ||
+      request.headers.authorization?.replace("Bearer ", "");
+
+    if (!apiKey) {
+      return reply.code(401).send({
+        error: "API key requerida",
+        message:
+          "Incluye tu API key en el header: x-api-key o Authorization: Bearer <api_key>",
+      });
+    }
+
+    // Validar API key
+    const { data: apiKeyData, error: apiKeyError } = await supabase
+      .from("api_keys")
+      .select("user_id, is_active")
+      .eq("api_key", apiKey)
+      .single();
+
+    if (apiKeyError || !apiKeyData || !apiKeyData.is_active) {
+      return reply.code(401).send({
+        error: "API key inválida o inactiva",
+        message: "Verifica que tu API key sea correcta y esté activa",
+      });
+    }
+
+    const userId = apiKeyData.user_id;
+
+    // Obtener datos del body
+    const body = request.body;
+
+    // Verificar si es un array (creación masiva) o un objeto (creación individual)
+    const isBulkOperation = Array.isArray(body);
+    const leadsData = isBulkOperation ? body : [body];
+
+    // Validar límite de leads por petición
+    if (leadsData.length > 100) {
+      return reply.code(400).send({
+        error: "Demasiados leads",
+        message:
+          "Máximo 100 leads por petición. Divide tu lote en peticiones más pequeñas.",
+      });
+    }
+
+    // Validar y procesar cada lead
+    const processedLeads = [];
+    const errors = [];
+
+    for (let i = 0; i < leadsData.length; i++) {
+      const leadData = leadsData[i];
+      const {
+        name,
+        phone,
+        email,
+        auto_call = false,
+        source = "api",
+        notes,
+        external_id,
+      } = leadData;
+
+      // Validar campos requeridos
+      if (!name || !phone || !email) {
+        errors.push({
+          index: i,
+          error: "Campos requeridos faltantes",
+          message: "name, phone y email son campos obligatorios",
+        });
+        continue;
+      }
+
+      // Validar formato de teléfono
+      const cleanPhone = phone.replace(/[\s\-\(\)]/g, "");
+      if (!/^\d{7,15}$/.test(cleanPhone)) {
+        errors.push({
+          index: i,
+          error: "Teléfono inválido",
+          message: "El teléfono debe tener entre 7 y 15 dígitos",
+        });
+        continue;
+      }
+
+      // Validar formato de email
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        errors.push({
+          index: i,
+          error: "Email inválido",
+          message: "El formato del email no es válido",
+        });
+        continue;
+      }
+
+      // Limpiar y formatear el teléfono
+      const formattedPhone = cleanPhone.startsWith("+")
+        ? cleanPhone
+        : `+${cleanPhone}`;
+
+      processedLeads.push({
+        index: i,
+        data: {
+          name,
+          phone: formattedPhone,
+          email,
+          auto_call,
+          source,
+          notes: notes || null,
+          external_id: external_id || null,
+        },
+      });
+    }
+
+    // Si hay errores de validación, retornarlos
+    if (errors.length > 0) {
+      return reply.code(400).send({
+        error: "Errores de validación",
+        errors,
+        message: `${errors.length} lead(s) con errores de validación`,
+      });
+    }
+
+    // Procesar leads en lotes para mejor rendimiento
+    const results = [];
+    const batchSize = 10;
+
+    for (let i = 0; i < processedLeads.length; i += batchSize) {
+      const batch = processedLeads.slice(i, i + batchSize);
+
+      const batchResults = await Promise.all(
+        batch.map(async ({ index, data }) => {
+          try {
+            // Buscar lead existente por external_id o email
+            let existingLead = null;
+
+            if (data.external_id) {
+              const { data: externalLead } = await supabase
+                .from("leads")
+                .select("id")
+                .eq("user_id", userId)
+                .eq("external_id", data.external_id)
+                .maybeSingle();
+
+              existingLead = externalLead;
+            }
+
+            if (!existingLead) {
+              const { data: emailLead } = await supabase
+                .from("leads")
+                .select("id")
+                .eq("user_id", userId)
+                .eq("email", data.email)
+                .maybeSingle();
+
+              existingLead = emailLead;
+            }
+
+            if (existingLead) {
+              // Actualizar lead existente
+              const { data: updatedLead, error: updateError } = await supabase
+                .from("leads")
+                .update({
+                  name: data.name,
+                  phone: data.phone,
+                  auto_call: data.auto_call,
+                  source: data.source,
+                  notes: data.notes,
+                  external_id: data.external_id,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", existingLead.id)
+                .select()
+                .single();
+
+              if (updateError) {
+                return {
+                  index,
+                  success: false,
+                  error: "Error al actualizar lead existente",
+                  details: updateError.message,
+                };
+              }
+
+              // NUEVO: Si auto_call es true, agregar a la cola si no está pendiente
+              if (data.auto_call) {
+                // Buscar si ya está en la cola pendiente
+                const { data: queueItem, error: queueError } = await supabase
+                  .from("call_queue")
+                  .select("id")
+                  .eq("user_id", userId)
+                  .eq("lead_id", existingLead.id)
+                  .eq("status", "pending")
+                  .maybeSingle();
+                if (!queueItem) {
+                  // Obtener la última posición en la cola
+                  const { data: existingQueue } = await supabase
+                    .from("call_queue")
+                    .select("queue_position")
+                    .order("queue_position", { ascending: false })
+                    .limit(1);
+                  const nextPosition =
+                    existingQueue && existingQueue.length > 0
+                      ? (existingQueue[0]?.queue_position || 0) + 1
+                      : 1;
+                  await supabase.from("call_queue").insert({
+                    user_id: userId,
+                    lead_id: existingLead.id,
+                    queue_position: nextPosition,
+                    status: "pending",
+                    created_at: new Date().toISOString(),
+                  });
+                }
+              }
+
+              return {
+                index,
+                success: true,
+                data: updatedLead,
+                action: "updated",
+              };
+            } else {
+              // Crear nuevo lead
+              const { data: newLead, error: insertError } = await supabase
+                .from("leads")
+                .insert({
+                  user_id: userId,
+                  name: data.name,
+                  phone: data.phone,
+                  email: data.email,
+                  auto_call: data.auto_call,
+                  source: data.source,
+                  notes: data.notes,
+                  external_id: data.external_id,
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                })
+                .select()
+                .single();
+
+              if (insertError) {
+                return {
+                  index,
+                  success: false,
+                  error: "Error al crear lead",
+                  details: insertError.message,
+                };
+              }
+
+              return {
+                index,
+                success: true,
+                data: newLead,
+                action: "created",
+              };
+            }
+          } catch (error) {
+            return {
+              index,
+              success: false,
+              error: "Error inesperado",
+              details:
+                error instanceof Error ? error.message : "Error desconocido",
+            };
+          }
+        })
+      );
+
+      results.push(...batchResults);
+    }
+
+    // Preparar respuesta
+    const successfulLeads = results.filter((r) => r.success);
+    const failedLeads = results.filter((r) => !r.success);
+
+    if (isBulkOperation) {
+      return reply.send({
+        success: true,
+        message: `Procesamiento completado. ${successfulLeads.length} exitosos, ${failedLeads.length} errores`,
+        data: {
+          total: leadsData.length,
+          successful: successfulLeads.length,
+          failed: failedLeads.length,
+          results: results,
+        },
+      });
+    } else {
+      const result = results[0];
+      if (result.success) {
+        return reply.send({
+          success: true,
+          message: "Lead creado exitosamente",
+          data: result.data,
+        });
+      } else {
+        return reply.code(400).send({
+          success: false,
+          error: result.error,
+          message: result.details,
+        });
+      }
+    }
+  } catch (error) {
+    console.error("❌ [API] Error en POST /api/integration/leads:", error);
+    return reply.code(500).send({
+      error: "Error interno del servidor",
+      message: "Error inesperado al procesar la petición",
+    });
+  }
+});
+
+fastify.get("/api/integration/leads", async (request, reply) => {
+  try {
+    console.log("📞 [API] GET /api/integration/leads - Getting leads");
+
+    // Obtener API key del header
+    const apiKey =
+      request.headers["x-api-key"] ||
+      request.headers.authorization?.replace("Bearer ", "");
+
+    if (!apiKey) {
+      return reply.code(401).send({
+        error: "API key requerida",
+        message:
+          "Incluye tu API key en el header: x-api-key o Authorization: Bearer <api_key>",
+      });
+    }
+
+    // Validar API key
+    const { data: apiKeyData, error: apiKeyError } = await supabase
+      .from("api_keys")
+      .select("user_id, is_active")
+      .eq("api_key", apiKey)
+      .single();
+
+    if (apiKeyError || !apiKeyData || !apiKeyData.is_active) {
+      return reply.code(401).send({
+        error: "API key inválida o inactiva",
+        message: "Verifica que tu API key sea correcta y esté activa",
+      });
+    }
+
+    const userId = apiKeyData.user_id;
+
+    // Obtener parámetros de consulta
+    const page = parseInt(request.query.page || "1");
+    const limit = Math.min(parseInt(request.query.limit || "10"), 100);
+    const search = request.query.search || "";
+    const source = request.query.source || "";
+    const externalId = request.query.external_id || "";
+
+    // Construir consulta
+    let query = supabase
+      .from("leads")
+      .select("*", { count: "exact" })
+      .eq("user_id", userId);
+
+    // Aplicar filtros
+    if (search) {
+      query = query.or(
+        `name.ilike.%${search}%,phone.ilike.%${search}%,email.ilike.%${search}%`
+      );
+    }
+    if (source) {
+      query = query.eq("source", source);
+    }
+    if (externalId) {
+      query = query.eq("external_id", externalId);
+    }
+
+    // Aplicar paginación
+    const offset = (page - 1) * limit;
+    query = query
+      .range(offset, offset + limit - 1)
+      .order("created_at", { ascending: false });
+
+    const { data: leads, error, count } = await query;
+
+    if (error) {
+      return reply.code(500).send({
+        error: "Error al obtener leads",
+        message: error.message,
+      });
+    }
+
+    return reply.send({
+      success: true,
+      data: {
+        leads: leads || [],
+        pagination: {
+          page,
+          limit,
+          total: count || 0,
+          total_pages: Math.ceil((count || 0) / limit),
+        },
+      },
+    });
+  } catch (error) {
+    console.error("❌ [API] Error en GET /api/integration/leads:", error);
+    return reply.code(500).send({
+      error: "Error interno del servidor",
+      message: "Error inesperado al obtener leads",
+    });
+  }
+});
+
 // Start the server
 const start = async () => {
   try {
-    console.log("🚀 Starting server...");
-    console.log("📊 Queue Configuration:", QUEUE_CONFIG);
-    console.log("🔧 Environment Check:");
-    console.log(
-      `   • ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY ? "✅ Set" : "❌ Missing"}`
-    );
-    console.log(
-      `   • ELEVENLABS_AGENT_ID: ${
-        ELEVENLABS_AGENT_ID ? "✅ Set" : "❌ Missing"
-      }`
-    );
-    console.log(
-      `   • TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID ? "✅ Set" : "❌ Missing"}`
-    );
-    console.log(
-      `   • RAILWAY_PUBLIC_DOMAIN: ${
-        RAILWAY_PUBLIC_DOMAIN ? "✅ Set" : "❌ Missing"
-      }`
-    );
+    console.log("🚀 Server starting on port", PORT);
 
     await fastify.listen({ port: PORT, host: "0.0.0.0" });
-    console.log(`✅ Server running on port ${PORT}`);
-    console.log("🔄 Queue processing interval set to:", QUEUE_INTERVAL, "ms");
-    console.log("🧹 Cleanup interval set to:", CLEANUP_INTERVAL, "ms");
+    console.log("✅ Server running");
   } catch (err) {
     console.error("❌ Error starting server:", err);
     process.exit(1);
@@ -2605,3 +2968,787 @@ const start = async () => {
 };
 
 start();
+
+// Function to check for scheduled call in ElevenLabs summary
+async function checkForScheduledCall(webhookData, call) {
+  try {
+    console.log(
+      "🔍 [CALENDAR] ===== INICIO DE BÚSQUEDA DE LLAMADA PROGRAMADA ====="
+    );
+    console.log("📞 [CALENDAR] Call SID:", call.call_sid);
+    console.log("👤 [CALENDAR] User ID:", call.user_id);
+    console.log("📋 [CALENDAR] Lead ID:", call.lead_id);
+    console.log("📊 [CALENDAR] Call Status:", call.status);
+    console.log(
+      "✅ [CALENDAR] Call Successful:",
+      webhookData.data.analysis?.call_successful
+    );
+
+    // Get the transcript summary from ElevenLabs
+    const summary = webhookData.data.analysis?.transcript_summary || "";
+    console.log("📄 [CALENDAR] Summary length:", summary.length);
+    console.log(
+      "📄 [CALENDAR] Summary preview:",
+      summary.substring(0, 200) + (summary.length > 200 ? "..." : "")
+    );
+
+    if (!summary || summary.trim() === "") {
+      console.log(
+        "❌ [CALENDAR] No summary available - skipping calendar check"
+      );
+      return null;
+    }
+
+    // Check if call was successful (this indicates successful scheduling)
+    const isCallSuccessful =
+      webhookData.data.analysis?.call_successful === "success";
+    console.log("🎯 [CALENDAR] Call successful indicator:", isCallSuccessful);
+
+    // If call is successful, proceed directly to extract date/time from summary
+    if (isCallSuccessful) {
+      console.log(
+        "✅ [CALENDAR] Call marked as successful - proceeding with date/time extraction"
+      );
+    } else {
+      // Only check for scheduling keywords if call is not marked as successful
+      const schedulingKeywords = [
+        "scheduled a call",
+        "programó una llamada",
+        "agendó una llamada",
+        "scheduled for",
+        "programado para",
+        "agendado para",
+        "confirmed the time",
+        "confirmó la hora",
+        "confirmed for",
+        "confirmó para",
+        "set up a call",
+        "programó una cita",
+        "agendó una cita",
+        "booked a call",
+        "reservó una llamada",
+        "scheduled it for",
+        "programó para",
+        "agendó para",
+        "scheduled for",
+        "programado el",
+        "agendado el",
+        "confirmed appointment",
+        "confirmó la cita",
+        "set appointment",
+        "estableció cita",
+        "made appointment",
+        "hizo cita",
+        "booked appointment",
+        "reservó cita",
+        "scheduled appointment",
+        "programó cita",
+        "agendó cita",
+        "scheduled a call for",
+        "programó una llamada para",
+        "agendó una llamada para",
+        "set up a call for",
+        "programó una cita para",
+        "agendó una cita para",
+        "booked a call for",
+        "reservó una llamada para",
+        "made a call for",
+        "hizo una llamada para",
+        "arranged a call for",
+        "organizó una llamada para",
+        "planned a call for",
+        "planificó una llamada para",
+      ];
+
+      console.log("🔍 [CALENDAR] Checking for scheduling keywords...");
+      const foundKeywords = [];
+
+      schedulingKeywords.forEach((keyword) => {
+        if (summary.toLowerCase().includes(keyword.toLowerCase())) {
+          foundKeywords.push(keyword);
+        }
+      });
+
+      console.log("🎯 [CALENDAR] Found keywords:", foundKeywords);
+
+      if (foundKeywords.length === 0) {
+        console.log(
+          "❌ [CALENDAR] No scheduling keywords found and call not marked as successful - skipping calendar check"
+        );
+        return null;
+      }
+
+      console.log(
+        "✅ [CALENDAR] Scheduling keywords detected - proceeding with date/time extraction"
+      );
+    }
+
+    // Extract date and time using direct text parsing
+    const dateTimeInfo = await extractDateTimeFromSummary(summary);
+
+    if (dateTimeInfo) {
+      console.log(
+        "✅ [CALENDAR] Date/time extracted successfully:",
+        dateTimeInfo
+      );
+
+      // Get lead information
+      const { data: lead, error: leadError } = await supabase
+        .from("leads")
+        .select("name, phone, email")
+        .eq("id", call.lead_id)
+        .single();
+
+      if (leadError || !lead) {
+        console.error("❌ [CALENDAR] Error fetching lead:", leadError);
+        return null;
+      }
+
+      console.log("✅ [CALENDAR] Lead information retrieved:", {
+        name: lead.name,
+        phone: lead.phone,
+        email: lead.email,
+      });
+
+      const result = {
+        ...dateTimeInfo,
+        lead: lead,
+        call: call,
+        summary: summary,
+      };
+
+      console.log("🎉 [CALENDAR] ===== FINAL RESULT =====");
+      console.log("📅 [CALENDAR] Date:", result.date);
+      console.log("⏰ [CALENDAR] Time:", result.time);
+      console.log("🌍 [CALENDAR] Timezone:", result.timezone);
+      console.log("👤 [CALENDAR] Lead:", result.lead.name);
+      console.log("📞 [CALENDAR] Phone:", result.lead.phone);
+      console.log("📧 [CALENDAR] Email:", result.lead.email);
+      console.log(
+        "🔍 [CALENDAR] ===== FIN DE BÚSQUEDA DE LLAMADA PROGRAMADA ====="
+      );
+
+      return result;
+    } else {
+      console.log("❌ [CALENDAR] Could not extract date/time from summary");
+      console.log(
+        "🔍 [CALENDAR] ===== FIN DE BÚSQUEDA DE LLAMADA PROGRAMADA ====="
+      );
+    }
+
+    return null;
+  } catch (error) {
+    console.error("❌ [CALENDAR] Error checking for scheduled call:", error);
+    console.log(
+      "🔍 [CALENDAR] ===== FIN DE BÚSQUEDA DE LLAMADA PROGRAMADA (ERROR) ====="
+    );
+    return null;
+  }
+}
+
+// Function to extract date and time from summary using direct text parsing
+async function extractDateTimeFromSummary(summary) {
+  try {
+    console.log(
+      "🔍 [CALENDAR][EXTRACT] ===== INICIO DE EXTRACCIÓN DE FECHA/HORA ====="
+    );
+    console.log("📄 [CALENDAR][EXTRACT] Summary to analyze:", summary);
+
+    if (!summary || summary.trim() === "") {
+      console.log("❌ [CALENDAR][EXTRACT] No summary available");
+      return null;
+    }
+
+    const text = summary.toLowerCase();
+    console.log(
+      "📝 [CALENDAR][EXTRACT] Normalized text (first 300 chars):",
+      text.substring(0, 300)
+    );
+
+    // Patterns for date extraction
+    const datePatterns = [
+      // Specific dates: "Friday", "Monday", etc.
+      {
+        pattern:
+          /(monday|tuesday|wednesday|thursday|friday|saturday|sunday|lunes|martes|miércoles|jueves|viernes|sábado|domingo)/gi,
+        type: "day",
+      },
+      // Tomorrow
+      { pattern: /(tomorrow|mañana)/gi, type: "tomorrow" },
+      // Next day: "next Friday", "next Monday"
+      {
+        pattern:
+          /next\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|lunes|martes|miércoles|jueves|viernes|sábado|domingo)/gi,
+        type: "next_day",
+      },
+      // Specific date formats: "January 15th", "15th of January", "15/01", "01/15"
+      {
+        pattern:
+          /(january|february|march|april|may|june|july|august|september|october|november|december|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(\d{1,2})(?:st|nd|rd|th)?/gi,
+        type: "month_day",
+      },
+      {
+        pattern:
+          /(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(january|february|march|april|may|june|july|august|september|october|november|december|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)/gi,
+        type: "day_month",
+      },
+      { pattern: /(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/gi, type: "date_slash" },
+      { pattern: /(\d{1,2})-(\d{1,2})(?:-(\d{2,4}))?/gi, type: "date_dash" },
+    ];
+
+    // Patterns for time extraction
+    const timePatterns = [
+      // 24-hour format: "14:30", "14.30", "1430"
+      { pattern: /(\d{1,2}):(\d{2})/gi, type: "24hour" },
+      { pattern: /(\d{1,2})\.(\d{2})/gi, type: "24hour_dot" },
+      { pattern: /(\d{4})/gi, type: "24hour_compact" },
+      // 12-hour format: "2:30 PM", "2:30pm", "2 PM", "2pm"
+      { pattern: /(\d{1,2}):(\d{2})\s*(am|pm)/gi, type: "12hour" },
+      { pattern: /(\d{1,2})\s*(am|pm)/gi, type: "12hour_no_minutes" },
+      // Spanish time formats: "2:30 de la tarde", "2:30 de la mañana"
+      {
+        pattern: /(\d{1,2}):(\d{2})\s*(?:de\s+la\s+)?(mañana|tarde|noche)/gi,
+        type: "spanish_time",
+      },
+      {
+        pattern: /(\d{1,2})\s*(?:de\s+la\s+)?(mañana|tarde|noche)/gi,
+        type: "spanish_time_no_minutes",
+      },
+    ];
+
+    let extractedDate = null;
+    let extractedTime = null;
+
+    console.log("🔍 [CALENDAR][EXTRACT] Searching for date patterns...");
+
+    // Extract date
+    for (const datePattern of datePatterns) {
+      const matches = [...text.matchAll(datePattern.pattern)];
+      if (matches.length > 0) {
+        const match = matches[0];
+        console.log(
+          `📅 [CALENDAR][EXTRACT] Date pattern found: ${datePattern.type}`,
+          match
+        );
+
+        extractedDate = parseDateFromMatch(match, datePattern.type);
+        if (extractedDate) {
+          console.log(
+            `✅ [CALENDAR][EXTRACT] Date extracted: ${extractedDate}`
+          );
+          break;
+        } else {
+          console.log(
+            `❌ [CALENDAR][EXTRACT] Failed to parse date from pattern: ${datePattern.type}`
+          );
+        }
+      }
+    }
+
+    console.log("🔍 [CALENDAR][EXTRACT] Searching for time patterns...");
+
+    // Extract time
+    for (const timePattern of timePatterns) {
+      const matches = [...text.matchAll(timePattern.pattern)];
+      if (matches.length > 0) {
+        const match = matches[0];
+        console.log(
+          `⏰ [CALENDAR][EXTRACT] Time pattern found: ${timePattern.type}`,
+          match
+        );
+
+        extractedTime = parseTimeFromMatch(match, timePattern.type);
+        if (extractedTime) {
+          console.log(
+            `✅ [CALENDAR][EXTRACT] Time extracted: ${extractedTime}`
+          );
+          break;
+        } else {
+          console.log(
+            `❌ [CALENDAR][EXTRACT] Failed to parse time from pattern: ${timePattern.type}`
+          );
+        }
+      }
+    }
+
+    if (!extractedDate || !extractedTime) {
+      console.log(
+        "❌ [CALENDAR][EXTRACT] Could not extract complete date/time information"
+      );
+      console.log("📅 [CALENDAR][EXTRACT] Extracted date:", extractedDate);
+      console.log("⏰ [CALENDAR][EXTRACT] Extracted time:", extractedTime);
+      console.log(
+        "🔍 [CALENDAR][EXTRACT] ===== FIN DE EXTRACCIÓN DE FECHA/HORA (INCOMPLETA) ====="
+      );
+      return null;
+    }
+
+    console.log(
+      "✅ [CALENDAR][EXTRACT] Successfully extracted date and time:",
+      {
+        date: extractedDate,
+        time: extractedTime,
+      }
+    );
+
+    const result = {
+      date: extractedDate,
+      time: extractedTime,
+      timezone: "America/New_York",
+      title: "Llamada inversión inmobiliaria",
+      description: "Llamada programada desde conversación telefónica",
+      attendees: [],
+    };
+
+    console.log("🎉 [CALENDAR][EXTRACT] ===== RESULTADO FINAL =====");
+    console.log("📅 [CALENDAR][EXTRACT] Date:", result.date);
+    console.log("⏰ [CALENDAR][EXTRACT] Time:", result.time);
+    console.log("🌍 [CALENDAR][EXTRACT] Timezone:", result.timezone);
+    console.log(
+      "🔍 [CALENDAR][EXTRACT] ===== FIN DE EXTRACCIÓN DE FECHA/HORA ====="
+    );
+
+    return result;
+  } catch (error) {
+    console.error("❌ [CALENDAR][EXTRACT] Error extracting date/time:", error);
+    console.log(
+      "🔍 [CALENDAR][EXTRACT] ===== FIN DE EXTRACCIÓN DE FECHA/HORA (ERROR) ====="
+    );
+    return null;
+  }
+}
+
+// Helper function to parse date from regex match
+function parseDateFromMatch(match, type) {
+  try {
+    const today = new Date();
+    const currentYear = today.getFullYear();
+
+    switch (type) {
+      case "day":
+        const dayName = match[1].toLowerCase();
+        const dayMap = {
+          monday: 1,
+          lunes: 1,
+          tuesday: 2,
+          martes: 2,
+          wednesday: 3,
+          miércoles: 3,
+          thursday: 4,
+          jueves: 4,
+          friday: 5,
+          viernes: 5,
+          saturday: 6,
+          sábado: 6,
+          sunday: 0,
+          domingo: 0,
+        };
+
+        const targetDay = dayMap[dayName];
+        if (targetDay === undefined) return null;
+
+        const currentDay = today.getDay();
+        let daysToAdd = targetDay - currentDay;
+        if (daysToAdd <= 0) daysToAdd += 7; // Next week
+
+        const targetDate = new Date(today);
+        targetDate.setDate(today.getDate() + daysToAdd);
+
+        return targetDate.toISOString().split("T")[0];
+
+      case "tomorrow":
+        const tomorrow = new Date(today);
+        tomorrow.setDate(today.getDate() + 1);
+        return tomorrow.toISOString().split("T")[0];
+
+      case "next_day":
+        const nextDayName = match[2].toLowerCase();
+        const nextDayMap = {
+          monday: 1,
+          lunes: 1,
+          tuesday: 2,
+          martes: 2,
+          wednesday: 3,
+          miércoles: 3,
+          thursday: 4,
+          jueves: 4,
+          friday: 5,
+          viernes: 5,
+          saturday: 6,
+          sábado: 6,
+          sunday: 0,
+          domingo: 0,
+        };
+
+        const nextTargetDay = nextDayMap[nextDayName];
+        if (nextTargetDay === undefined) return null;
+
+        const nextCurrentDay = today.getDay();
+        let nextDaysToAdd = nextTargetDay - nextCurrentDay;
+        if (nextDaysToAdd <= 0) nextDaysToAdd += 7;
+
+        const nextTargetDate = new Date(today);
+        nextTargetDate.setDate(today.getDate() + nextDaysToAdd);
+
+        return nextTargetDate.toISOString().split("T")[0];
+
+      case "month_day":
+        const monthName = match[1].toLowerCase();
+        const day = parseInt(match[2]);
+        const month = getMonthNumber(monthName);
+        if (month === -1 || day < 1 || day > 31) return null;
+
+        return `${currentYear}-${month.toString().padStart(2, "0")}-${day
+          .toString()
+          .padStart(2, "0")}`;
+
+      case "day_month":
+        const day2 = parseInt(match[1]);
+        const monthName2 = match[2].toLowerCase();
+        const month2 = getMonthNumber(monthName2);
+        if (month2 === -1 || day2 < 1 || day2 > 31) return null;
+
+        return `${currentYear}-${month2.toString().padStart(2, "0")}-${day2
+          .toString()
+          .padStart(2, "0")}`;
+
+      case "date_slash":
+        const month3 = parseInt(match[1]);
+        const day3 = parseInt(match[2]);
+        const year3 = match[3] ? parseInt(match[3]) : currentYear;
+        if (month3 < 1 || month3 > 12 || day3 < 1 || day3 > 31) return null;
+
+        return `${year3}-${month3.toString().padStart(2, "0")}-${day3
+          .toString()
+          .padStart(2, "0")}`;
+
+      case "date_dash":
+        const month4 = parseInt(match[1]);
+        const day4 = parseInt(match[2]);
+        const year4 = match[3] ? parseInt(match[3]) : currentYear;
+        if (month4 < 1 || month4 > 12 || day4 < 1 || day4 > 31) return null;
+
+        return `${year4}-${month4.toString().padStart(2, "0")}-${day4
+          .toString()
+          .padStart(2, "0")}`;
+
+      default:
+        return null;
+    }
+  } catch (error) {
+    console.error("❌ [CALENDAR] Error parsing date:", error);
+    return null;
+  }
+}
+
+// Helper function to parse time from regex match
+function parseTimeFromMatch(match, type) {
+  try {
+    switch (type) {
+      case "24hour":
+        const hour = parseInt(match[1]);
+        const minute = parseInt(match[2]);
+        if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+        return `${hour.toString().padStart(2, "0")}:${minute
+          .toString()
+          .padStart(2, "0")}`;
+
+      case "24hour_dot":
+        const hour2 = parseInt(match[1]);
+        const minute2 = parseInt(match[2]);
+        if (hour2 < 0 || hour2 > 23 || minute2 < 0 || minute2 > 59) return null;
+        return `${hour2.toString().padStart(2, "0")}:${minute2
+          .toString()
+          .padStart(2, "0")}`;
+
+      case "24hour_compact":
+        const timeStr = match[1];
+        if (timeStr.length !== 4) return null;
+        const hour3 = parseInt(timeStr.substring(0, 2));
+        const minute3 = parseInt(timeStr.substring(2, 4));
+        if (hour3 < 0 || hour3 > 23 || minute3 < 0 || minute3 > 59) return null;
+        return `${hour3.toString().padStart(2, "0")}:${minute3
+          .toString()
+          .padStart(2, "0")}`;
+
+      case "12hour":
+        let hour4 = parseInt(match[1]);
+        const minute4 = parseInt(match[2]);
+        const period = match[3].toLowerCase();
+
+        if (hour4 < 1 || hour4 > 12 || minute4 < 0 || minute4 > 59) return null;
+        if (period === "pm" && hour4 !== 12) hour4 += 12;
+        if (period === "am" && hour4 === 12) hour4 = 0;
+
+        return `${hour4.toString().padStart(2, "0")}:${minute4
+          .toString()
+          .padStart(2, "0")}`;
+
+      case "12hour_no_minutes":
+        let hour5 = parseInt(match[1]);
+        const period2 = match[2].toLowerCase();
+
+        if (hour5 < 1 || hour5 > 12) return null;
+        if (period2 === "pm" && hour5 !== 12) hour5 += 12;
+        if (period2 === "am" && hour5 === 12) hour5 = 0;
+
+        return `${hour5.toString().padStart(2, "0")}:00`;
+
+      case "spanish_time":
+        let hour6 = parseInt(match[1]);
+        const minute6 = parseInt(match[2]);
+        const period3 = match[3].toLowerCase();
+
+        if (hour6 < 1 || hour6 > 12 || minute6 < 0 || minute6 > 59) return null;
+        if (period3 === "tarde" || period3 === "noche") {
+          if (hour6 !== 12) hour6 += 12;
+        } else if (period3 === "mañana" && hour6 === 12) {
+          hour6 = 0;
+        }
+
+        return `${hour6.toString().padStart(2, "0")}:${minute6
+          .toString()
+          .padStart(2, "0")}`;
+
+      case "spanish_time_no_minutes":
+        let hour7 = parseInt(match[1]);
+        const period4 = match[2].toLowerCase();
+
+        if (hour7 < 1 || hour7 > 12) return null;
+        if (period4 === "tarde" || period4 === "noche") {
+          if (hour7 !== 12) hour7 += 12;
+        } else if (period4 === "mañana" && hour7 === 12) {
+          hour7 = 0;
+        }
+
+        return `${hour7.toString().padStart(2, "0")}:00`;
+
+      default:
+        return null;
+    }
+  } catch (error) {
+    console.error("❌ [CALENDAR] Error parsing time:", error);
+    return null;
+  }
+}
+
+// Helper function to get month number from month name
+function getMonthNumber(monthName) {
+  const monthMap = {
+    january: 1,
+    enero: 1,
+    february: 2,
+    febrero: 2,
+    march: 3,
+    marzo: 3,
+    april: 4,
+    abril: 4,
+    may: 5,
+    mayo: 5,
+    june: 6,
+    junio: 6,
+    july: 7,
+    julio: 7,
+    august: 8,
+    agosto: 8,
+    september: 9,
+    septiembre: 9,
+    october: 10,
+    octubre: 10,
+    november: 11,
+    noviembre: 11,
+    december: 12,
+    diciembre: 12,
+  };
+
+  return monthMap[monthName.toLowerCase()] || -1;
+}
+
+// Function to create calendar event
+async function createCalendarEvent(scheduledCallInfo, call) {
+  try {
+    console.log("📅 [CALENDAR] Creating calendar event...");
+
+    // Get user calendar settings
+    const { data: calendarSettings, error: settingsError } = await supabase
+      .from("user_calendar_settings")
+      .select(
+        "access_token, refresh_token, calendar_enabled, calendar_timezone"
+      )
+      .eq("user_id", call.user_id)
+      .single();
+
+    if (settingsError || !calendarSettings) {
+      console.error(
+        "❌ [CALENDAR] No calendar settings found for user:",
+        call.user_id
+      );
+      return;
+    }
+
+    if (!calendarSettings.calendar_enabled) {
+      console.log("ℹ️ [CALENDAR] Calendar not enabled for user:", call.user_id);
+      return;
+    }
+
+    // Verify and refresh token if needed
+    try {
+      const tokenInfoResponse = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?access_token=${calendarSettings.access_token}`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (!tokenInfoResponse.ok) {
+        console.log("🔄 [CALENDAR] Token expired, refreshing...");
+        const { google } = await import("googleapis");
+        const oauth2Client = new google.auth.OAuth2(
+          process.env.GOOGLE_CLIENT_ID,
+          process.env.GOOGLE_CLIENT_SECRET
+        );
+
+        oauth2Client.setCredentials({
+          access_token: calendarSettings.access_token,
+          refresh_token: calendarSettings.refresh_token,
+        });
+
+        const { credentials } = await oauth2Client.refreshAccessToken();
+
+        if (!credentials.access_token) {
+          console.error("❌ [CALENDAR] Failed to refresh token");
+          return;
+        }
+
+        // Update token in database
+        await supabase
+          .from("user_calendar_settings")
+          .update({
+            access_token: credentials.access_token,
+            refresh_token:
+              credentials.refresh_token || calendarSettings.refresh_token,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("user_id", call.user_id);
+
+        calendarSettings.access_token = credentials.access_token;
+        console.log("✅ [CALENDAR] Token refreshed successfully");
+      }
+    } catch (tokenError) {
+      console.error("❌ [CALENDAR] Error refreshing token:", tokenError);
+      return;
+    }
+
+    // Create calendar event
+    const { google } = await import("googleapis");
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET
+    );
+
+    oauth2Client.setCredentials({
+      access_token: calendarSettings.access_token,
+    });
+
+    const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
+    // Get user timezone (default to America/New_York if not specified)
+    const userTimeZone =
+      scheduledCallInfo.timezone ||
+      calendarSettings.calendar_timezone ||
+      "America/New_York";
+
+    console.log("🔍 [CALENDAR] User timezone:", userTimeZone);
+
+    const dateTimeString = `${scheduledCallInfo.date}T${scheduledCallInfo.time}:00`;
+
+    // Descomponer la fecha y hora para evitar ambigüedad con zonas horarias locales
+    const [year, month, day] = scheduledCallInfo.date.split("-").map(Number);
+    const [hour, minute] = scheduledCallInfo.time.split(":").map(Number);
+
+    const eventDate = new Date(year, month - 1, day, hour + 4, minute);
+    const endDate = new Date(eventDate.getTime() + 30 * 60 * 1000); // 30 minutos
+
+    // Formatear fechas en formato ISO ajustado a la zona horaria del usuario
+    const formatDateForGoogleCalendar = (date) => {
+      return date.toISOString();
+    };
+
+    const startDateTime = formatDateForGoogleCalendar(eventDate);
+    const endDateTime = formatDateForGoogleCalendar(endDate);
+
+    console.log("🔍 [CALENDAR] Date calculations:", {
+      originalDate: `${scheduledCallInfo.date}T${scheduledCallInfo.time}`,
+      userTimeZone: userTimeZone,
+      startDateTimeFormatted: startDateTime,
+      endDateTimeFormatted: endDateTime,
+    });
+
+    // CORREGIDO: Usar el email real del cliente como invitado
+    const attendees = [];
+    if (scheduledCallInfo.lead && scheduledCallInfo.lead.email) {
+      attendees.push({ email: scheduledCallInfo.lead.email });
+    }
+
+    const event = {
+      summary: scheduledCallInfo.title,
+      description: `${scheduledCallInfo.description}\n\nCliente: ${scheduledCallInfo.lead.name}`,
+      start: {
+        dateTime: startDateTime,
+        timeZone: userTimeZone,
+      },
+      end: {
+        dateTime: endDateTime,
+        timeZone: userTimeZone,
+      },
+      attendees: attendees,
+      reminders: {
+        useDefault: false,
+        overrides: [
+          { method: "email", minutes: 24 * 60 }, // 1 day before
+          { method: "email", minutes: 1 * 60 }, // 1 hour before
+          { method: "popup", minutes: 1 * 60 }, // 1 hour before
+          { method: "popup", minutes: 15 }, // 15 minutes before
+        ],
+      },
+    };
+
+    console.log("📅 [CALENDAR] Creating event:", {
+      title: event.summary,
+      start: event.start.dateTime,
+      end: event.end.dateTime,
+      timezone: userTimeZone,
+      attendees: event.attendees.length,
+    });
+
+    const calendarResponse = await calendar.events.insert({
+      calendarId: "primary",
+      resource: event,
+      sendUpdates: "all",
+    });
+
+    console.log("✅ [CALENDAR] Event created successfully:", {
+      eventId: calendarResponse.data.id,
+      htmlLink: calendarResponse.data.htmlLink,
+      start: calendarResponse.data.start,
+      end: calendarResponse.data.end,
+    });
+
+    // Update call with calendar event info
+    await supabase
+      .from("calls")
+      .update({
+        calendar_event_id: calendarResponse.data.id,
+        calendar_event_link: calendarResponse.data.htmlLink,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("conversation_id", call.conversation_id);
+
+    console.log("✅ [CALENDAR] Call updated with calendar event info");
+  } catch (error) {
+    console.error("❌ [CALENDAR] Error creating calendar event:", error);
+  }
+}
