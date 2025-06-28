@@ -2527,8 +2527,6 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
 //   ...
 // }
 
-
-
 // API Integration endpoints for leads
 fastify.post("/api/integration/leads", async (request, reply) => {
   try {
@@ -3766,14 +3764,21 @@ const resumeTwilioCall = async (callSid, delayMs = 1000) => {
   }, delayMs);
 };
 
-
-
 // TwiML endpoint para pausar y cortar audio actual
 fastify.post("/twiml/stop-audio", async (request, reply) => {
   console.log("🛑 [TWIML] Stop audio endpoint called");
   const VoiceResponse = Twilio.twiml.VoiceResponse;
   const twiml = new VoiceResponse();
+
+  // Detenemos cualquier audio actual
   twiml.pause({ length: 1 });
+
+  // Redirigimos automáticamente a resume
+  twiml.redirect(
+    { method: "POST" },
+    `https://${RAILWAY_PUBLIC_DOMAIN}/twiml/resume`
+  );
+
   reply.type("text/xml").send(twiml.toString());
 });
 
