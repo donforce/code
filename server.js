@@ -1512,6 +1512,7 @@ fastify.register(async (fastifyInstance) => {
       let lastUserTranscript = "";
       let sentAudioChunks = new Set(); // Para evitar audio duplicado
       let audioChunkCounter = 0; // Contador para limpiar el Set periódicamente
+      let interrupted = false; // Variable para controlar interrupciones
 
       ws.on("error", console.error);
 
@@ -1700,6 +1701,16 @@ fastify.register(async (fastifyInstance) => {
                     }
                     break;
 
+                  case "audio_chunk":
+                    if (!interrupted) {
+                      wsClient.send(message.audio);
+                    }
+                    break;
+
+                  case "message_response":
+                    interrupted = false;
+                    break;
+
                   case "agent_response":
                     console.log("🤖 [AGENT] Speaking");
                     // Log agent response details if available
@@ -1748,27 +1759,21 @@ fastify.register(async (fastifyInstance) => {
                     console.log(
                       "🛑 [INTERRUPTION] Agent interrupted successfully"
                     );
-                    // Detener audio de Twilio y reanudar después
-                    //await stopTwilioAudio(callSid);
-                    //resumeTwilioCall(callSid, 1000);
+                    interrupted = true;
                     break;
 
                   case "interruption_detected":
                     console.log(
                       "🚨 [INTERRUPTION] Interruption event received"
                     );
-                    // Detener audio de Twilio y reanudar después
-                    // await stopTwilioAudio(callSid);
-                    // resumeTwilioCall(callSid, 1000);
+                    interrupted = true;
                     break;
 
                   case "interruption":
                     console.log(
                       "🚨 [INTERRUPTION] Interruption event received"
                     );
-                    // Detener audio de Twilio y reanudar después
-                    await stopTwilioAudio(callSid);
-                    resumeTwilioCall(callSid, 1000);
+                    interrupted = true;
                     break;
 
                   case "conversation_resumed":
@@ -1784,6 +1789,7 @@ fastify.register(async (fastifyInstance) => {
                     break;
 
                   case "user_transcript":
+                    interrupted = false;
                     const transcript =
                       message.user_transcription_event?.user_transcript
                         ?.toLowerCase()
@@ -3734,20 +3740,6 @@ async function createCalendarEvent(scheduledCallInfo, call) {
   }
 }
 
-// Función para detener el audio actual de Twilio
-const stopTwilioAudio = async (callSid) => {
-  if (!callSid) return;
-  try {
-    await twilioClient.calls(callSid).update({
-      url: `https://${RAILWAY_PUBLIC_DOMAIN}/twiml/stop-audio`,
-      method: "POST",
-    });
-    console.log(`🛑 [TWILIO] Audio detenido para callSid: ${callSid}`);
-  } catch (err) {
-    console.error("❌ [TWILIO] Error deteniendo audio:", err);
-  }
-};
-
 // Función para reanudar la llamada después de pausa
 const resumeTwilioCall = async (callSid, delayMs = 1000) => {
   if (!callSid) return;
@@ -3763,33 +3755,3 @@ const resumeTwilioCall = async (callSid, delayMs = 1000) => {
     }
   }, delayMs);
 };
-
-// TwiML endpoint para pausar y cortar audio actual
-fastify.post("/twiml/stop-audio", async (request, reply) => {
-  console.log("🛑 [TWIML] Stop audio endpoint called");
-  const VoiceResponse = Twilio.twiml.VoiceResponse;
-  const twiml = new VoiceResponse();
-
-  // Detenemos cualquier audio actual
-  twiml.pause({ length: 1 });
-
-  // Redirigimos automáticamente a resume
-  twiml.redirect(
-    { method: "POST" },
-    `https://${RAILWAY_PUBLIC_DOMAIN}/twiml/resume`
-  );
-
-  reply.type("text/xml").send(twiml.toString());
-});
-
-// TwiML endpoint para reanudar <Stream>
-fastify.post("/twiml/resume", async (request, reply) => {
-  console.log("🔄 [TWIML] Resume endpoint called");
-  const VoiceResponse = Twilio.twiml.VoiceResponse;
-  const twiml = new VoiceResponse();
-  twiml.stream({
-    url: `wss://${RAILWAY_PUBLIC_DOMAIN}/outbound-media-stream`,
-    name: "media-stream",
-  });
-  reply.type("text/xml").send(twiml.toString());
-});
