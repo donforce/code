@@ -2520,6 +2520,41 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       console.error("❌ Error processing calendar event:", calendarError);
     }
 
+    // 🌐 TRANSLATE SUMMARY TO SPANISH
+    try {
+      const originalSummary = webhookData.data.analysis?.transcript_summary;
+      if (originalSummary) {
+        console.log("🌐 [TRANSLATION] Translating summary to Spanish...");
+        const translatedSummary = await translateSummaryToSpanish(
+          originalSummary
+        );
+
+        if (translatedSummary) {
+          // Update call with translated summary
+          const { error: translationError } = await supabase
+            .from("calls")
+            .update({
+              transcript_summary_es: translatedSummary,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("conversation_id", conversation_id);
+
+          if (translationError) {
+            console.error(
+              "❌ [TRANSLATION] Error saving translated summary:",
+              translationError
+            );
+          } else {
+            console.log(
+              "✅ [TRANSLATION] Translated summary saved successfully"
+            );
+          }
+        }
+      }
+    } catch (translationError) {
+      console.error("❌ Error translating summary:", translationError);
+    }
+
     reply.send({ success: true, message: "Webhook processed successfully" });
   } catch (error) {
     console.error("❌ Error processing webhook:", error);
@@ -3755,3 +3790,58 @@ const resumeTwilioCall = async (callSid, delayMs = 1000) => {
     }
   }, delayMs);
 };
+
+// Function to translate transcript summary to Spanish using OpenAI
+async function translateSummaryToSpanish(summary) {
+  try {
+    console.log("🌐 [TRANSLATION] Starting translation of summary to Spanish");
+
+    if (!summary || summary.trim() === "") {
+      console.log("❌ [TRANSLATION] No summary to translate");
+      return null;
+    }
+
+    const { OpenAI } = await import("openai");
+    const openai = new OpenAI({
+      apiKey: OPENAI_API_KEY,
+    });
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        {
+          role: "system",
+          content:
+            "Eres un traductor profesional. Traduce el siguiente resumen de conversación telefónica al español de manera natural y profesional, manteniendo el contexto y la información importante.",
+        },
+        {
+          role: "user",
+          content: `Traduce este resumen al español: "${summary}"`,
+        },
+      ],
+      max_tokens: 500,
+      temperature: 0.3,
+    });
+
+    const translatedSummary = response.choices[0]?.message?.content?.trim();
+
+    if (translatedSummary) {
+      console.log("✅ [TRANSLATION] Summary translated successfully");
+      console.log(
+        "📝 [TRANSLATION] Original:",
+        summary.substring(0, 100) + "..."
+      );
+      console.log(
+        "📝 [TRANSLATION] Translated:",
+        translatedSummary.substring(0, 100) + "..."
+      );
+      return translatedSummary;
+    } else {
+      console.log("❌ [TRANSLATION] No translation received from OpenAI");
+      return null;
+    }
+  } catch (error) {
+    console.error("❌ [TRANSLATION] Error translating summary:", error);
+    return null;
+  }
+}
