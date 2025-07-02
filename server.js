@@ -3874,9 +3874,14 @@ fastify.post("/webhook/stripe", async (request, reply) => {
       "📋 [STRIPE] Request body length:",
       request.rawBody?.length || 0
     );
+
+    // Convert Buffer to string for logging
+    const rawBodyString = request.rawBody
+      ? request.rawBody.toString("utf8")
+      : "";
     console.log(
       "📋 [STRIPE] Request body preview:",
-      request.rawBody?.substring(0, 200) + "..."
+      rawBodyString.substring(0, 200) + "..."
     );
 
     const rawBody = request.rawBody;
