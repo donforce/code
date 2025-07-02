@@ -78,10 +78,21 @@ const fastify = Fastify({
   maxRequestsPerSocket: 100,
   // Disable request logging for better performance
   disableRequestLogging: true,
+  // Configure body parsing for Stripe webhooks
+  bodyLimit: 1048576, // 1MB
 });
 
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
+
+// Add hook to preserve raw body for Stripe webhooks
+fastify.addHook("preHandler", (request, reply, done) => {
+  // Preserve raw body for Stripe webhook endpoint
+  if (request.url === "/webhook/stripe" && request.method === "POST") {
+    request.rawBody = request.rawBody || request.body;
+  }
+  done();
+});
 
 const PORT = process.env.PORT || 8000;
 
