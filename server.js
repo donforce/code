@@ -3855,13 +3855,46 @@ async function translateSummaryToSpanish(summary) {
 fastify.post("/webhook/stripe", async (request, reply) => {
   try {
     console.log("💳 [STRIPE] Webhook received, processing subscription...");
+    console.log(
+      "📋 [STRIPE] Request headers:",
+      JSON.stringify(request.headers, null, 2)
+    );
+    console.log(
+      "📋 [STRIPE] Request body length:",
+      request.rawBody?.length || 0
+    );
+    console.log(
+      "📋 [STRIPE] Request body preview:",
+      request.rawBody?.substring(0, 200) + "..."
+    );
 
     const rawBody = request.rawBody;
     const signature = request.headers["stripe-signature"];
 
+    console.log("🔍 [STRIPE] Signature header:", signature);
+    console.log("🔍 [STRIPE] Raw body exists:", !!rawBody);
+    console.log(
+      "🔍 [STRIPE] Webhook secret configured:",
+      !!process.env.STRIPE_WEBHOOK_SECRET
+    );
+    console.log(
+      "🔍 [STRIPE] Webhook secret preview:",
+      process.env.STRIPE_WEBHOOK_SECRET?.substring(0, 20) + "..."
+    );
+
     if (!signature) {
       console.error("❌ [STRIPE] No Stripe signature found");
       return reply.code(400).send({ error: "No signature" });
+    }
+
+    if (!rawBody) {
+      console.error("❌ [STRIPE] No raw body found");
+      return reply.code(400).send({ error: "No raw body" });
+    }
+
+    if (!process.env.STRIPE_WEBHOOK_SECRET) {
+      console.error("❌ [STRIPE] No webhook secret configured");
+      return reply.code(500).send({ error: "Webhook secret not configured" });
     }
 
     // Import Stripe dynamically
@@ -3873,6 +3906,10 @@ fastify.post("/webhook/stripe", async (request, reply) => {
     // Verify the webhook signature
     let event;
     try {
+      console.log("🔍 [STRIPE] Attempting signature verification...");
+      console.log("🔍 [STRIPE] Raw body type:", typeof rawBody);
+      console.log("🔍 [STRIPE] Raw body is Buffer:", Buffer.isBuffer(rawBody));
+
       event = stripe.webhooks.constructEvent(
         rawBody,
         signature,
@@ -3881,9 +3918,16 @@ fastify.post("/webhook/stripe", async (request, reply) => {
       console.log("✅ [STRIPE] Webhook signature verified");
       console.log("📡 [STRIPE] Event type:", event.type);
     } catch (err) {
+      console.error("❌ [STRIPE] Webhook signature verification failed:");
+      console.error("   Error message:", err.message);
+      console.error("   Error code:", err.code);
       console.error(
-        "❌ [STRIPE] Webhook signature verification failed:",
-        err.message
+        "   Expected signature format:",
+        signature?.substring(0, 50) + "..."
+      );
+      console.error(
+        "   Webhook secret used:",
+        process.env.STRIPE_WEBHOOK_SECRET?.substring(0, 20) + "..."
       );
       return reply.code(400).send({ error: "Invalid signature" });
     }
