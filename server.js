@@ -28,6 +28,9 @@ const {
   GOOGLE_CLIENT_SECRET,
   // OpenAI configuration
   OPENAI_API_KEY,
+  // Stripe configuration
+  STRIPE_SECRET_KEY,
+  STRIPE_WEBHOOK_SECRET,
   // Multi-threading configuration
   MAX_CONCURRENT_CALLS,
   MAX_CALLS_PER_USER,
@@ -49,7 +52,9 @@ if (
   !RAILWAY_PUBLIC_DOMAIN ||
   !GOOGLE_CLIENT_ID ||
   !GOOGLE_CLIENT_SECRET ||
-  !OPENAI_API_KEY
+  !OPENAI_API_KEY ||
+  !STRIPE_SECRET_KEY ||
+  !STRIPE_WEBHOOK_SECRET
 ) {
   console.error("Missing required environment variables");
   throw new Error("Missing required environment variables");
@@ -3843,5 +3848,348 @@ async function translateSummaryToSpanish(summary) {
   } catch (error) {
     console.error("❌ [TRANSLATION] Error translating summary:", error);
     return null;
+  }
+}
+
+// Add webhook endpoint for Stripe (handles user_subscriptions directly)
+fastify.post("/webhook/stripe", async (request, reply) => {
+  try {
+    console.log("💳 [STRIPE] Webhook received, processing subscription...");
+
+    const rawBody = request.rawBody;
+    const signature = request.headers["stripe-signature"];
+
+    if (!signature) {
+      console.error("❌ [STRIPE] No Stripe signature found");
+      return reply.code(400).send({ error: "No signature" });
+    }
+
+    // Import Stripe dynamically
+    const Stripe = (await import("stripe")).default;
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+      apiVersion: "2025-04-30.basil",
+    });
+
+    // Verify the webhook signature
+    let event;
+    try {
+      event = stripe.webhooks.constructEvent(
+        rawBody,
+        signature,
+        process.env.STRIPE_WEBHOOK_SECRET
+      );
+      console.log("✅ [STRIPE] Webhook signature verified");
+      console.log("📡 [STRIPE] Event type:", event.type);
+    } catch (err) {
+      console.error(
+        "❌ [STRIPE] Webhook signature verification failed:",
+        err.message
+      );
+      return reply.code(400).send({ error: "Invalid signature" });
+    }
+
+    // Process different event types
+    switch (event.type) {
+      case "checkout.session.completed":
+        await handleCheckoutSessionCompleted(event.data.object, stripe);
+        break;
+
+      case "invoice.payment_succeeded":
+        await handleInvoicePaymentSucceeded(event.data.object, stripe);
+        break;
+
+      case "customer.subscription.updated":
+        await handleSubscriptionUpdated(event.data.object);
+        break;
+
+      case "customer.subscription.deleted":
+        await handleSubscriptionDeleted(event.data.object);
+        break;
+
+      default:
+        console.log(`ℹ️ [STRIPE] Unhandled event type: ${event.type}`);
+    }
+
+    return reply.send({ success: true, message: "Webhook processed" });
+  } catch (error) {
+    console.error("❌ [STRIPE] Error handling Stripe webhook:", error);
+    return reply.code(500).send({ error: "Internal server error" });
+  }
+});
+
+// Handle checkout.session.completed event
+async function handleCheckoutSessionCompleted(session, stripe) {
+  try {
+    console.log("✅ [STRIPE] Processing checkout.session.completed");
+    console.log("📋 [STRIPE] Session details:", {
+      id: session.id,
+      customer: session.customer,
+      subscription: session.subscription,
+      customer_email: session.customer_email,
+      amount_total: session.amount_total,
+      currency: session.currency,
+      metadata: session.metadata,
+    });
+
+    if (!session.subscription) {
+      console.log("❌ [STRIPE] No subscription found in session");
+      return;
+    }
+
+    // Get subscription details from Stripe
+    const subscription = await stripe.subscriptions.retrieve(
+      session.subscription
+    );
+    console.log("📦 [STRIPE] Subscription retrieved:", subscription.id);
+
+    // Get product and price details
+    const price = await stripe.prices.retrieve(
+      subscription.items.data[0].price.id
+    );
+    const product = await stripe.products.retrieve(price.product);
+
+    console.log("📦 [STRIPE] Product details:", {
+      name: product.name,
+      metadata: product.metadata,
+    });
+
+    // Extract minutes per month from product metadata
+    const minutesPerMonth = parseInt(
+      product.metadata?.minutes_per_month ||
+        price.metadata?.minutes_per_month ||
+        "250"
+    );
+
+    // Find user by customer email or customer ID
+    let user = null;
+
+    if (session.customer_email) {
+      const { data: userByEmail } = await supabase
+        .from("users")
+        .select("*")
+        .eq("email", session.customer_email)
+        .single();
+
+      if (userByEmail) {
+        user = userByEmail;
+        console.log("✅ [STRIPE] User found by email:", user.id);
+      }
+    }
+
+    if (!user && session.customer) {
+      const { data: userByCustomerId } = await supabase
+        .from("users")
+        .select("*")
+        .eq("stripe_customer_id", session.customer)
+        .single();
+
+      if (userByCustomerId) {
+        user = userByCustomerId;
+        console.log("✅ [STRIPE] User found by customer ID:", user.id);
+      }
+    }
+
+    if (!user) {
+      console.error("❌ [STRIPE] User not found for session:", session.id);
+      return;
+    }
+
+    // Update user's stripe_customer_id if not set
+    if (!user.stripe_customer_id && session.customer) {
+      await supabase
+        .from("users")
+        .update({
+          stripe_customer_id: session.customer,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", user.id);
+
+      console.log("✅ [STRIPE] Updated user stripe_customer_id");
+    }
+
+    // Check if subscription already exists
+    const { data: existingSubscription } = await supabase
+      .from("user_subscriptions")
+      .select("*")
+      .eq("stripe_subscription_id", subscription.id)
+      .single();
+
+    if (existingSubscription) {
+      console.log("ℹ️ [STRIPE] Subscription already exists, updating...");
+
+      await supabase
+        .from("user_subscriptions")
+        .update({
+          status: subscription.status,
+          current_period_start: new Date(
+            subscription.current_period_start * 1000
+          ).toISOString(),
+          current_period_end: new Date(
+            subscription.current_period_end * 1000
+          ).toISOString(),
+          cancel_at_period_end: subscription.cancel_at_period_end,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existingSubscription.id);
+
+      console.log("✅ [STRIPE] Subscription updated");
+    } else {
+      console.log("🆕 [STRIPE] Creating new subscription...");
+
+      // Create new subscription record
+      const { data: newSubscription, error: insertError } = await supabase
+        .from("user_subscriptions")
+        .insert({
+          user_id: user.id,
+          stripe_subscription_id: subscription.id,
+          stripe_customer_id: session.customer,
+          status: subscription.status,
+          current_period_start: new Date(
+            subscription.current_period_start * 1000
+          ).toISOString(),
+          current_period_end: new Date(
+            subscription.current_period_end * 1000
+          ).toISOString(),
+          cancel_at_period_end: subscription.cancel_at_period_end,
+          minutes_per_month: minutesPerMonth,
+          product_name: product.name,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error("❌ [STRIPE] Error creating subscription:", insertError);
+        return;
+      }
+
+      console.log("✅ [STRIPE] New subscription created:", newSubscription.id);
+
+      // Update user's available minutes
+      await supabase
+        .from("users")
+        .update({
+          available_minutes: minutesPerMonth,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", user.id);
+
+      console.log("✅ [STRIPE] User minutes updated to:", minutesPerMonth);
+    }
+  } catch (error) {
+    console.error("❌ [STRIPE] Error processing checkout session:", error);
+  }
+}
+
+// Handle invoice.payment_succeeded event
+async function handleInvoicePaymentSucceeded(invoice, stripe) {
+  try {
+    console.log("✅ [STRIPE] Processing invoice.payment_succeeded");
+    console.log("📋 [STRIPE] Invoice details:", {
+      id: invoice.id,
+      customer: invoice.customer,
+      subscription: invoice.subscription,
+      amount_paid: invoice.amount_paid,
+      currency: invoice.currency,
+    });
+
+    if (!invoice.subscription) {
+      console.log("❌ [STRIPE] No subscription found in invoice");
+      return;
+    }
+
+    // Get subscription details
+    const subscription = await stripe.subscriptions.retrieve(
+      invoice.subscription
+    );
+
+    // Update subscription status
+    const { error: updateError } = await supabase
+      .from("user_subscriptions")
+      .update({
+        status: subscription.status,
+        current_period_start: new Date(
+          subscription.current_period_start * 1000
+        ).toISOString(),
+        current_period_end: new Date(
+          subscription.current_period_end * 1000
+        ).toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("stripe_subscription_id", subscription.id);
+
+    if (updateError) {
+      console.error("❌ [STRIPE] Error updating subscription:", updateError);
+      return;
+    }
+
+    console.log("✅ [STRIPE] Subscription updated for payment");
+  } catch (error) {
+    console.error("❌ [STRIPE] Error processing invoice payment:", error);
+  }
+}
+
+// Handle customer.subscription.updated event
+async function handleSubscriptionUpdated(subscription) {
+  try {
+    console.log("✅ [STRIPE] Processing customer.subscription.updated");
+    console.log("📋 [STRIPE] Subscription details:", {
+      id: subscription.id,
+      status: subscription.status,
+      cancel_at_period_end: subscription.cancel_at_period_end,
+    });
+
+    const { error: updateError } = await supabase
+      .from("user_subscriptions")
+      .update({
+        status: subscription.status,
+        current_period_start: new Date(
+          subscription.current_period_start * 1000
+        ).toISOString(),
+        current_period_end: new Date(
+          subscription.current_period_end * 1000
+        ).toISOString(),
+        cancel_at_period_end: subscription.cancel_at_period_end,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("stripe_subscription_id", subscription.id);
+
+    if (updateError) {
+      console.error("❌ [STRIPE] Error updating subscription:", updateError);
+      return;
+    }
+
+    console.log("✅ [STRIPE] Subscription updated");
+  } catch (error) {
+    console.error("❌ [STRIPE] Error processing subscription update:", error);
+  }
+}
+
+// Handle customer.subscription.deleted event
+async function handleSubscriptionDeleted(subscription) {
+  try {
+    console.log("✅ [STRIPE] Processing customer.subscription.deleted");
+    console.log("📋 [STRIPE] Subscription details:", {
+      id: subscription.id,
+      status: subscription.status,
+    });
+
+    const { error: updateError } = await supabase
+      .from("user_subscriptions")
+      .update({
+        status: subscription.status,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("stripe_subscription_id", subscription.id);
+
+    if (updateError) {
+      console.error("❌ [STRIPE] Error updating subscription:", updateError);
+      return;
+    }
+
+    console.log("✅ [STRIPE] Subscription marked as deleted");
+  } catch (error) {
+    console.error("❌ [STRIPE] Error processing subscription deletion:", error);
   }
 }
