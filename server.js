@@ -4240,20 +4240,23 @@ async function handleCheckoutSessionCompleted(session, stripe) {
       return;
     }
 
-    const currentMinutes = currentUser.available_minutes || 0;
-    const newTotalMinutes = currentMinutes + minutesPerMonth;
+    const currentSeconds = currentUser.available_minutes || 0;
+    const secondsToAdd = minutesPerMonth * 60; // Convert minutes to seconds
+    const newTotalSeconds = secondsToAdd; // Clear existing and set to new amount
 
     console.log("💰 [STRIPE] Minutes calculation:", {
-      currentMinutes: currentMinutes,
+      currentSeconds: currentSeconds,
       addingMinutes: minutesPerMonth,
-      newTotalMinutes: newTotalMinutes,
+      addingSeconds: secondsToAdd,
+      addingMinutes: minutesPerMonth,
+      newTotalSeconds: newTotalSeconds,
     });
 
     // Update user's available minutes
     const { error: updateMinutesError } = await supabase
       .from("users")
       .update({
-        available_minutes: newTotalMinutes,
+        available_minutes: newTotalSeconds,
         updated_at: new Date().toISOString(),
       })
       .eq("id", user.id);
@@ -4268,9 +4271,16 @@ async function handleCheckoutSessionCompleted(session, stripe) {
 
     console.log("✅ [STRIPE] User minutes updated successfully:", {
       userId: user.id,
-      previousMinutes: currentMinutes,
+      previousSeconds: currentSeconds,
       addedMinutes: minutesPerMonth,
-      newTotalMinutes: newTotalMinutes,
+      newTotalSeconds: newTotalSeconds,
+    });
+
+    // Sync referral data
+    await syncReferralData(user.id, {
+      plan_name: product.name,
+      status: subscription.status,
+      minutes_per_month: minutesPerMonth,
     });
   } catch (error) {
     console.error("❌ [STRIPE] Error processing checkout session:", error);
@@ -4380,21 +4390,24 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
       return;
     }
 
-    const currentMinutes = currentUser.available_minutes || 0;
+    const currentSeconds = currentUser.available_minutes || 0;
     const minutesToAdd = userSubscription.minutes_per_month || 250; // Default fallback
-    const newTotalMinutes = currentMinutes + minutesToAdd;
+    const secondsToAdd = minutesToAdd * 60; // Convert minutes to seconds
+    const newTotalSeconds = secondsToAdd; // Clear existing and set to new amount
 
     console.log("💰 [STRIPE] Monthly renewal minutes calculation:", {
-      currentMinutes: currentMinutes,
+      currentSeconds: currentSeconds,
+      addingMinutes: minutesPerMonth,
+      addingSeconds: secondsToAdd,
       addingMinutes: minutesToAdd,
-      newTotalMinutes: newTotalMinutes,
+      newTotalSeconds: newTotalSeconds,
     });
 
     // Update user's available minutes
     const { error: updateMinutesError } = await supabase
       .from("users")
       .update({
-        available_minutes: newTotalMinutes,
+        available_minutes: newTotalSeconds,
         updated_at: new Date().toISOString(),
       })
       .eq("id", userSubscription.user_id);
@@ -4409,10 +4422,14 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
 
     console.log("✅ [STRIPE] Monthly renewal minutes added successfully:", {
       userId: userSubscription.user_id,
-      previousMinutes: currentMinutes,
+      previousSeconds: currentSeconds,
       addedMinutes: minutesToAdd,
-      newTotalMinutes: newTotalMinutes,
+      addedSeconds: secondsToAdd,
+      newTotalSeconds: newTotalSeconds,
     });
+
+    // Sync referral data
+    await syncReferralData(userSubscription.user_id);
   } catch (error) {
     console.error("❌ [STRIPE] Error processing invoice payment:", error);
   }
@@ -4469,6 +4486,17 @@ async function handleSubscriptionUpdated(subscription) {
     }
 
     console.log("✅ [STRIPE] Subscription updated");
+
+    // Get user_id from subscription to sync referral data
+    const { data: userSubscription } = await supabase
+      .from("user_subscriptions")
+      .select("user_id")
+      .eq("stripe_subscription_id", subscription.id)
+      .single();
+
+    if (userSubscription) {
+      await syncReferralData(userSubscription.user_id);
+    }
   } catch (error) {
     console.error("❌ [STRIPE] Error processing subscription update:", error);
   }
@@ -4497,7 +4525,82 @@ async function handleSubscriptionDeleted(subscription) {
     }
 
     console.log("✅ [STRIPE] Subscription marked as deleted");
+
+    // Get user_id from subscription to sync referral data
+    const { data: userSubscription } = await supabase
+      .from("user_subscriptions")
+      .select("user_id")
+      .eq("stripe_subscription_id", subscription.id)
+      .single();
+
+    if (userSubscription) {
+      await syncReferralData(userSubscription.user_id);
+    }
   } catch (error) {
     console.error("❌ [STRIPE] Error processing subscription deletion:", error);
+  }
+}
+
+// Helper function to sync referral data when subscription changes
+async function syncReferralData(userId, subscriptionData) {
+  try {
+    console.log("🔄 [REFERRAL SYNC] Syncing referral data for user:", userId);
+
+    // Get user subscription details
+    const { data: userSubscription, error: subscriptionError } = await supabase
+      .from("user_subscriptions")
+      .select("plan_id, minutes_per_month, status")
+      .eq("user_id", userId)
+      .single();
+
+    if (subscriptionError) {
+      console.warn(
+        "⚠️ [REFERRAL SYNC] No subscription found for user:",
+        userId
+      );
+      return;
+    }
+
+    // Get plan details
+    let planName = "free";
+    if (userSubscription.plan_id) {
+      const { data: plan } = await supabase
+        .from("subscription_plans")
+        .select("name")
+        .eq("id", userSubscription.plan_id)
+        .single();
+
+      if (plan) {
+        planName = plan.name;
+      }
+    }
+
+    // Update referrals table
+    const { error: updateError } = await supabase
+      .from("referrals")
+      .update({
+        referred_plan: planName,
+        referred_status: userSubscription.status || "active",
+        referred_minutes: userSubscription.minutes_per_month || 5,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("referred_id", userId);
+
+    if (updateError) {
+      console.error(
+        "❌ [REFERRAL SYNC] Error updating referrals:",
+        updateError
+      );
+      return;
+    }
+
+    console.log("✅ [REFERRAL SYNC] Referral data synced successfully:", {
+      userId,
+      planName,
+      status: userSubscription.status,
+      minutes: userSubscription.minutes_per_month,
+    });
+  } catch (error) {
+    console.error("❌ [REFERRAL SYNC] Error syncing referral data:", error);
   }
 }
