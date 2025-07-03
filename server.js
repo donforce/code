@@ -71,7 +71,6 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 // Optimized Fastify configuration
 const fastify = Fastify({
   logger: false,
-  rawBody: true,
   // Performance optimizations
   connectionTimeout: 30000,
   keepAliveTimeout: 30000,
@@ -85,14 +84,26 @@ const fastify = Fastify({
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
-// Add hook to preserve raw body for Stripe webhooks
-fastify.addHook("preHandler", (request, reply, done) => {
-  // Preserve raw body for Stripe webhook endpoint
-  if (request.url === "/webhook/stripe" && request.method === "POST") {
-    request.rawBody = request.rawBody || request.body;
+// Register content type parser for Stripe webhooks to preserve raw body
+fastify.addContentTypeParser(
+  "application/json",
+  { parseAs: "buffer" },
+  (req, body, done) => {
+    if (req.url === "/webhook/stripe") {
+      // For Stripe webhooks, preserve the raw buffer
+      req.rawBody = body;
+      done(null, body);
+    } else {
+      // For other routes, parse as JSON
+      try {
+        const parsed = JSON.parse(body.toString());
+        done(null, parsed);
+      } catch (err) {
+        done(err);
+      }
+    }
   }
-  done();
-});
+);
 
 const PORT = process.env.PORT || 8000;
 
