@@ -4007,13 +4007,17 @@ async function handleCheckoutSessionCompleted(session, stripe) {
       return;
     }
 
-    // Get subscription details from Stripe
+    // Get subscription details from Stripe using the subscription ID
     const subscription = await stripe.subscriptions.retrieve(
       session.subscription
     );
     console.log("📦 [STRIPE] Subscription retrieved:", subscription.id);
+    console.log("📦 [STRIPE] Subscription timestamps:", {
+      current_period_start: subscription.current_period_start,
+      current_period_end: subscription.current_period_end,
+    });
 
-    // Get product and price details
+    // Get product and price details from the subscription
     const price = await stripe.prices.retrieve(
       subscription.items.data[0].price.id
     );
@@ -4078,6 +4082,26 @@ async function handleCheckoutSessionCompleted(session, stripe) {
       console.log("✅ [STRIPE] Updated user stripe_customer_id");
     }
 
+    // Helper function to safely convert Stripe timestamp to ISO string
+    const convertStripeTimestamp = (timestamp) => {
+      if (!timestamp || typeof timestamp !== "number") {
+        console.warn("⚠️ [STRIPE] Invalid timestamp:", timestamp);
+        return new Date().toISOString(); // Fallback to current time
+      }
+
+      try {
+        const date = new Date(timestamp * 1000);
+        if (isNaN(date.getTime())) {
+          console.warn("⚠️ [STRIPE] Invalid date from timestamp:", timestamp);
+          return new Date().toISOString(); // Fallback to current time
+        }
+        return date.toISOString();
+      } catch (error) {
+        console.error("❌ [STRIPE] Error converting timestamp:", error);
+        return new Date().toISOString(); // Fallback to current time
+      }
+    };
+
     // Check if subscription already exists
     const { data: existingSubscription } = await supabase
       .from("user_subscriptions")
@@ -4092,12 +4116,12 @@ async function handleCheckoutSessionCompleted(session, stripe) {
         .from("user_subscriptions")
         .update({
           status: subscription.status,
-          current_period_start: new Date(
-            subscription.current_period_start * 1000
-          ).toISOString(),
-          current_period_end: new Date(
-            subscription.current_period_end * 1000
-          ).toISOString(),
+          current_period_start: convertStripeTimestamp(
+            subscription.current_period_start
+          ),
+          current_period_end: convertStripeTimestamp(
+            subscription.current_period_end
+          ),
           cancel_at_period_end: subscription.cancel_at_period_end,
           updated_at: new Date().toISOString(),
         })
@@ -4115,12 +4139,12 @@ async function handleCheckoutSessionCompleted(session, stripe) {
           stripe_subscription_id: subscription.id,
           stripe_customer_id: session.customer,
           status: subscription.status,
-          current_period_start: new Date(
-            subscription.current_period_start * 1000
-          ).toISOString(),
-          current_period_end: new Date(
-            subscription.current_period_end * 1000
-          ).toISOString(),
+          current_period_start: convertStripeTimestamp(
+            subscription.current_period_start
+          ),
+          current_period_end: convertStripeTimestamp(
+            subscription.current_period_end
+          ),
           cancel_at_period_end: subscription.cancel_at_period_end,
           minutes_per_month: minutesPerMonth,
           product_name: product.name,
@@ -4175,17 +4199,37 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
       invoice.subscription
     );
 
+    // Helper function to safely convert Stripe timestamp to ISO string
+    const convertStripeTimestamp = (timestamp) => {
+      if (!timestamp || typeof timestamp !== "number") {
+        console.warn("⚠️ [STRIPE] Invalid timestamp:", timestamp);
+        return new Date().toISOString(); // Fallback to current time
+      }
+
+      try {
+        const date = new Date(timestamp * 1000);
+        if (isNaN(date.getTime())) {
+          console.warn("⚠️ [STRIPE] Invalid date from timestamp:", timestamp);
+          return new Date().toISOString(); // Fallback to current time
+        }
+        return date.toISOString();
+      } catch (error) {
+        console.error("❌ [STRIPE] Error converting timestamp:", error);
+        return new Date().toISOString(); // Fallback to current time
+      }
+    };
+
     // Update subscription status
     const { error: updateError } = await supabase
       .from("user_subscriptions")
       .update({
         status: subscription.status,
-        current_period_start: new Date(
-          subscription.current_period_start * 1000
-        ).toISOString(),
-        current_period_end: new Date(
-          subscription.current_period_end * 1000
-        ).toISOString(),
+        current_period_start: convertStripeTimestamp(
+          subscription.current_period_start
+        ),
+        current_period_end: convertStripeTimestamp(
+          subscription.current_period_end
+        ),
         updated_at: new Date().toISOString(),
       })
       .eq("stripe_subscription_id", subscription.id);
@@ -4211,16 +4255,36 @@ async function handleSubscriptionUpdated(subscription) {
       cancel_at_period_end: subscription.cancel_at_period_end,
     });
 
+    // Helper function to safely convert Stripe timestamp to ISO string
+    const convertStripeTimestamp = (timestamp) => {
+      if (!timestamp || typeof timestamp !== "number") {
+        console.warn("⚠️ [STRIPE] Invalid timestamp:", timestamp);
+        return new Date().toISOString(); // Fallback to current time
+      }
+
+      try {
+        const date = new Date(timestamp * 1000);
+        if (isNaN(date.getTime())) {
+          console.warn("⚠️ [STRIPE] Invalid date from timestamp:", timestamp);
+          return new Date().toISOString(); // Fallback to current time
+        }
+        return date.toISOString();
+      } catch (error) {
+        console.error("❌ [STRIPE] Error converting timestamp:", error);
+        return new Date().toISOString(); // Fallback to current time
+      }
+    };
+
     const { error: updateError } = await supabase
       .from("user_subscriptions")
       .update({
         status: subscription.status,
-        current_period_start: new Date(
-          subscription.current_period_start * 1000
-        ).toISOString(),
-        current_period_end: new Date(
-          subscription.current_period_end * 1000
-        ).toISOString(),
+        current_period_start: convertStripeTimestamp(
+          subscription.current_period_start
+        ),
+        current_period_end: convertStripeTimestamp(
+          subscription.current_period_end
+        ),
         cancel_at_period_end: subscription.cancel_at_period_end,
         updated_at: new Date().toISOString(),
       })
