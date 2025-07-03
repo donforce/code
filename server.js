@@ -4028,12 +4028,68 @@ async function handleCheckoutSessionCompleted(session, stripe) {
       metadata: product.metadata,
     });
 
-    // Extract minutes per month from product metadata
-    const minutesPerMonth = parseInt(
-      product.metadata?.minutes_per_month ||
-        price.metadata?.minutes_per_month ||
-        "250"
-    );
+    // Find the subscription plan by product name
+    let planId = null;
+    let minutesPerMonth = 250; // Default fallback
+
+    if (product.name) {
+      const { data: plan, error: planError } = await supabase
+        .from("subscription_plans")
+        .select("id, minutes_per_month")
+        .eq("name", product.name)
+        .eq("is_active", true)
+        .single();
+
+      if (planError) {
+        console.warn("⚠️ [STRIPE] Plan not found by name:", product.name);
+        console.warn("⚠️ [STRIPE] Plan error:", planError.message);
+
+        // Try to find plan by stripe_price_id as fallback
+        const { data: planByPriceId } = await supabase
+          .from("subscription_plans")
+          .select("id, minutes_per_month")
+          .eq("stripe_price_id", price.id)
+          .eq("is_active", true)
+          .single();
+
+        if (planByPriceId) {
+          planId = planByPriceId.id;
+          minutesPerMonth = planByPriceId.minutes_per_month;
+          console.log(
+            "✅ [STRIPE] Plan found by stripe_price_id:",
+            planByPriceId.id
+          );
+        } else {
+          console.warn(
+            "⚠️ [STRIPE] Plan not found by stripe_price_id either:",
+            price.id
+          );
+          // Use default values
+          minutesPerMonth = parseInt(
+            product.metadata?.minutes_per_month ||
+              price.metadata?.minutes_per_month ||
+              "250"
+          );
+        }
+      } else {
+        planId = plan.id;
+        minutesPerMonth = plan.minutes_per_month;
+        console.log("✅ [STRIPE] Plan found by name:", plan.id);
+      }
+    } else {
+      console.warn("⚠️ [STRIPE] Product name is empty, using default values");
+      minutesPerMonth = parseInt(
+        product.metadata?.minutes_per_month ||
+          price.metadata?.minutes_per_month ||
+          "250"
+      );
+    }
+
+    console.log("📦 [STRIPE] Final plan details:", {
+      planId: planId,
+      minutesPerMonth: minutesPerMonth,
+      productName: product.name,
+    });
 
     // Find user by customer email or customer ID
     let user = null;
@@ -4115,6 +4171,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
       await supabase
         .from("user_subscriptions")
         .update({
+          plan_id: planId,
           status: subscription.status,
           current_period_start: convertStripeTimestamp(
             subscription.current_period_start
@@ -4123,6 +4180,8 @@ async function handleCheckoutSessionCompleted(session, stripe) {
             subscription.current_period_end
           ),
           cancel_at_period_end: subscription.cancel_at_period_end,
+          minutes_per_month: minutesPerMonth,
+          product_name: product.name,
           updated_at: new Date().toISOString(),
         })
         .eq("id", existingSubscription.id);
@@ -4136,6 +4195,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
         .from("user_subscriptions")
         .insert({
           user_id: user.id,
+          plan_id: planId,
           stripe_subscription_id: subscription.id,
           stripe_customer_id: session.customer,
           status: subscription.status,
@@ -4160,18 +4220,58 @@ async function handleCheckoutSessionCompleted(session, stripe) {
       }
 
       console.log("✅ [STRIPE] New subscription created:", newSubscription.id);
-
-      // Update user's available minutes
-      await supabase
-        .from("users")
-        .update({
-          available_minutes: minutesPerMonth,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", user.id);
-
-      console.log("✅ [STRIPE] User minutes updated to:", minutesPerMonth);
     }
+
+    // Add minutes to user's available_minutes (for both new and existing subscriptions)
+    console.log("💰 [STRIPE] Adding minutes to user account...");
+
+    // Get current user minutes
+    const { data: currentUser, error: userError } = await supabase
+      .from("users")
+      .select("available_minutes")
+      .eq("id", user.id)
+      .single();
+
+    if (userError) {
+      console.error(
+        "❌ [STRIPE] Error getting current user minutes:",
+        userError
+      );
+      return;
+    }
+
+    const currentMinutes = currentUser.available_minutes || 0;
+    const newTotalMinutes = currentMinutes + minutesPerMonth;
+
+    console.log("💰 [STRIPE] Minutes calculation:", {
+      currentMinutes: currentMinutes,
+      addingMinutes: minutesPerMonth,
+      newTotalMinutes: newTotalMinutes,
+    });
+
+    // Update user's available minutes
+    const { error: updateMinutesError } = await supabase
+      .from("users")
+      .update({
+        available_minutes: newTotalMinutes,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", user.id);
+
+    if (updateMinutesError) {
+      console.error(
+        "❌ [STRIPE] Error updating user minutes:",
+        updateMinutesError
+      );
+      return;
+    }
+
+    console.log("✅ [STRIPE] User minutes updated successfully:", {
+      userId: user.id,
+      previousMinutes: currentMinutes,
+      addedMinutes: minutesPerMonth,
+      newTotalMinutes: newTotalMinutes,
+    });
   } catch (error) {
     console.error("❌ [STRIPE] Error processing checkout session:", error);
   }
@@ -4219,6 +4319,27 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
       }
     };
 
+    // Get the user subscription record
+    const { data: userSubscription, error: subscriptionError } = await supabase
+      .from("user_subscriptions")
+      .select("user_id, minutes_per_month, plan_id")
+      .eq("stripe_subscription_id", subscription.id)
+      .single();
+
+    if (subscriptionError || !userSubscription) {
+      console.error(
+        "❌ [STRIPE] Error getting user subscription:",
+        subscriptionError
+      );
+      return;
+    }
+
+    console.log("📦 [STRIPE] User subscription found:", {
+      userId: userSubscription.user_id,
+      minutesPerMonth: userSubscription.minutes_per_month,
+      planId: userSubscription.plan_id,
+    });
+
     // Update subscription status
     const { error: updateError } = await supabase
       .from("user_subscriptions")
@@ -4240,6 +4361,58 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
     }
 
     console.log("✅ [STRIPE] Subscription updated for payment");
+
+    // Add minutes to user's account for monthly renewal
+    console.log("💰 [STRIPE] Adding minutes for monthly renewal...");
+
+    // Get current user minutes
+    const { data: currentUser, error: userError } = await supabase
+      .from("users")
+      .select("available_minutes")
+      .eq("id", userSubscription.user_id)
+      .single();
+
+    if (userError) {
+      console.error(
+        "❌ [STRIPE] Error getting current user minutes:",
+        userError
+      );
+      return;
+    }
+
+    const currentMinutes = currentUser.available_minutes || 0;
+    const minutesToAdd = userSubscription.minutes_per_month || 250; // Default fallback
+    const newTotalMinutes = currentMinutes + minutesToAdd;
+
+    console.log("💰 [STRIPE] Monthly renewal minutes calculation:", {
+      currentMinutes: currentMinutes,
+      addingMinutes: minutesToAdd,
+      newTotalMinutes: newTotalMinutes,
+    });
+
+    // Update user's available minutes
+    const { error: updateMinutesError } = await supabase
+      .from("users")
+      .update({
+        available_minutes: newTotalMinutes,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", userSubscription.user_id);
+
+    if (updateMinutesError) {
+      console.error(
+        "❌ [STRIPE] Error updating user minutes for renewal:",
+        updateMinutesError
+      );
+      return;
+    }
+
+    console.log("✅ [STRIPE] Monthly renewal minutes added successfully:", {
+      userId: userSubscription.user_id,
+      previousMinutes: currentMinutes,
+      addedMinutes: minutesToAdd,
+      newTotalMinutes: newTotalMinutes,
+    });
   } catch (error) {
     console.error("❌ [STRIPE] Error processing invoice payment:", error);
   }
