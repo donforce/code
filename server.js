@@ -212,135 +212,153 @@ function translateTwilioError(twilioError) {
     30019: "Has excedido el límite de recursos permitidos",
     30020: "Has excedido el límite de servicios permitidos",
 
-    // Errores de parámetros
-    31000: "Parámetro requerido faltante",
-    31001: "Parámetro inválido proporcionado",
-    31002: "Parámetro no válido para el tipo de llamada",
-    31003: "Parámetro no válido para el tipo de servicio",
-    31004: "Parámetro no válido para el tipo de recurso",
-    31005: "Parámetro no válido para el tipo de función",
-    31006: "Parámetro no válido para el tipo de característica",
-    31007: "Parámetro no válido para el tipo de opción",
-    31008: "Parámetro no válido para el tipo de método",
-    31009: "Parámetro no válido para el tipo de endpoint",
-    31010: "Parámetro no válido para el tipo de API",
-    31011: "Parámetro no válido para el tipo de recurso",
-    31012: "Parámetro no válido para el tipo de servicio",
-    31013: "Parámetro no válido para el tipo de función",
-    31014: "Parámetro no válido para el tipo de característica",
-    31015: "Parámetro no válido para el tipo de opción",
-    31016: "Parámetro no válido para el tipo de método",
-    31017: "Parámetro no válido para el tipo de endpoint",
-    31018: "Parámetro no válido para el tipo de API",
-    31019: "Parámetro no válido para el tipo de recurso",
-    31020: "Parámetro no válido para el tipo de servicio",
+    // Errores de red y conectividad
+    40000: "Error de red: no se pudo conectar con el servicio",
+    40001: "Error de red: conexión perdida",
+    40002: "Error de red: timeout de conexión",
+    40003: "Error de red: conexión rechazada",
+    40004: "Error de red: conexión cerrada",
+    40005: "Error de red: conexión interrumpida",
+    40006: "Error de red: conexión no disponible",
+    40007: "Error de red: conexión no válida",
+    40008: "Error de red: conexión no permitida",
+    40009: "Error de red: conexión no aceptada",
+    40010: "Error de red: conexión no aprobada",
+    40011: "Error de red: conexión no confirmada",
+    40012: "Error de red: conexión no validada",
+    40013: "Error de red: conexión no verificada",
+    40014: "Error de red: conexión no habilitada",
+    40015: "Error de red: conexión no configurada",
+    40016: "Error de red: conexión no disponible",
+    40017: "Error de red: conexión no válida",
+    40018: "Error de red: conexión no permitida",
+    40019: "Error de red: conexión no aceptada",
+    40020: "Error de red: conexión no aprobada",
 
-    // Errores de recursos
-    20404: "Recurso no encontrado",
-    20405: "Recurso no disponible",
-    20406: "Recurso no válido",
-    20407: "Recurso no permitido",
-    20408: "Recurso no aceptado",
-    20409: "Recurso no aprobado",
-    20410: "Recurso no confirmado",
-    20411: "Recurso no validado",
-    20412: "Recurso no verificado",
-    20413: "Recurso no habilitado",
-    20414: "Recurso no configurado",
-    20415: "Recurso no disponible",
-    20416: "Recurso no válido",
-    20417: "Recurso no permitido",
-    20418: "Recurso no aceptado",
-    20419: "Recurso no aprobado",
-    20420: "Recurso no confirmado",
-
-    // Errores de servicio
+    // Errores de servidor
     50000: "Error interno del servidor",
-    50001: "Servicio no disponible temporalmente",
-    50002: "Servicio sobrecargado",
-    50003: "Servicio en mantenimiento",
-    50004: "Servicio no configurado",
-    50005: "Servicio no habilitado",
-    50006: "Servicio no disponible",
-    50007: "Servicio no válido",
-    50008: "Servicio no permitido",
-    50009: "Servicio no aceptado",
-    50010: "Servicio no aprobado",
-    50011: "Servicio no confirmado",
-    50012: "Servicio no validado",
-    50013: "Servicio no verificado",
-    50014: "Servicio no habilitado",
-    50015: "Servicio no configurado",
-    50016: "Servicio no disponible",
-    50017: "Servicio no válido",
-    50018: "Servicio no permitido",
-    50019: "Servicio no aceptado",
-    50020: "Servicio no aprobado",
+    50001: "Error interno del servidor: servicio no disponible",
+    50002: "Error interno del servidor: servicio sobrecargado",
+    50003: "Error interno del servidor: servicio en mantenimiento",
+    50004: "Error interno del servidor: servicio no configurado",
+    50005: "Error interno del servidor: servicio no inicializado",
+    50006: "Error interno del servidor: servicio no disponible",
+    50007: "Error interno del servidor: servicio no válido",
+    50008: "Error interno del servidor: servicio no permitido",
+    50009: "Error interno del servidor: servicio no aceptado",
+    50010: "Error interno del servidor: servicio no aprobado",
+    50011: "Error interno del servidor: servicio no confirmado",
+    50012: "Error interno del servidor: servicio no validado",
+    50013: "Error interno del servidor: servicio no verificado",
+    50014: "Error interno del servidor: servicio no habilitado",
+    50015: "Error interno del servidor: servicio no configurado",
+    50016: "Error interno del servidor: servicio no disponible",
+    50017: "Error interno del servidor: servicio no válido",
+    50018: "Error interno del servidor: servicio no permitido",
+    50019: "Error interno del servidor: servicio no aceptado",
+    50020: "Error interno del servidor: servicio no aprobado",
 
-    // Errores de red
-    60000: "Error de conexión de red",
-    60001: "Timeout de conexión",
-    60002: "Conexión perdida",
-    60003: "Conexión rechazada",
-    60004: "Conexión cerrada",
-    60005: "Conexión no disponible",
-    60006: "Conexión no válida",
-    60007: "Conexión no permitida",
-    60008: "Conexión no aceptada",
-    60009: "Conexión no aprobada",
-    60010: "Conexión no confirmada",
-    60011: "Conexión no validada",
-    60012: "Conexión no verificado",
-    60013: "Conexión no habilitado",
-    60014: "Conexión no configurado",
-    60015: "Conexión no disponible",
-    60016: "Conexión no válido",
-    60017: "Conexión no permitido",
-    60018: "Conexión no aceptado",
-    60019: "Conexión no aprobado",
-    60020: "Conexión no confirmado",
-
-    // Errores específicos de llamadas
-    31000: "URL de webhook inválida",
-    31001: "URL de webhook no accesible",
-    31002: "URL de webhook no responde",
-    31003: "URL de webhook devuelve error",
-    31004: "URL de webhook no válida",
-    31005: "URL de webhook no permitida",
-    31006: "URL de webhook no aceptada",
-    31007: "URL de webhook no aprobada",
-    31008: "URL de webhook no confirmada",
-    31009: "URL de webhook no validada",
-    31010: "URL de webhook no verificada",
-    31011: "URL de webhook no habilitada",
-    31012: "URL de webhook no configurada",
-    31013: "URL de webhook no disponible",
-    31014: "URL de webhook no válida",
-    31015: "URL de webhook no permitida",
-    31016: "URL de webhook no aceptada",
-    31017: "URL de webhook no aprobada",
-    31018: "URL de webhook no confirmada",
-    31019: "URL de webhook no validada",
-    31020: "URL de webhook no verificada",
+    // Errores de parámetros
+    60000: "Parámetro requerido faltante",
+    60001: "Parámetro inválido",
+    60002: "Parámetro no válido para el tipo de servicio",
+    60003: "Parámetro no válido para la región especificada",
+    60004: "Parámetro no válido para el país especificado",
+    60005: "Parámetro no válido para el tipo de llamada",
+    60006: "Parámetro no válido para el tipo de mensaje",
+    60007: "Parámetro no válido para el tipo de recurso",
+    60008: "Parámetro no válido para el tipo de función",
+    60009: "Parámetro no válido para el tipo de característica",
+    60010: "Parámetro no válido para el tipo de opción",
+    60011: "Parámetro no válido para el tipo de método",
+    60012: "Parámetro no válido para el tipo de endpoint",
+    60013: "Parámetro no válido para el tipo de API",
+    60014: "Parámetro no válido para el tipo de servicio",
+    60015: "Parámetro no válido para el tipo de función",
+    60016: "Parámetro no válido para el tipo de característica",
+    60017: "Parámetro no válido para el tipo de opción",
+    60018: "Parámetro no válido para el tipo de método",
+    60019: "Parámetro no válido para el tipo de endpoint",
+    60020: "Parámetro no válido para el tipo de API",
   };
 
-  // Buscar traducción por código de error
-  if (errorCode && errorTranslations[errorCode]) {
-    return {
-      code: errorCode,
-      message: errorTranslations[errorCode],
-      originalMessage: errorMessage,
-      translated: true,
-    };
+  const translatedMessage = errorTranslations[errorCode] || errorMessage;
+
+  return {
+    code: errorCode,
+    message: translatedMessage,
+    originalMessage: errorMessage,
+    translated: translatedMessage,
+  };
+}
+
+// Function to mark/unmark leads with invalid phone numbers
+async function markLeadInvalidPhone(
+  leadId,
+  isInvalid,
+  context = "twilio_error"
+) {
+  try {
+    console.log(
+      `[LEAD] Marking lead ${leadId} as ${
+        isInvalid ? "invalid" : "valid"
+      } phone (${context})`
+    );
+
+    const { error } = await supabase
+      .from("leads")
+      .update({
+        invalid_phone: isInvalid,
+        invalid_phone_marked_at: isInvalid ? new Date().toISOString() : null,
+        invalid_phone_context: isInvalid ? context : null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", leadId);
+
+    if (error) {
+      console.error(
+        `[LEAD] Error marking lead ${leadId} as invalid phone:`,
+        error
+      );
+      return false;
+    }
+
+    console.log(
+      `[LEAD] Successfully marked lead ${leadId} as ${
+        isInvalid ? "invalid" : "valid"
+      } phone`
+    );
+    return true;
+  } catch (error) {
+    console.error(
+      `[LEAD] Exception marking lead ${leadId} as invalid phone:`,
+      error
+    );
+    return false;
+  }
+}
+
+// Function to handle Twilio error and mark lead if necessary
+async function handleTwilioError(
+  twilioError,
+  leadId = null,
+  context = "unknown"
+) {
+  const translatedError = translateTwilioError(twilioError);
+
+  // Check if it's a phone number validation error (code 21211)
+  if (twilioError.code === 21211 && leadId) {
+    console.log(
+      `[TWILIO] Phone number validation error detected for lead ${leadId}, marking as invalid`
+    );
+    await markLeadInvalidPhone(
+      leadId,
+      true,
+      `twilio_error_${twilioError.code}`
+    );
   }
 
-  // Si no hay traducción específica, devolver mensaje genérico
-  return {
-    code: errorCode || "UNKNOWN",
-    message: `Error de Twilio: ${errorMessage}`,
-    originalMessage: errorMessage,
-    translated: false,
-  };
+  return translatedError;
 }
 
 // Optimized signature verification - minimal logging
@@ -1498,8 +1516,12 @@ async function processQueueItem(queueItem, workerId = "unknown") {
         }
       );
 
-      // Translate Twilio error to Spanish
-      const translatedError = translateTwilioError(twilioError);
+      // Handle Twilio error and mark lead if necessary
+      const translatedError = await handleTwilioError(
+        twilioError,
+        queueItem.lead_id,
+        "queue_processing"
+      );
 
       console.log(`[Queue] Worker ${workerId} - Translated error:`, {
         original: twilioError.message,
@@ -1707,7 +1729,11 @@ fastify.post("/outbound-call", async (request, reply) => {
 
     // Check if it's a Twilio error and translate it
     if (error.code && (error.code >= 20000 || error.code <= 60000)) {
-      const translatedError = translateTwilioError(error);
+      const translatedError = await handleTwilioError(
+        error,
+        client_id,
+        "outbound_call"
+      );
 
       console.log("[API] Translated Twilio error:", {
         original: error.message,
@@ -2463,8 +2489,12 @@ async function cleanupStuckCalls() {
           twilioError
         );
 
-        // Translate Twilio error to Spanish
-        const translatedError = translateTwilioError(twilioError);
+        // Handle Twilio error and mark lead if necessary
+        const translatedError = await handleTwilioError(
+          twilioError,
+          call.lead_id,
+          "cleanup_verification"
+        );
 
         console.log(`[CLEANUP] Translated error for call ${call.call_sid}:`, {
           original: twilioError.message,
@@ -4872,3 +4902,41 @@ async function syncReferralData(userId, subscriptionData) {
     console.error("❌ [REFERRAL SYNC] Error syncing referral data:", error);
   }
 }
+
+// Endpoint to unmark lead as invalid phone when phone number is edited
+fastify.post("/api/leads/unmark-invalid-phone", async (request, reply) => {
+  try {
+    const { leadId } = request.body;
+
+    if (!leadId) {
+      return reply.code(400).send({
+        success: false,
+        error: "Lead ID is required",
+      });
+    }
+
+    console.log(
+      `[API] Unmarking lead ${leadId} as invalid phone (phone edited)`
+    );
+
+    const success = await markLeadInvalidPhone(leadId, false, "phone_edited");
+
+    if (success) {
+      reply.send({
+        success: true,
+        message: "Lead unmarked as invalid phone successfully",
+      });
+    } else {
+      reply.code(500).send({
+        success: false,
+        error: "Failed to unmark lead as invalid phone",
+      });
+    }
+  } catch (error) {
+    console.error("[API] Error unmarking lead as invalid phone:", error);
+    reply.code(500).send({
+      success: false,
+      error: "Internal server error",
+    });
+  }
+});
