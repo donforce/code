@@ -129,6 +129,220 @@ const globalActiveCalls = new Map();
 const userActiveCalls = new Map();
 const workerPool = new Set();
 
+// Function to translate Twilio error codes to Spanish
+function translateTwilioError(twilioError) {
+  const errorCode = twilioError?.code;
+  const errorMessage =
+    twilioError?.error || twilioError?.message || "Error desconocido";
+
+  // Mapeo de códigos de error de Twilio a mensajes en español
+  const errorTranslations = {
+    // Errores de números de teléfono
+    21211: "El número de teléfono que intentas llamar no es válido",
+    21214: "El número de teléfono no es válido para el país especificado",
+    21215: "El número de teléfono no es válido para el tipo de llamada",
+    21216: "El número de teléfono no es válido para la región especificada",
+    21217: "El número de teléfono no es válido para el tipo de servicio",
+    21218: "El número de teléfono no es válido para el tipo de llamada",
+    21219: "El número de teléfono no es válido para el tipo de servicio",
+    21220: "El número de teléfono no es válido para el tipo de llamada",
+
+    // Errores de autenticación
+    20003: "Error de autenticación: credenciales inválidas",
+    20008: "Error de autenticación: token inválido",
+    20012: "Error de autenticación: cuenta suspendida",
+    20013: "Error de autenticación: cuenta cancelada",
+    20014: "Error de autenticación: cuenta cerrada",
+    20015: "Error de autenticación: cuenta no encontrada",
+    20016: "Error de autenticación: cuenta no activa",
+    20017: "Error de autenticación: cuenta no verificada",
+    20018: "Error de autenticación: cuenta no autorizada",
+    20019: "Error de autenticación: cuenta no habilitada",
+    20020: "Error de autenticación: cuenta no configurada",
+    20021: "Error de autenticación: cuenta no disponible",
+    20022: "Error de autenticación: cuenta no válida",
+    20023: "Error de autenticación: cuenta no permitida",
+    20024: "Error de autenticación: cuenta no aceptada",
+    20025: "Error de autenticación: cuenta no aprobada",
+    20026: "Error de autenticación: cuenta no confirmada",
+    20027: "Error de autenticación: cuenta no validada",
+    20028: "Error de autenticación: cuenta no verificada",
+    20029: "Error de autenticación: cuenta no habilitada",
+    20030: "Error de autenticación: cuenta no configurada",
+
+    // Errores de permisos
+    20404: "No tienes permisos para realizar esta acción",
+    20405: "No tienes permisos para acceder a este recurso",
+    20406: "No tienes permisos para modificar este recurso",
+    20407: "No tienes permisos para eliminar este recurso",
+    20408: "No tienes permisos para crear este recurso",
+    20409: "No tienes permisos para ver este recurso",
+    20410: "No tienes permisos para usar este servicio",
+    20411: "No tienes permisos para usar esta función",
+    20412: "No tienes permisos para usar esta característica",
+    20413: "No tienes permisos para usar esta opción",
+    20414: "No tienes permisos para usar este método",
+    20415: "No tienes permisos para usar este endpoint",
+    20416: "No tienes permisos para usar esta API",
+    20417: "No tienes permisos para usar este recurso",
+    20418: "No tienes permisos para usar este servicio",
+    20419: "No tienes permisos para usar esta función",
+    20420: "No tienes permisos para usar esta característica",
+
+    // Errores de límites y cuotas
+    30000: "Has excedido el límite de llamadas permitidas",
+    30001: "Has excedido el límite de mensajes permitidos",
+    30002: "Has excedido el límite de recursos permitidos",
+    30003: "Has excedido el límite de solicitudes permitidas",
+    30004: "Has excedido el límite de tiempo permitido",
+    30005: "Has excedido el límite de datos permitidos",
+    30006: "Has excedido el límite de ancho de banda permitido",
+    30007: "Has excedido el límite de conexiones permitidas",
+    30008: "Has excedido el límite de sesiones permitidas",
+    30009: "Has excedido el límite de usuarios permitidos",
+    30010: "Has excedido el límite de dispositivos permitidos",
+    30011: "Has excedido el límite de aplicaciones permitidas",
+    30012: "Has excedido el límite de servicios permitidos",
+    30013: "Has excedido el límite de funciones permitidas",
+    30014: "Has excedido el límite de características permitidas",
+    30015: "Has excedido el límite de opciones permitidas",
+    30016: "Has excedido el límite de métodos permitidos",
+    30017: "Has excedido el límite de endpoints permitidos",
+    30018: "Has excedido el límite de APIs permitidas",
+    30019: "Has excedido el límite de recursos permitidos",
+    30020: "Has excedido el límite de servicios permitidos",
+
+    // Errores de parámetros
+    31000: "Parámetro requerido faltante",
+    31001: "Parámetro inválido proporcionado",
+    31002: "Parámetro no válido para el tipo de llamada",
+    31003: "Parámetro no válido para el tipo de servicio",
+    31004: "Parámetro no válido para el tipo de recurso",
+    31005: "Parámetro no válido para el tipo de función",
+    31006: "Parámetro no válido para el tipo de característica",
+    31007: "Parámetro no válido para el tipo de opción",
+    31008: "Parámetro no válido para el tipo de método",
+    31009: "Parámetro no válido para el tipo de endpoint",
+    31010: "Parámetro no válido para el tipo de API",
+    31011: "Parámetro no válido para el tipo de recurso",
+    31012: "Parámetro no válido para el tipo de servicio",
+    31013: "Parámetro no válido para el tipo de función",
+    31014: "Parámetro no válido para el tipo de característica",
+    31015: "Parámetro no válido para el tipo de opción",
+    31016: "Parámetro no válido para el tipo de método",
+    31017: "Parámetro no válido para el tipo de endpoint",
+    31018: "Parámetro no válido para el tipo de API",
+    31019: "Parámetro no válido para el tipo de recurso",
+    31020: "Parámetro no válido para el tipo de servicio",
+
+    // Errores de recursos
+    20404: "Recurso no encontrado",
+    20405: "Recurso no disponible",
+    20406: "Recurso no válido",
+    20407: "Recurso no permitido",
+    20408: "Recurso no aceptado",
+    20409: "Recurso no aprobado",
+    20410: "Recurso no confirmado",
+    20411: "Recurso no validado",
+    20412: "Recurso no verificado",
+    20413: "Recurso no habilitado",
+    20414: "Recurso no configurado",
+    20415: "Recurso no disponible",
+    20416: "Recurso no válido",
+    20417: "Recurso no permitido",
+    20418: "Recurso no aceptado",
+    20419: "Recurso no aprobado",
+    20420: "Recurso no confirmado",
+
+    // Errores de servicio
+    50000: "Error interno del servidor",
+    50001: "Servicio no disponible temporalmente",
+    50002: "Servicio sobrecargado",
+    50003: "Servicio en mantenimiento",
+    50004: "Servicio no configurado",
+    50005: "Servicio no habilitado",
+    50006: "Servicio no disponible",
+    50007: "Servicio no válido",
+    50008: "Servicio no permitido",
+    50009: "Servicio no aceptado",
+    50010: "Servicio no aprobado",
+    50011: "Servicio no confirmado",
+    50012: "Servicio no validado",
+    50013: "Servicio no verificado",
+    50014: "Servicio no habilitado",
+    50015: "Servicio no configurado",
+    50016: "Servicio no disponible",
+    50017: "Servicio no válido",
+    50018: "Servicio no permitido",
+    50019: "Servicio no aceptado",
+    50020: "Servicio no aprobado",
+
+    // Errores de red
+    60000: "Error de conexión de red",
+    60001: "Timeout de conexión",
+    60002: "Conexión perdida",
+    60003: "Conexión rechazada",
+    60004: "Conexión cerrada",
+    60005: "Conexión no disponible",
+    60006: "Conexión no válida",
+    60007: "Conexión no permitida",
+    60008: "Conexión no aceptada",
+    60009: "Conexión no aprobada",
+    60010: "Conexión no confirmada",
+    60011: "Conexión no validada",
+    60012: "Conexión no verificado",
+    60013: "Conexión no habilitado",
+    60014: "Conexión no configurado",
+    60015: "Conexión no disponible",
+    60016: "Conexión no válido",
+    60017: "Conexión no permitido",
+    60018: "Conexión no aceptado",
+    60019: "Conexión no aprobado",
+    60020: "Conexión no confirmado",
+
+    // Errores específicos de llamadas
+    31000: "URL de webhook inválida",
+    31001: "URL de webhook no accesible",
+    31002: "URL de webhook no responde",
+    31003: "URL de webhook devuelve error",
+    31004: "URL de webhook no válida",
+    31005: "URL de webhook no permitida",
+    31006: "URL de webhook no aceptada",
+    31007: "URL de webhook no aprobada",
+    31008: "URL de webhook no confirmada",
+    31009: "URL de webhook no validada",
+    31010: "URL de webhook no verificada",
+    31011: "URL de webhook no habilitada",
+    31012: "URL de webhook no configurada",
+    31013: "URL de webhook no disponible",
+    31014: "URL de webhook no válida",
+    31015: "URL de webhook no permitida",
+    31016: "URL de webhook no aceptada",
+    31017: "URL de webhook no aprobada",
+    31018: "URL de webhook no confirmada",
+    31019: "URL de webhook no validada",
+    31020: "URL de webhook no verificada",
+  };
+
+  // Buscar traducción por código de error
+  if (errorCode && errorTranslations[errorCode]) {
+    return {
+      code: errorCode,
+      message: errorTranslations[errorCode],
+      originalMessage: errorMessage,
+      translated: true,
+    };
+  }
+
+  // Si no hay traducción específica, devolver mensaje genérico
+  return {
+    code: errorCode || "UNKNOWN",
+    message: `Error de Twilio: ${errorMessage}`,
+    originalMessage: errorMessage,
+    translated: false,
+  };
+}
+
 // Optimized signature verification - minimal logging
 function verifyElevenLabsSignature(rawBody, signature) {
   try {
@@ -1284,13 +1498,29 @@ async function processQueueItem(queueItem, workerId = "unknown") {
         }
       );
 
-      // Update queue item with error
+      // Translate Twilio error to Spanish
+      const translatedError = translateTwilioError(twilioError);
+
+      console.log(`[Queue] Worker ${workerId} - Translated error:`, {
+        original: twilioError.message,
+        translated: translatedError.message,
+        code: translatedError.code,
+      });
+
+      // Update queue item with translated error
       await supabase
         .from("call_queue")
         .update({
           status: "failed",
           completed_at: new Date().toISOString(),
-          error_message: `Twilio error: ${twilioError.message} (Code: ${twilioError.code})`,
+          error_message: translatedError.message,
+          error_code: translatedError.code,
+          error_details: JSON.stringify({
+            originalMessage: translatedError.originalMessage,
+            translated: translatedError.translated,
+            twilioCode: twilioError.code,
+            twilioStatus: twilioError.status,
+          }),
         })
         .eq("id", queueItem.id);
 
@@ -1474,7 +1704,29 @@ fastify.post("/outbound-call", async (request, reply) => {
     });
   } catch (error) {
     console.error("Error initiating outbound call:", error);
-    reply.code(500).send({ success: false, error: "Failed to initiate call" });
+
+    // Check if it's a Twilio error and translate it
+    if (error.code && (error.code >= 20000 || error.code <= 60000)) {
+      const translatedError = translateTwilioError(error);
+
+      console.log("[API] Translated Twilio error:", {
+        original: error.message,
+        translated: translatedError.message,
+        code: translatedError.code,
+      });
+
+      reply.code(400).send({
+        success: false,
+        error: translatedError.message,
+        error_code: translatedError.code,
+        original_error: error.message,
+      });
+    } else {
+      reply.code(500).send({
+        success: false,
+        error: "Error interno del servidor al iniciar la llamada",
+      });
+    }
   }
 });
 
@@ -2093,7 +2345,7 @@ fastify.register(async (fastifyInstance) => {
 // Function to clean up stuck calls
 async function cleanupStuckCalls() {
   try {
-    console.log("[CLEANUP] Starting cleanup of stuck calls...");
+    // console.log("[CLEANUP] Starting cleanup of stuck calls...");
 
     // Get all calls that are stuck in "In Progress" status
     const { data: stuckCalls, error: callsError } = await supabase
@@ -2107,7 +2359,7 @@ async function cleanupStuckCalls() {
     }
 
     if (!stuckCalls || stuckCalls.length === 0) {
-      console.log("[CLEANUP] No stuck calls found");
+      //console.log("[CLEANUP] No stuck calls found");
       return;
     }
 
@@ -2211,13 +2463,29 @@ async function cleanupStuckCalls() {
           twilioError
         );
 
+        // Translate Twilio error to Spanish
+        const translatedError = translateTwilioError(twilioError);
+
+        console.log(`[CLEANUP] Translated error for call ${call.call_sid}:`, {
+          original: twilioError.message,
+          translated: translatedError.message,
+          code: translatedError.code,
+        });
+
         await supabase
           .from("calls")
           .update({
             status: "failed",
             result: "failed",
-            error_code: "TWILIO_ERROR",
-            error_message: `Error checking call status: ${twilioError.message}`,
+            error_code: translatedError.code,
+            error_message: translatedError.message,
+            error_details: JSON.stringify({
+              originalMessage: translatedError.originalMessage,
+              translated: translatedError.translated,
+              twilioCode: twilioError.code,
+              twilioStatus: twilioError.status,
+              context: "cleanup_verification",
+            }),
             updated_at: new Date().toISOString(),
           })
           .eq("call_sid", call.call_sid);
