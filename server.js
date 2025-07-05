@@ -2114,6 +2114,7 @@ fastify.register(async (fastifyInstance) => {
                     const normalized = transcript.replace(/[\s,]/g, "");
                     const isNumericSequence = /^\d{7,}$/.test(normalized);
                     const hasVoicemailPhrases = [
+                      // Spanish phrases
                       "deje su mensaje",
                       "después del tono",
                       "mensaje de voz",
@@ -2123,10 +2124,110 @@ fastify.register(async (fastifyInstance) => {
                       "intente más tarde",
                       "ha sido desconectado",
                       "gracias por llamar",
+                      // English phrases
+                      "leave a message",
+                      "after the tone",
+                      "voice message",
+                      "voicemail",
+                      "voice mail",
+                      "the number you dialed",
+                      "is not available",
+                      "try again later",
+                      "has been disconnected",
+                      "thank you for calling",
+                      "please leave a message",
+                      "at the tone",
+                      "beep",
+                      "mailbox",
+                      "inbox",
+                      "answering machine",
+                      "answering service",
+                      "call back",
+                      "call again",
+                      "busy signal",
+                      "no answer",
+                      "unavailable",
+                      "out of service",
+                      "temporarily unavailable",
+                      "please try your call again",
+                      "this number is",
+                      "this phone is",
+                      "this line is",
+                      "this service is",
+                      "this mailbox is",
+                      "this voicemail is",
+                      "this voice mail is",
+                      "this answering machine is",
+                      "this answering service is",
+                      "this number has been",
+                      "this phone has been",
+                      "this line has been",
+                      "this service has been",
+                      "this mailbox has been",
+                      "this voicemail has been",
+                      "this voice mail has been",
+                      "this answering machine has been",
+                      "this answering service has been",
                     ].some((phrase) => transcript.includes(phrase));
 
-                    if (isNumericSequence || hasVoicemailPhrases) {
+                    // Enhanced numeric sequence detection
+                    const hasNumericSequence =
+                      /^\d{7,}$/.test(normalized) ||
+                      /\b\d{7,}\b/.test(transcript) ||
+                      /\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(transcript) ||
+                      /\d{4}[-.\s]?\d{3}[-.\s]?\d{3}/.test(transcript) ||
+                      /\d{3}[-.\s]?\d{4}[-.\s]?\d{4}/.test(transcript);
+
+                    // Detect when system is saying the phone number being called
+                    const phoneNumberPattern =
+                      customParameters?.client_phone?.replace(/[^\d]/g, "") ||
+                      "";
+                    const hasPhoneNumberSequence =
+                      phoneNumberPattern &&
+                      phoneNumberPattern.split("").some(
+                        (digit) =>
+                          transcript.includes(digit) &&
+                          transcript.split(digit).length > 2 // Appears multiple times
+                      );
+
+                    // Check for consecutive number sequences that might be the phone number
+                    const consecutiveNumbers = transcript.match(/\d+/g) || [];
+                    const hasConsecutivePhoneNumbers =
+                      phoneNumberPattern &&
+                      consecutiveNumbers.some(
+                        (num) =>
+                          num.length >= 3 && phoneNumberPattern.includes(num)
+                      );
+
+                    if (
+                      hasNumericSequence ||
+                      hasVoicemailPhrases ||
+                      hasPhoneNumberSequence ||
+                      hasConsecutivePhoneNumbers
+                    ) {
                       console.log("[System] Detected voicemail - hanging up");
+
+                      // Update call status before hanging up
+                      if (callSid) {
+                        try {
+                          await supabase
+                            .from("calls")
+                            .update({
+                              status: "completed",
+                              result: "voicemail",
+                              end_reason: "voicemail_detected_by_transcript",
+                              connection_status: "no_connection",
+                              connection_failure_reason: "voicemail_detected",
+                              updated_at: new Date().toISOString(),
+                            })
+                            .eq("call_sid", callSid);
+                        } catch (err) {
+                          console.error(
+                            "[System] Error updating call status:",
+                            err
+                          );
+                        }
+                      }
 
                       if (elevenLabsWs?.readyState === WebSocket.OPEN) {
                         elevenLabsWs.close();
@@ -2221,6 +2322,260 @@ fastify.register(async (fastifyInstance) => {
 
                   case "conversation_ended":
                     console.log("🔚 [END] Conversation ended");
+
+                    // Save conversation end details to database
+                    if (callSid) {
+                      try {
+                        const { error: updateError } = await supabase
+                          .from("calls")
+                          .update({
+                            status: "completed",
+                            result: "conversation_ended",
+                            end_reason: "elevenlabs_conversation_ended",
+                            updated_at: new Date().toISOString(),
+                          })
+                          .eq("call_sid", callSid);
+
+                        if (updateError) {
+                          console.error(
+                            "[ElevenLabs] Error saving conversation end:",
+                            updateError
+                          );
+                        } else {
+                          console.log(
+                            `[ElevenLabs] Call ${callSid} marked as completed - conversation ended`
+                          );
+                        }
+                      } catch (dbError) {
+                        console.error(
+                          "[ElevenLabs] Error saving conversation end to DB:",
+                          dbError
+                        );
+                      }
+                    }
+                    break;
+
+                  case "conversation_timeout":
+                    console.log(
+                      "⏰ [TIMEOUT] Conversation timed out - no user response"
+                    );
+
+                    // Save timeout details to database
+                    if (callSid) {
+                      try {
+                        const { error: updateError } = await supabase
+                          .from("calls")
+                          .update({
+                            status: "completed",
+                            result: "timeout",
+                            end_reason: "elevenlabs_timeout_no_response",
+                            updated_at: new Date().toISOString(),
+                          })
+                          .eq("call_sid", callSid);
+
+                        if (updateError) {
+                          console.error(
+                            "[ElevenLabs] Error saving timeout:",
+                            updateError
+                          );
+                        } else {
+                          console.log(
+                            `[ElevenLabs] Call ${callSid} marked as completed - timeout`
+                          );
+                        }
+                      } catch (dbError) {
+                        console.error(
+                          "[ElevenLabs] Error saving timeout to DB:",
+                          dbError
+                        );
+                      }
+                    }
+                    break;
+
+                  case "conversation_failed":
+                    console.log("❌ [FAILED] Conversation failed");
+
+                    // Save failure details to database
+                    if (callSid) {
+                      try {
+                        const { error: updateError } = await supabase
+                          .from("calls")
+                          .update({
+                            status: "failed",
+                            result: "conversation_failed",
+                            end_reason: "elevenlabs_conversation_failed",
+                            error_message:
+                              message.conversation_failed_event?.error ||
+                              "Conversation failed",
+                            updated_at: new Date().toISOString(),
+                          })
+                          .eq("call_sid", callSid);
+
+                        if (updateError) {
+                          console.error(
+                            "[ElevenLabs] Error saving conversation failure:",
+                            updateError
+                          );
+                        } else {
+                          console.log(
+                            `[ElevenLabs] Call ${callSid} marked as failed - conversation failed`
+                          );
+                        }
+                      } catch (dbError) {
+                        console.error(
+                          "[ElevenLabs] Error saving conversation failure to DB:",
+                          dbError
+                        );
+                      }
+                    }
+                    break;
+
+                  case "no_user_response":
+                    console.log("🤐 [NO_RESPONSE] No user response detected");
+
+                    // Save no response details to database
+                    if (callSid) {
+                      try {
+                        const { error: updateError } = await supabase
+                          .from("calls")
+                          .update({
+                            status: "completed",
+                            result: "no_response",
+                            end_reason: "elevenlabs_no_user_response",
+                            connection_status: "no_connection",
+                            connection_failure_reason: "no_user_response",
+                            updated_at: new Date().toISOString(),
+                          })
+                          .eq("call_sid", callSid);
+
+                        if (updateError) {
+                          console.error(
+                            "[ElevenLabs] Error saving no response:",
+                            updateError
+                          );
+                        } else {
+                          console.log(
+                            `[ElevenLabs] Call ${callSid} marked as completed - no user response`
+                          );
+                        }
+                      } catch (dbError) {
+                        console.error(
+                          "[ElevenLabs] Error saving no response to DB:",
+                          dbError
+                        );
+                      }
+                    }
+                    break;
+
+                  case "voicemail_detected":
+                    console.log("📞 [VOICEMAIL] Voicemail detected");
+
+                    // Save voicemail detection to database
+                    if (callSid) {
+                      try {
+                        const { error: updateError } = await supabase
+                          .from("calls")
+                          .update({
+                            status: "completed",
+                            result: "voicemail",
+                            end_reason: "elevenlabs_voicemail_detected",
+                            connection_status: "no_connection",
+                            connection_failure_reason: "voicemail_detected",
+                            updated_at: new Date().toISOString(),
+                          })
+                          .eq("call_sid", callSid);
+
+                        if (updateError) {
+                          console.error(
+                            "[ElevenLabs] Error saving voicemail detection:",
+                            updateError
+                          );
+                        } else {
+                          console.log(
+                            `[ElevenLabs] Call ${callSid} marked as completed - voicemail detected`
+                          );
+                        }
+                      } catch (dbError) {
+                        console.error(
+                          "[ElevenLabs] Error saving voicemail detection to DB:",
+                          dbError
+                        );
+                      }
+                    }
+                    break;
+
+                  case "call_not_answered":
+                    console.log("📞 [NOT_ANSWERED] Call not answered");
+
+                    // Save not answered to database
+                    if (callSid) {
+                      try {
+                        const { error: updateError } = await supabase
+                          .from("calls")
+                          .update({
+                            status: "completed",
+                            result: "not_answered",
+                            end_reason: "elevenlabs_call_not_answered",
+                            connection_status: "no_connection",
+                            connection_failure_reason: "call_not_answered",
+                            updated_at: new Date().toISOString(),
+                          })
+                          .eq("call_sid", callSid);
+
+                        if (updateError) {
+                          console.error(
+                            "[ElevenLabs] Error saving not answered:",
+                            updateError
+                          );
+                        } else {
+                          console.log(
+                            `[ElevenLabs] Call ${callSid} marked as completed - call not answered`
+                          );
+                        }
+                      } catch (dbError) {
+                        console.error(
+                          "[ElevenLabs] Error saving not answered to DB:",
+                          dbError
+                        );
+                      }
+                    }
+                    break;
+
+                  case "call_ended_early":
+                    console.log("📞 [ENDED_EARLY] Call ended early");
+
+                    // Save early end to database
+                    if (callSid) {
+                      try {
+                        const { error: updateError } = await supabase
+                          .from("calls")
+                          .update({
+                            status: "completed",
+                            result: "ended_early",
+                            end_reason: "elevenlabs_call_ended_early",
+                            connection_status: "no_connection",
+                            connection_failure_reason: "call_ended_early",
+                            updated_at: new Date().toISOString(),
+                          })
+                          .eq("call_sid", callSid);
+
+                        if (updateError) {
+                          console.error(
+                            "[ElevenLabs] Error saving early end:",
+                            updateError
+                          );
+                        } else {
+                          console.log(
+                            `[ElevenLabs] Call ${callSid} marked as completed - call ended early`
+                          );
+                        }
+                      } catch (dbError) {
+                        console.error(
+                          "[ElevenLabs] Error saving early end to DB:",
+                          dbError
+                        );
+                      }
+                    }
                     break;
 
                   default:
@@ -2417,6 +2772,12 @@ async function cleanupStuckCalls() {
               status: twilioCall.status,
               duration: twilioCall.duration || 0,
               result: twilioCall.status === "completed" ? "success" : "failed",
+              connection_status:
+                twilioCall.duration > 0 ? "connected" : "no_connection",
+              connection_failure_reason:
+                twilioCall.duration === 0
+                  ? "client_hung_up_without_answering"
+                  : null,
               updated_at: new Date().toISOString(),
             })
             .eq("call_sid", call.call_sid);
@@ -2437,12 +2798,12 @@ async function cleanupStuckCalls() {
               .eq("id", call.queue_id);
           }
         } else if (twilioCall.status === "in-progress") {
-          // Check if call has been running too long (more than 10 minutes)
+          // Check if call has been running too long (more than 5 minutes)
           const callStartTime = new Date(call.created_at);
           const now = new Date();
           const durationMinutes = (now - callStartTime) / (1000 * 60);
 
-          if (durationMinutes > 10) {
+          if (durationMinutes > 5) {
             console.log(
               `[CLEANUP] Call ${
                 call.call_sid
@@ -2465,7 +2826,9 @@ async function cleanupStuckCalls() {
                   duration: Math.round(durationMinutes * 60),
                   result: "failed",
                   error_code: "TIMEOUT",
-                  error_message: "Call hung up due to timeout (10+ minutes)",
+                  error_message: "Call hung up due to timeout (5+ minutes)",
+                  connection_status: "no_connection",
+                  connection_failure_reason: "timeout_5_minutes",
                   updated_at: new Date().toISOString(),
                 })
                 .eq("call_sid", call.call_sid);
@@ -2617,12 +2980,37 @@ fastify.post("/twilio-status", async (request, reply) => {
 
     // Determine the result based on Twilio status
     let result = "initiated";
+    let connectionStatus = "connected";
+    let connectionFailureReason = null;
+
     if (callStatus === "completed" && callDuration > 0) {
       result = "success";
+      connectionStatus = "connected";
+    } else if (callStatus === "completed" && callDuration === 0) {
+      // Client hung up without answering
+      result = "not_answered";
+      connectionStatus = "no_connection";
+      connectionFailureReason = "client_hung_up_without_answering";
     } else if (
       ["failed", "busy", "no-answer", "canceled"].includes(callStatus)
     ) {
       result = "failed";
+      connectionStatus = "no_connection";
+
+      // Determine specific failure reason
+      switch (callStatus) {
+        case "busy":
+          connectionFailureReason = "line_busy";
+          break;
+        case "no-answer":
+          connectionFailureReason = "no_answer";
+          break;
+        case "canceled":
+          connectionFailureReason = "call_canceled";
+          break;
+        default:
+          connectionFailureReason = "call_failed";
+      }
     }
 
     // Update call status in database
@@ -2630,6 +3018,8 @@ fastify.post("/twilio-status", async (request, reply) => {
       status: callStatus,
       duration: callDuration || 0,
       result: result,
+      connection_status: connectionStatus,
+      connection_failure_reason: connectionFailureReason,
       updated_at: new Date().toISOString(),
     };
 
