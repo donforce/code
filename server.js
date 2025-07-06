@@ -1788,6 +1788,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     <Response>
       <Connect>
         <Stream url="wss://${RAILWAY_PUBLIC_DOMAIN}/outbound-media-stream" interruptible="true">
+        <Parameter name="interruptionAllowed" value="true"/>
           <Parameter name="prompt" value="${prompt}" />
           <Parameter name="first_message" value="${first_message}" />
           <Parameter name="client_name" value="${client_name}" />
@@ -1830,6 +1831,19 @@ fastify.register(async (fastifyInstance) => {
       let interrupted = false; // Variable para controlar interrupciones
 
       ws.on("error", console.error);
+
+      const sendClearToTwilio = (streamSid) => {
+        if (streamSid) {
+          const clearMsg = JSON.stringify({
+            event: "clear",
+            streamSid: streamSid,
+          });
+          console.log(
+            "🛑 [CLEAR] Sending clear event to Twilio to stop current audio"
+          );
+          ws.send(clearMsg);
+        }
+      };
 
       const setupElevenLabs = async () => {
         try {
@@ -2089,6 +2103,7 @@ fastify.register(async (fastifyInstance) => {
                       "🚨 [INTERRUPTION] Interruption event received"
                     );
                     interrupted = true;
+                    sendClearToTwilio(streamSid);
                     break;
 
                   case "conversation_resumed":
