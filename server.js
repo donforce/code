@@ -119,7 +119,7 @@ const QUEUE_CONFIG = {
   maxConcurrentCalls: parseInt(MAX_CONCURRENT_CALLS) || 5,
   maxCallsPerUser: parseInt(MAX_CALLS_PER_USER) || 1,
   workerPoolSize: parseInt(WORKER_POOL_SIZE) || 3,
-  queueCheckInterval: parseInt(QUEUE_CHECK_INTERVAL) || 15000, // Reduced to 15 seconds
+  queueCheckInterval: parseInt(QUEUE_CHECK_INTERVAL) || 30000, // Increased to 30 seconds
   retryAttempts: parseInt(RETRY_ATTEMPTS) || 2, // Reduced retry attempts
   retryDelay: parseInt(RETRY_DELAY) || 3000, // Reduced retry delay
 };
@@ -128,6 +128,7 @@ const QUEUE_CONFIG = {
 const globalActiveCalls = new Map();
 const userActiveCalls = new Map();
 const workerPool = new Set();
+const processingQueueItems = new Set(); // Track items being processed to prevent duplicates
 
 // Function to translate Twilio error codes to Spanish
 function translateTwilioError(twilioError) {
@@ -459,8 +460,17 @@ async function processAllPendingQueues() {
       return;
     }
 
+    // Filter out items already being processed
+    const availableItems = pendingQueues.filter(
+      (item) => !processingQueueItems.has(item.id)
+    );
+
+    if (availableItems.length === 0) {
+      return;
+    }
+
     // Get user data in single query for all users
-    const userIds = [...new Set(pendingQueues.map((item) => item.user_id))];
+    const userIds = [...new Set(availableItems.map((item) => item.user_id))];
 
     const { data: usersData, error: usersError } = await supabase
       .from("users")
@@ -481,7 +491,7 @@ async function processAllPendingQueues() {
     const eligibleItems = [];
     const processedUsers = new Set();
 
-    for (const item of pendingQueues) {
+    for (const item of availableItems) {
       const user = usersMap.get(item.user_id);
 
       if (!user || user.available_minutes <= 0) {
@@ -510,9 +520,17 @@ async function processAllPendingQueues() {
 
     // Process items concurrently without waiting for all to complete
     itemsToProcess.forEach(async (item) => {
-      processQueueItemWithRetry(item).catch((error) => {
-        console.error(`[Queue] ❌ Error processing item ${item.id}:`, error);
-      });
+      // Mark item as being processed to prevent duplicates
+      processingQueueItems.add(item.id);
+
+      processQueueItemWithRetry(item)
+        .catch((error) => {
+          console.error(`[Queue] ❌ Error processing item ${item.id}:`, error);
+        })
+        .finally(() => {
+          // Remove from processing set when done
+          processingQueueItems.delete(item.id);
+        });
     });
   } catch (error) {
     console.error("[Queue] ❌ Error in queue processing:", error);
