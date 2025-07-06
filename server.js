@@ -3365,7 +3365,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
       }
 
       // Validar formato de teléfono
-      const cleanPhone = phone.replace(/[\s\-\(\)]/g, "");
+      const cleanPhone = phone.replace(/[\s\-\(\)\+]/g, "");
       if (!/^\d{7,15}$/.test(cleanPhone)) {
         errors.push({
           index: i,
