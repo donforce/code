@@ -1067,9 +1067,6 @@ async function getCalendarAvailabilitySummary(userId) {
 
     // Obtener eventos del calendario para las próximas 2 semanas
     try {
-      console.log(
-        `[Calendar][SUMMARY] Obteniendo eventos de Google Calendar...`
-      );
       const { google } = await import("googleapis");
       const oauth2Client = new google.auth.OAuth2(
         process.env.GOOGLE_CLIENT_ID,
@@ -1082,9 +1079,6 @@ async function getCalendarAvailabilitySummary(userId) {
       const now = new Date();
       const twoWeeksFromNow = new Date(
         now.getTime() + 14 * 24 * 60 * 60 * 1000
-      );
-      console.log(
-        `[Calendar][SUMMARY] Rango de fechas: ${now.toISOString()} a ${twoWeeksFromNow.toISOString()}`
       );
       const eventsResponse = await calendar.events.list({
         calendarId: "primary",
@@ -1146,11 +1140,6 @@ async function getCalendarAvailabilitySummary(userId) {
         });
 
         daysWithEvents.add(dayKey);
-        console.log(
-          `[Calendar][SUMMARY][EVENT] ${dayKey}: ${
-            event.summary || "Sin título"
-          } (${start.toISOString()} - ${end.toISOString()})`
-        );
       });
 
       // Crear disponibilidad detallada por día
@@ -1214,97 +1203,9 @@ async function getCalendarAvailabilitySummary(userId) {
       }
 
       console.log(
-        `[Calendar][SUMMARY] Días ocupados: ${summary.busyDays.length} | Días libres: ${summary.freeDays.length}`
-      );
-      console.log(`[Calendar][SUMMARY] Días ocupados:`, summary.busyDays);
-      console.log(`[Calendar][SUMMARY] Días libres:`, summary.freeDays);
-
-      // Mostrar resumen detallado por consola
-      console.log("=".repeat(80));
-      console.log("📅 RESUMEN DETALLADO DE DISPONIBILIDAD DEL CALENDARIO");
-      console.log("=".repeat(80));
-      console.log(`👤 Usuario: ${userId}`);
-      console.log(`🌍 Zona horaria: ${summary.timezone}`);
-      console.log(
-        `📅 Período: ${now.toLocaleDateString()} - ${twoWeeksFromNow.toLocaleDateString()} (14 días)`
-      );
-      console.log(`📊 Total de eventos: ${summary.totalEvents}`);
-      console.log(`✅ Días libres: ${summary.freeDays.length}`);
-      console.log(`📅 Días ocupados: ${summary.busyDays.length}`);
-      console.log("");
-
-      // Mostrar disponibilidad por día
-      console.log("📋 DISPONIBILIDAD POR DÍA:");
-      console.log("-".repeat(50));
-      Object.keys(summary.availabilityByDay)
-        .sort()
-        .forEach((dayKey) => {
-          const dayInfo = summary.availabilityByDay[dayKey];
-          console.log(`\n📅 ${dayInfo.dayName}:`);
-
-          if (dayInfo.isFree) {
-            console.log(`   ✅ DÍA LIBRE - Disponible todo el día`);
-            dayInfo.freeSlots.forEach((slot, index) => {
-              console.log(
-                `      ${index + 1}. ${slot.start} - ${slot.end}: ${
-                  slot.description
-                }`
-              );
-            });
-          } else {
-            console.log(
-              `   📅 DÍA OCUPADO - ${dayInfo.totalBusyTime} minutos ocupados`
-            );
-            console.log(`   📋 Eventos programados:`);
-            dayInfo.busySlots.forEach((slot, index) => {
-              if (slot.isAllDay) {
-                console.log(
-                  `      ${index + 1}. 🌅 ${slot.title} (Todo el día)`
-                );
-              } else {
-                console.log(
-                  `      ${index + 1}. ⏰ ${slot.title} (${slot.start} - ${
-                    slot.end
-                  })`
-                );
-              }
-            });
-
-            if (dayInfo.freeSlots.length > 0) {
-              console.log(`   ✅ Horarios disponibles:`);
-              dayInfo.freeSlots.forEach((slot, index) => {
-                console.log(
-                  `      ${index + 1}. ${slot.start} - ${slot.end}: ${
-                    slot.description
-                  }`
-                );
-              });
-            }
-          }
-        });
-
-      console.log("\n📊 RESUMEN ESTADÍSTICO:");
-      console.log("-".repeat(50));
-      console.log(`✅ Días completamente libres: ${summary.freeDays.length}`);
-      console.log(`📅 Días con eventos: ${summary.busyDays.length}`);
-      console.log(
-        `📊 Promedio de eventos por día: ${(summary.totalEvents / 14).toFixed(
-          1
-        )}`
+        `[Calendar][SUMMARY] ${summary.freeDays.length} días libres, ${summary.busyDays.length} días ocupados`
       );
 
-      if (summary.freeDays.length > 0) {
-        console.log("\n🎯 DÍAS LIBRES:");
-        summary.freeDays.forEach((dayKey) => {
-          const dayInfo = summary.availabilityByDay[dayKey];
-          console.log(`   ✅ ${dayInfo.dayName}`);
-        });
-      }
-
-      console.log("=".repeat(80));
-      console.log(
-        "[Calendar][SUMMARY] ===== FIN DE RESUMEN DE DISPONIBILIDAD ====="
-      );
       return summary;
     } catch (calendarError) {
       console.error(
@@ -3203,14 +3104,7 @@ async function cleanupStuckCalls() {
 
 // Your existing twilio-status endpoint with enhanced logging and error handling
 fastify.post("/twilio-status", async (request, reply) => {
-  console.log("=".repeat(80));
-  console.log("📞 [TWILIO STATUS] Status update received from Twilio");
-  console.log("=".repeat(80));
-
-  // Log request details
-  console.log("📋 Request Headers:", request.headers);
-  console.log("📋 Request Body Type:", typeof request.body);
-  console.log("📋 Request Body:", request.body);
+  console.log("📞 [TWILIO STATUS] Status update received");
 
   const callSid = request.body.CallSid;
   const callDuration = parseInt(request.body.CallDuration || "0", 10);
@@ -3218,21 +3112,15 @@ fastify.post("/twilio-status", async (request, reply) => {
   const callErrorCode = request.body.ErrorCode;
   const callErrorMessage = request.body.ErrorMessage;
 
-  console.log("📱 Call Details:");
-  console.log(`   • Call SID: ${callSid}`);
-  console.log(`   • Status: ${callStatus}`);
-  console.log(`   • Duration: ${callDuration} seconds`);
-  console.log(`   • Error Code: ${callErrorCode || "None"}`);
-  console.log(`   • Error Message: ${callErrorMessage || "None"}`);
-  console.log("=".repeat(80));
+  console.log(
+    `📱 [TWILIO STATUS] Call ${callSid}: ${callStatus} (${callDuration}s)`
+  );
 
   try {
     // Get call info from global tracking
     const callInfo = globalActiveCalls.get(callSid);
-    console.log("[Twilio] Global call info:", callInfo);
 
     // First, let's check if the call exists in the database
-    console.log("[Twilio] Checking if call exists in database...");
     const { data: existingCall, error: checkError } = await supabase
       .from("calls")
       .select("*")
@@ -3240,23 +3128,12 @@ fastify.post("/twilio-status", async (request, reply) => {
       .single();
 
     if (checkError) {
-      console.error("[Twilio] Error checking existing call:", checkError);
-      console.log("[Twilio] Call SID being searched:", callSid);
-      // Let's also check what calls exist in the database
-      const { data: allCalls, error: allCallsError } = await supabase
-        .from("calls")
-        .select("call_sid, status, created_at")
-        .order("created_at", { ascending: false })
-        .limit(10);
-      if (!allCallsError) {
-        console.log("[Twilio] Recent calls in database:", allCalls);
-      } else {
-        console.error("[Twilio] Error fetching recent calls:", allCallsError);
-      }
+      console.error(
+        "[TWILIO STATUS] Error checking existing call:",
+        checkError
+      );
       // Return 200 OK even if call not found to avoid Twilio errors
       return reply.code(200).send();
-    } else {
-      console.log("[Twilio] Existing call found:", existingCall);
     }
 
     // Determine the result based on Twilio status
