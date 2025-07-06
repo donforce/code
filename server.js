@@ -2660,7 +2660,7 @@ fastify.register(async (fastifyInstance) => {
                     })
                   );
                 } else {
-                  console.log("[Audio] Skipping duplicate audio chunk");
+                  // console.log("[Audio] Skipping duplicate audio chunk");
                 }
               }
               break;
