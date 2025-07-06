@@ -449,7 +449,7 @@ async function processAllPendingQueues() {
       )
       .eq("status", "pending")
       .order("queue_position", { ascending: true })
-      .limit(QUEUE_CONFIG.maxConcurrentCalls * 2);
+      .limit(QUEUE_CONFIG.maxConcurrentCalls * 3);
 
     if (error) {
       console.error("[Queue] ❌ Error fetching pending queues:", error);
@@ -487,38 +487,117 @@ async function processAllPendingQueues() {
     // Create optimized user lookup map
     const usersMap = new Map(usersData?.map((user) => [user.id, user]) || []);
 
-    // Filter eligible items efficiently
-    const eligibleItems = [];
-    const processedUsers = new Set();
+    // Group items by user and validate minutes
+    const userQueues = new Map();
 
     for (const item of availableItems) {
       const user = usersMap.get(item.user_id);
 
-      if (!user || user.available_minutes <= 0) {
-        continue;
-      }
-      if (userActiveCalls.has(item.user_id)) {
-        continue;
-      }
-      if (processedUsers.has(item.user_id)) {
-        continue;
+      if (!user || user.available_minutes < 60) {
+        continue; // Skip users with less than 60 minutes
       }
 
-      eligibleItems.push(item);
-      processedUsers.add(item.user_id);
+      if (!userQueues.has(item.user_id)) {
+        userQueues.set(item.user_id, []);
+      }
+      userQueues.get(item.user_id).push(item);
     }
 
-    if (eligibleItems.length === 0) {
+    // Calculate available slots
+    const availableSlots =
+      QUEUE_CONFIG.maxConcurrentCalls - globalActiveCalls.size;
+
+    if (availableSlots <= 0) {
       return;
     }
 
-    // Process items concurrently with optimized batch size
-    const itemsToProcess = eligibleItems.slice(
-      0,
-      QUEUE_CONFIG.maxConcurrentCalls - globalActiveCalls.size
+    // Sort users by priority: users with active calls get priority, then by queue length
+    const userPriority = [];
+
+    for (const [userId, items] of userQueues) {
+      const hasActiveCalls = userActiveCalls.has(userId);
+      const queueLength = items.length;
+      const user = usersMap.get(userId);
+
+      userPriority.push({
+        userId,
+        items,
+        hasActiveCalls,
+        queueLength,
+        availableMinutes: user.available_minutes,
+        priority: hasActiveCalls ? 1 : 2,
+      });
+    }
+
+    // Sort by priority (active users first), then by queue length (longer queues first)
+    userPriority.sort((a, b) => {
+      if (a.hasActiveCalls !== b.hasActiveCalls) {
+        return a.hasActiveCalls ? -1 : 1;
+      }
+      return b.queueLength - a.queueLength;
+    });
+
+    // Distribute slots among users (mixed rotation - Option B)
+    const itemsToProcess = [];
+    const userSlotCount = new Map(); // Track how many slots each user is using
+
+    for (const userData of userPriority) {
+      if (itemsToProcess.length >= availableSlots) {
+        break; // No more slots available
+      }
+
+      // Calculate how many slots this user can use
+      const currentUserSlots = userSlotCount.get(userData.userId) || 0;
+      const userActiveCallCount = userActiveCalls.has(userData.userId) ? 1 : 0;
+
+      // User can use up to maxCallsPerUser, but needs 60 minutes per additional call
+      const maxSlotsForUser = Math.min(
+        QUEUE_CONFIG.maxCallsPerUser - userActiveCallCount - currentUserSlots,
+        Math.floor(userData.availableMinutes / 60), // 60 minutes per call
+        availableSlots - itemsToProcess.length // Available slots remaining
+      );
+
+      if (maxSlotsForUser <= 0) {
+        continue;
+      }
+
+      // Take items for this user
+      const userItems = userData.items.slice(0, maxSlotsForUser);
+
+      for (const item of userItems) {
+        itemsToProcess.push(item);
+        userSlotCount.set(
+          userData.userId,
+          (userSlotCount.get(userData.userId) || 0) + 1
+        );
+
+        if (itemsToProcess.length >= availableSlots) {
+          break;
+        }
+      }
+    }
+
+    if (itemsToProcess.length === 0) {
+      return;
+    }
+
+    // Log the distribution
+    const userDistribution = {};
+    for (const [userId, slotCount] of userSlotCount) {
+      const user = usersMap.get(userId);
+      userDistribution[user.email] = {
+        slots: slotCount,
+        queueLength: userQueues.get(userId).length,
+        availableMinutes: user.available_minutes,
+      };
+    }
+
+    console.log(
+      `[Queue] Processing ${itemsToProcess.length} items with mixed rotation:`,
+      userDistribution
     );
 
-    // Process items concurrently without waiting for all to complete
+    // Process items concurrently
     itemsToProcess.forEach(async (item) => {
       // Mark item as being processed to prevent duplicates
       processingQueueItems.add(item.id);
@@ -3075,6 +3154,83 @@ fastify.post("/twilio-status", async (request, reply) => {
       userActiveCalls.delete(existingCall.user_id);
     activeCalls--;
 
+    // Deduct minutes from user's available time if call was successful
+    if (
+      existingCall &&
+      existingCall.user_id &&
+      callDuration > 0 &&
+      result === "success"
+    ) {
+      try {
+        console.log(
+          `[TWILIO STATUS] Deducting ${callDuration} seconds from user ${existingCall.user_id}`
+        );
+
+        // Get current user data
+        const { data: userData, error: userError } = await supabase
+          .from("users")
+          .select("available_minutes, available_seconds")
+          .eq("id", existingCall.user_id)
+          .single();
+
+        if (userError) {
+          console.error("[TWILIO STATUS] Error fetching user data:", userError);
+        } else if (userData) {
+          // Calculate total available seconds
+          const totalAvailableSeconds =
+            userData.available_minutes * 60 + (userData.available_seconds || 0);
+
+          // Calculate remaining seconds after deduction
+          const remainingSeconds = Math.max(
+            0,
+            totalAvailableSeconds - callDuration
+          );
+
+          // Convert back to minutes and seconds
+          const newMinutes = Math.floor(remainingSeconds / 60);
+          const newSeconds = remainingSeconds % 60;
+
+          console.log(
+            `[TWILIO STATUS] User ${existingCall.user_id} time deduction:`,
+            {
+              before: {
+                minutes: userData.available_minutes,
+                seconds: userData.available_seconds || 0,
+              },
+              callDuration,
+              after: { minutes: newMinutes, seconds: newSeconds },
+            }
+          );
+
+          // Update user's available time
+          const { error: updateError } = await supabase
+            .from("users")
+            .update({
+              available_minutes: newMinutes,
+              available_seconds: newSeconds,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", existingCall.user_id);
+
+          if (updateError) {
+            console.error(
+              "[TWILIO STATUS] Error updating user time:",
+              updateError
+            );
+          } else {
+            console.log(
+              `[TWILIO STATUS] Successfully deducted ${callDuration} seconds from user ${existingCall.user_id}`
+            );
+          }
+        }
+      } catch (deductionError) {
+        console.error(
+          "[TWILIO STATUS] Error during time deduction:",
+          deductionError
+        );
+      }
+    }
+
     // Update associated queue item
     if (existingCall && existingCall.queue_id) {
       await supabase
@@ -3767,6 +3923,10 @@ fastify.get("/api/integration/leads", async (request, reply) => {
 const start = async () => {
   try {
     console.log("🚀 Server starting on port", PORT);
+
+    // Inicializar bucket de grabaciones
+    console.log("🪣 [STARTUP] Initializing recording storage...");
+    await initializeRecordingBucket();
 
     await fastify.listen({ port: PORT, host: "0.0.0.0" });
     console.log("✅ Server running");
@@ -5463,6 +5623,27 @@ fastify.post("/twilio-recording-status", async (request, reply) => {
       );
     }
 
+    // Si la grabación está completa y tenemos URL, descargarla y almacenarla
+    if (RecordingStatus === "completed" && RecordingUrl) {
+      console.log(
+        `🎙️ [TWILIO RECORDING] Recording completed, starting download for call ${CallSid}`
+      );
+
+      // Ejecutar la descarga de forma asíncrona para no bloquear la respuesta
+      downloadAndStoreRecording(RecordingUrl, CallSid, RecordingSid)
+        .then((publicUrl) => {
+          console.log(
+            `✅ [TWILIO RECORDING] Recording download completed for call ${CallSid}: ${publicUrl}`
+          );
+        })
+        .catch((error) => {
+          console.error(
+            `❌ [TWILIO RECORDING] Recording download failed for call ${CallSid}:`,
+            error
+          );
+        });
+    }
+
     reply.send({ success: true });
   } catch (error) {
     console.error(
@@ -5589,3 +5770,261 @@ fastify.get("/api/admin/recording-stats", async (request, reply) => {
     });
   }
 });
+
+// Función para descargar grabación de Twilio y guardarla en Supabase Storage
+async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
+  try {
+    console.log(
+      `🎙️ [RECORDING DOWNLOAD] Starting download for call ${callSid}`
+    );
+
+    // Descargar el archivo desde Twilio
+    const response = await fetch(recordingUrl);
+    if (!response.ok) {
+      throw new Error(
+        `Failed to download recording: ${response.status} ${response.statusText}`
+      );
+    }
+
+    const audioBuffer = await response.arrayBuffer();
+    const audioData = Buffer.from(audioBuffer);
+
+    console.log(
+      `🎙️ [RECORDING DOWNLOAD] Downloaded ${audioData.length} bytes for call ${callSid}`
+    );
+
+    // Generar nombre único para el archivo
+    const fileName = `recordings/${callSid}_${recordingSid}.wav`;
+
+    // Subir a Supabase Storage
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from("call-recordings")
+      .upload(fileName, audioData, {
+        contentType: "audio/wav",
+        upsert: false,
+      });
+
+    if (uploadError) {
+      throw new Error(
+        `Failed to upload to Supabase Storage: ${uploadError.message}`
+      );
+    }
+
+    console.log(
+      `🎙️ [RECORDING DOWNLOAD] Successfully uploaded to Supabase Storage: ${fileName}`
+    );
+
+    // Obtener URL pública del archivo
+    const { data: urlData } = supabase.storage
+      .from("call-recordings")
+      .getPublicUrl(fileName);
+
+    const publicUrl = urlData.publicUrl;
+
+    // Actualizar la base de datos con la URL del archivo descargado
+    const { error: updateError } = await supabase
+      .from("calls")
+      .update({
+        recording_storage_url: publicUrl,
+        recording_storage_path: fileName,
+        recording_downloaded_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("call_sid", callSid);
+
+    if (updateError) {
+      throw new Error(`Failed to update database: ${updateError.message}`);
+    }
+
+    console.log(
+      `✅ [RECORDING DOWNLOAD] Successfully stored recording for call ${callSid}: ${publicUrl}`
+    );
+    return publicUrl;
+  } catch (error) {
+    console.error(
+      `❌ [RECORDING DOWNLOAD] Error downloading/storing recording for call ${callSid}:`,
+      error
+    );
+    throw error;
+  }
+}
+
+// Función para inicializar el bucket de grabaciones en Supabase Storage
+async function initializeRecordingBucket() {
+  try {
+    console.log("🪣 [STORAGE] Initializing recording bucket...");
+
+    // Listar buckets existentes
+    const { data: buckets, error: listError } =
+      await supabase.storage.listBuckets();
+
+    if (listError) {
+      console.error("❌ [STORAGE] Error listing buckets:", listError);
+      return false;
+    }
+
+    // Verificar si el bucket ya existe
+    const bucketExists = buckets.some(
+      (bucket) => bucket.name === "call-recordings"
+    );
+
+    if (bucketExists) {
+      console.log("✅ [STORAGE] Recording bucket already exists");
+      return true;
+    }
+
+    // Crear el bucket si no existe
+    const { data: bucket, error: createError } =
+      await supabase.storage.createBucket("call-recordings", {
+        public: true,
+        allowedMimeTypes: ["audio/wav", "audio/mp3"],
+        fileSizeLimit: 52428800, // 50MB limit
+      });
+
+    if (createError) {
+      console.error("❌ [STORAGE] Error creating bucket:", createError);
+      return false;
+    }
+
+    console.log("✅ [STORAGE] Recording bucket created successfully");
+    return true;
+  } catch (error) {
+    console.error("❌ [STORAGE] Error initializing recording bucket:", error);
+    return false;
+  }
+}
+
+// Endpoint para obtener grabaciones de un usuario
+fastify.get("/api/recordings/:userId", async (request, reply) => {
+  try {
+    const { userId } = request.params;
+
+    if (!userId) {
+      return reply.code(400).send({
+        success: false,
+        error: "User ID is required",
+      });
+    }
+
+    console.log(`🎙️ [API] Fetching recordings for user ${userId}`);
+
+    // Obtener llamadas con grabaciones disponibles
+    const { data: calls, error } = await supabase
+      .from("calls")
+      .select(
+        `
+        id,
+        call_sid,
+        lead_id,
+        duration,
+        result,
+        created_at,
+        recording_storage_url,
+        recording_duration,
+        recording_downloaded_at,
+        lead:leads (
+          name,
+          phone,
+          email
+        )
+      `
+      )
+      .eq("user_id", userId)
+      .not("recording_storage_url", "is", null)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error(
+        `❌ [API] Error fetching recordings for user ${userId}:`,
+        error
+      );
+      return reply.code(500).send({
+        success: false,
+        error: "Error fetching recordings",
+      });
+    }
+
+    console.log(
+      `✅ [API] Found ${calls?.length || 0} recordings for user ${userId}`
+    );
+
+    reply.send({
+      success: true,
+      recordings: calls || [],
+    });
+  } catch (error) {
+    console.error(`❌ [API] Error in recordings endpoint:`, error);
+    reply.code(500).send({
+      success: false,
+      error: "Internal server error",
+    });
+  }
+});
+
+// Endpoint para descargar manualmente una grabación (en caso de que falle la descarga automática)
+fastify.post("/api/recordings/download/:callSid", async (request, reply) => {
+  try {
+    const { callSid } = request.params;
+
+    if (!callSid) {
+      return reply.code(400).send({
+        success: false,
+        error: "Call SID is required",
+      });
+    }
+
+    console.log(`🎙️ [API] Manual download requested for call ${callSid}`);
+
+    // Obtener información de la llamada
+    const { data: call, error: callError } = await supabase
+      .from("calls")
+      .select("call_sid, recording_url, recording_sid, recording_storage_url")
+      .eq("call_sid", callSid)
+      .single();
+
+    if (callError || !call) {
+      return reply.code(404).send({
+        success: false,
+        error: "Call not found",
+      });
+    }
+
+    // Verificar si ya está descargada
+    if (call.recording_storage_url) {
+      return reply.send({
+        success: true,
+        message: "Recording already downloaded",
+        url: call.recording_storage_url,
+      });
+    }
+
+    // Verificar si tiene URL de Twilio
+    if (!call.recording_url) {
+      return reply.code(400).send({
+        success: false,
+        error: "No recording URL available",
+      });
+    }
+
+    // Descargar la grabación
+    const publicUrl = await downloadAndStoreRecording(
+      call.recording_url,
+      call.call_sid,
+      call.recording_sid
+    );
+
+    reply.send({
+      success: true,
+      message: "Recording downloaded successfully",
+      url: publicUrl,
+    });
+  } catch (error) {
+    console.error(`❌ [API] Error in manual download:`, error);
+    reply.code(500).send({
+      success: false,
+      error: "Error downloading recording",
+    });
+  }
+});
+
+// Endpoint para limpiar grabaciones antiguas manualmente
