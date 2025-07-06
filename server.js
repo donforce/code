@@ -1787,7 +1787,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
     <Response>
       <Connect>
-        <Stream url="wss://${RAILWAY_PUBLIC_DOMAIN}/outbound-media-stream">
+        <Stream url="wss://${RAILWAY_PUBLIC_DOMAIN}/outbound-media-stream" interruptible="true">
           <Parameter name="prompt" value="${prompt}" />
           <Parameter name="first_message" value="${first_message}" />
           <Parameter name="client_name" value="${client_name}" />
@@ -3537,6 +3537,40 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                   error: "Error al crear lead",
                   details: insertError.message,
                 };
+              }
+
+              // NUEVO: Si auto_call es true, agregar a la cola automáticamente
+              if (data.auto_call) {
+                try {
+                  // Obtener la última posición en la cola
+                  const { data: existingQueue } = await supabase
+                    .from("call_queue")
+                    .select("queue_position")
+                    .order("queue_position", { ascending: false })
+                    .limit(1);
+                  const nextPosition =
+                    existingQueue && existingQueue.length > 0
+                      ? (existingQueue[0]?.queue_position || 0) + 1
+                      : 1;
+
+                  await supabase.from("call_queue").insert({
+                    user_id: userId,
+                    lead_id: newLead.id,
+                    queue_position: nextPosition,
+                    status: "pending",
+                    created_at: new Date().toISOString(),
+                  });
+
+                  console.log(
+                    `✅ [API] Lead ${newLead.id} agregado automáticamente a la cola de llamadas`
+                  );
+                } catch (queueError) {
+                  console.error(
+                    `❌ [API] Error al agregar lead ${newLead.id} a la cola:`,
+                    queueError
+                  );
+                  // No fallamos la creación del lead por un error en la cola
+                }
               }
 
               return {
@@ -5403,5 +5437,122 @@ fastify.post("/twilio-recording-status", async (request, reply) => {
       error
     );
     reply.code(500).send({ error: "Internal server error" });
+  }
+});
+
+// Función para limpiar grabaciones antiguas (más de 24 horas)
+// NOTA: Esta función se ha movido a Supabase para mejor rendimiento
+// Ver: supabase/migrations/20250106_add_recording_cleanup.sql
+
+// Endpoint para limpiar grabaciones antiguas manualmente
+fastify.post("/api/admin/cleanup-recordings", async (request, reply) => {
+  try {
+    console.log("🧹 [ADMIN] Manual recording cleanup requested");
+
+    // Verificar API key
+    const apiKey =
+      request.headers["x-api-key"] ||
+      request.headers.authorization?.replace("Bearer ", "");
+
+    if (!apiKey) {
+      return reply.code(401).send({
+        error: "API key requerida",
+        message: "Se requiere autenticación para esta operación",
+      });
+    }
+
+    // Ejecutar la función de limpieza en Supabase
+    const { data, error } = await supabase.rpc("cleanup_old_recordings");
+
+    if (error) {
+      console.error("❌ [ADMIN] Error ejecutando limpieza:", error);
+      return reply.code(500).send({
+        error: "Error ejecutando limpieza",
+        message: error.message,
+      });
+    }
+
+    // Obtener estadísticas después de la limpieza
+    const { data: stats, error: statsError } = await supabase.rpc(
+      "get_recording_stats"
+    );
+
+    if (statsError) {
+      console.error("❌ [ADMIN] Error obteniendo estadísticas:", statsError);
+    }
+
+    console.log("✅ [ADMIN] Limpieza manual completada:", data);
+
+    return reply.send({
+      success: true,
+      message: "Limpieza de grabaciones completada",
+      data: {
+        cleanup_result: data,
+        statistics: stats,
+      },
+    });
+  } catch (error) {
+    console.error("❌ [ADMIN] Error en limpieza manual:", error);
+    return reply.code(500).send({
+      error: "Error interno del servidor",
+      message: "Error inesperado al ejecutar limpieza",
+    });
+  }
+});
+
+// Endpoint para obtener estadísticas de grabaciones
+fastify.get("/api/admin/recording-stats", async (request, reply) => {
+  try {
+    console.log("📊 [ADMIN] Recording statistics requested");
+
+    // Verificar API key
+    const apiKey =
+      request.headers["x-api-key"] ||
+      request.headers.authorization?.replace("Bearer ", "");
+
+    if (!apiKey) {
+      return reply.code(401).send({
+        error: "API key requerida",
+        message: "Se requiere autenticación para esta operación",
+      });
+    }
+
+    // Obtener estadísticas
+    const { data: stats, error } = await supabase.rpc("get_recording_stats");
+
+    if (error) {
+      console.error("❌ [ADMIN] Error obteniendo estadísticas:", error);
+      return reply.code(500).send({
+        error: "Error obteniendo estadísticas",
+        message: error.message,
+      });
+    }
+
+    // Obtener grabaciones recientes para monitoreo
+    const { data: recentRecordings, error: recordingsError } = await supabase
+      .from("recording_monitor")
+      .select("*")
+      .limit(10);
+
+    if (recordingsError) {
+      console.error(
+        "❌ [ADMIN] Error obteniendo grabaciones recientes:",
+        recordingsError
+      );
+    }
+
+    return reply.send({
+      success: true,
+      data: {
+        statistics: stats,
+        recent_recordings: recentRecordings || [],
+      },
+    });
+  } catch (error) {
+    console.error("❌ [ADMIN] Error obteniendo estadísticas:", error);
+    return reply.code(500).send({
+      error: "Error interno del servidor",
+      message: "Error inesperado al obtener estadísticas",
+    });
   }
 });
