@@ -1881,28 +1881,43 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     calendar_timezone,
   } = request.query;
 
+  // Función para escapar caracteres especiales en XML
+  const escapeXml = (str) => {
+    if (!str) return "";
+    return str
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
+  };
+
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
     <Response>
       <Connect>
         <Stream url="wss://${RAILWAY_PUBLIC_DOMAIN}/outbound-media-stream" interruptible="true">
-        <Parameter name="interruptionAllowed" value="true"/>
-          <Parameter name="prompt" value="${prompt}" />
-          <Parameter name="first_message" value="${first_message}" />
-          <Parameter name="client_name" value="${client_name}" />
-          <Parameter name="client_phone" value="${client_phone}" />
-          <Parameter name="client_email" value="${client_email}" />
-          <Parameter name="client_id" value="${client_id}" />
-          <Parameter name="fecha" value="${fecha}" />
-          <Parameter name="dia_semana" value="${dia_semana}" />
-          <Parameter name="agent_firstname" value="${agent_firstname}" />
-          <Parameter name="agent_name" value="${agent_name}" />
-          <Parameter name="assistant_name" value="${assistant_name}" />
-          <Parameter name="calendar_availability" value="${
+          <Parameter name="interruptionAllowed" value="true"/>
+          <Parameter name="prompt" value="${escapeXml(prompt)}" />
+          <Parameter name="first_message" value="${escapeXml(first_message)}" />
+          <Parameter name="client_name" value="${escapeXml(client_name)}" />
+          <Parameter name="client_phone" value="${escapeXml(client_phone)}" />
+          <Parameter name="client_email" value="${escapeXml(client_email)}" />
+          <Parameter name="client_id" value="${escapeXml(client_id)}" />
+          <Parameter name="fecha" value="${escapeXml(fecha)}" />
+          <Parameter name="dia_semana" value="${escapeXml(dia_semana)}" />
+          <Parameter name="agent_firstname" value="${escapeXml(
+            agent_firstname
+          )}" />
+          <Parameter name="agent_name" value="${escapeXml(agent_name)}" />
+          <Parameter name="assistant_name" value="${escapeXml(
+            assistant_name
+          )}" />
+          <Parameter name="calendar_availability" value="${escapeXml(
             calendar_availability || "Disponible todos los dias"
-          }" />
-          <Parameter name="calendar_timezone" value="${
+          )}" />
+          <Parameter name="calendar_timezone" value="${escapeXml(
             calendar_timezone || "America/New_York"
-          }" />
+          )}" />
         </Stream>
       </Connect>
     </Response>`;
@@ -1926,8 +1941,73 @@ fastify.register(async (fastifyInstance) => {
       let sentAudioChunks = new Set(); // Para evitar audio duplicado
       let audioChunkCounter = 0; // Contador para limpiar el Set periódicamente
       let interrupted = false; // Variable para controlar interrupciones
+      let isVoicemailDetectionMode = false; // Variable para evitar clear durante detección de buzón de voz
+      let lastAudioTime = Date.now(); // Para detectar silencios largos
+      let silenceThreshold = 8000; // 8 segundos de silencio para considerar buzón de voz
 
       ws.on("error", console.error);
+
+      // Función para detectar silencios largos
+      const checkForLongSilence = () => {
+        const now = Date.now();
+        const silenceDuration = now - lastAudioTime;
+
+        if (silenceDuration > silenceThreshold && !isVoicemailDetectionMode) {
+          console.log(
+            `🔇 [SILENCE] Long silence detected: ${silenceDuration}ms - possible voicemail`
+          );
+          isVoicemailDetectionMode = true;
+
+          // Terminar la llamada por silencio prolongado
+          if (callSid) {
+            supabase
+              .from("calls")
+              .update({
+                status: "completed",
+                result: "voicemail",
+                end_reason: "voicemail_detected_by_silence",
+                connection_status: "no_connection",
+                connection_failure_reason: "voicemail_detected",
+                updated_at: new Date().toISOString(),
+              })
+              .eq("call_sid", callSid)
+              .then(() => {
+                console.log(
+                  "[System] Call marked as voicemail due to long silence"
+                );
+              })
+              .catch((err) => {
+                console.error(
+                  "[System] Error updating call status for silence:",
+                  err
+                );
+              });
+          }
+
+          if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+            elevenLabsWs.close();
+          }
+
+          if (callSid) {
+            twilioClient
+              .calls(callSid)
+              .update({ status: "completed" })
+              .catch((err) => {
+                console.error(
+                  "[Twilio] Error ending call due to silence:",
+                  err
+                );
+              });
+          }
+
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.close();
+          }
+        }
+      };
+
+      // Verificar silencios cada 2 segundos
+      const silenceCheckInterval = setInterval(checkForLongSilence, 2000);
 
       const sendClearToTwilio = (streamSid) => {
         if (streamSid) {
@@ -2119,6 +2199,9 @@ fastify.register(async (fastifyInstance) => {
                           },
                         };
                         ws.send(JSON.stringify(audioData));
+
+                        // Actualizar timestamp de audio para control de silencios
+                        lastAudioTime = Date.now();
                       } else {
                         console.log(
                           "[ElevenLabs Audio] Skipping duplicate audio chunk"
@@ -2200,7 +2283,10 @@ fastify.register(async (fastifyInstance) => {
                       "🚨 [INTERRUPTION] Interruption event received"
                     );
                     interrupted = true;
-                    sendClearToTwilio(streamSid);
+                    // Solo enviar clear si no estamos en modo de detección de buzón de voz
+                    if (!isVoicemailDetectionMode) {
+                      sendClearToTwilio(streamSid);
+                    }
                     break;
 
                   case "conversation_resumed":
@@ -2233,115 +2319,181 @@ fastify.register(async (fastifyInstance) => {
                       console.log("🎤 [USER] Said:", transcript);
                     }
 
-                    const normalized = transcript.replace(/[\s,]/g, "");
-                    const isNumericSequence = /^\d{7,}$/.test(normalized);
-                    const hasVoicemailPhrases = [
-                      // Spanish phrases
-                      "deje su mensaje",
-                      "después del tono",
-                      "mensaje de voz",
-                      "buzón de voz",
-                      "el número que usted marcó",
-                      "no está disponible",
-                      "intente más tarde",
-                      "ha sido desconectado",
+                    // Agregar un pequeño delay para evitar procesar transcripts muy tempranos
+                    // que pueden ser falsos positivos de buzón de voz
+                    setTimeout(async () => {
+                      const normalized = transcript.replace(/[\s,]/g, "");
+                      const isNumericSequence = /^\d{7,}$/.test(normalized);
 
-                      // English phrases
-                      "leave a message",
-                      "after the tone",
-                      "voice message",
-                      "voicemail",
-                      "voice mail",
-                      "the number you dialed",
-                      "is not available",
-                      "try again later",
-                      "has been disconnected",
+                      // Normalizar el transcript para mejor detección
+                      const normalizedTranscript = transcript
+                        .toLowerCase()
+                        .normalize("NFD")
+                        .replace(/[\u0300-\u036f]/g, ""); // Remover acentos
 
-                      "please leave a message",
-                      "at the tone",
-                      "answering machine",
-                      "answering service",
-                      "out of service",
-                      "temporarily unavailable",
-                    ].some((phrase) => transcript.includes(phrase));
+                      const hasVoicemailPhrases = [
+                        // Spanish phrases - más variaciones
+                        "deje su mensaje",
+                        "deja tu mensaje",
+                        "deje un mensaje",
+                        "deja un mensaje",
+                        "después del tono",
+                        "despues del tono",
+                        "después de la señal",
+                        "despues de la señal",
+                        "mensaje de voz",
+                        "buzón de voz",
+                        "buzon de voz",
+                        "el número que usted marcó",
+                        "el numero que usted marco",
+                        "el número que marcó",
+                        "el numero que marco",
+                        "no está disponible",
+                        "no esta disponible",
+                        "intente más tarde",
+                        "intente mas tarde",
+                        "pulse cualquier tecla",
+                        "presione cualquier tecla",
+                        "ha sido desconectado",
+                        "a sido desconectado",
+                        "está desconectado",
+                        "esta desconectado",
+                        "no contesta",
+                        "no responde",
+                        "no disponible",
+                        "fuera de servicio",
+                        "temporalmente no disponible",
+                        "temporalmente indisponible",
+                        "deje su recado",
+                        "deja tu recado",
+                        "grabadora",
+                        "contestador",
+                        "contestador automático",
+                        "contestador automatico",
+                        "presiona la tecla numeral",
 
-                    // Enhanced numeric sequence detection
-                    const hasNumericSequence =
-                      /^\d{7,}$/.test(normalized) ||
-                      /\b\d{7,}\b/.test(transcript) ||
-                      /\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(transcript) ||
-                      /\d{4}[-.\s]?\d{3}[-.\s]?\d{3}/.test(transcript) ||
-                      /\d{3}[-.\s]?\d{4}[-.\s]?\d{4}/.test(transcript);
+                        // English phrases
+                        "leave a message",
+                        "leave your message",
+                        "after the tone",
+                        "after the beep",
+                        "voice message",
+                        "voicemail",
+                        "voice mail",
+                        "the number you dialed",
+                        "the number you called",
+                        "is not available",
+                        "try again later",
+                        "has been disconnected",
+                        "please leave a message",
+                        "at the tone",
+                        "answering machine",
+                        "answering service",
+                        "out of service",
+                        "temporarily unavailable",
+                        "not answering",
+                        "not responding",
+                        "not available",
+                        "disconnected",
+                        "unavailable",
+                      ].some((phrase) => {
+                        const normalizedPhrase = phrase
+                          .toLowerCase()
+                          .normalize("NFD")
+                          .replace(/[\u0300-\u036f]/g, "");
+                        return normalizedTranscript.includes(normalizedPhrase);
+                      });
 
-                    // Detect when system is saying the phone number being called
-                    const phoneNumberPattern =
-                      customParameters?.client_phone?.replace(/[^\d]/g, "") ||
-                      "";
-                    const hasPhoneNumberSequence =
-                      phoneNumberPattern &&
-                      phoneNumberPattern.split("").some(
-                        (digit) =>
-                          transcript.includes(digit) &&
-                          transcript.split(digit).length > 2 // Appears multiple times
-                      );
+                      // Enhanced numeric sequence detection
+                      const hasNumericSequence =
+                        /^\d{7,}$/.test(normalized) ||
+                        /\b\d{7,}\b/.test(transcript) ||
+                        /\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(transcript) ||
+                        /\d{4}[-.\s]?\d{3}[-.\s]?\d{3}/.test(transcript) ||
+                        /\d{3}[-.\s]?\d{4}[-.\s]?\d{4}/.test(transcript);
 
-                    // Check for consecutive number sequences that might be the phone number
-                    const consecutiveNumbers = transcript.match(/\d+/g) || [];
-                    const hasConsecutivePhoneNumbers =
-                      phoneNumberPattern &&
-                      consecutiveNumbers.some(
-                        (num) =>
-                          num.length >= 3 && phoneNumberPattern.includes(num)
-                      );
+                      // Detect when system is saying the phone number being called
+                      const phoneNumberPattern =
+                        customParameters?.client_phone?.replace(/[^\d]/g, "") ||
+                        "";
+                      const hasPhoneNumberSequence =
+                        phoneNumberPattern &&
+                        phoneNumberPattern.split("").some(
+                          (digit) =>
+                            transcript.includes(digit) &&
+                            transcript.split(digit).length > 2 // Appears multiple times
+                        );
 
-                    if (
-                      hasNumericSequence ||
-                      hasVoicemailPhrases ||
-                      hasPhoneNumberSequence ||
-                      hasConsecutivePhoneNumbers
-                    ) {
-                      console.log("[System] Detected voicemail - hanging up");
+                      // Check for consecutive number sequences that might be the phone number
+                      const consecutiveNumbers = transcript.match(/\d+/g) || [];
+                      const hasConsecutivePhoneNumbers =
+                        phoneNumberPattern &&
+                        consecutiveNumbers.some(
+                          (num) =>
+                            num.length >= 3 && phoneNumberPattern.includes(num)
+                        );
 
-                      // Update call status before hanging up
-                      if (callSid) {
-                        try {
-                          await supabase
-                            .from("calls")
-                            .update({
-                              status: "completed",
-                              result: "voicemail",
-                              end_reason: "voicemail_detected_by_transcript",
-                              connection_status: "no_connection",
-                              connection_failure_reason: "voicemail_detected",
-                              updated_at: new Date().toISOString(),
-                            })
-                            .eq("call_sid", callSid);
-                        } catch (err) {
-                          console.error(
-                            "[System] Error updating call status:",
-                            err
-                          );
+                      if (
+                        hasNumericSequence ||
+                        hasVoicemailPhrases ||
+                        hasPhoneNumberSequence ||
+                        hasConsecutivePhoneNumbers
+                      ) {
+                        console.log("[System] Detected voicemail - hanging up");
+                        console.log("[System] Detection details:", {
+                          transcript: transcript,
+                          normalizedTranscript: normalizedTranscript,
+                          hasNumericSequence,
+                          hasVoicemailPhrases,
+                          hasPhoneNumberSequence,
+                          hasConsecutivePhoneNumbers,
+                          phoneNumberPattern,
+                        });
+
+                        // Marcar que estamos en modo de detección de buzón de voz
+                        isVoicemailDetectionMode = true;
+
+                        // Update call status before hanging up
+                        if (callSid) {
+                          try {
+                            await supabase
+                              .from("calls")
+                              .update({
+                                status: "completed",
+                                result: "voicemail",
+                                end_reason: "voicemail_detected_by_transcript",
+                                connection_status: "no_connection",
+                                connection_failure_reason: "voicemail_detected",
+                                updated_at: new Date().toISOString(),
+                              })
+                              .eq("call_sid", callSid);
+                          } catch (err) {
+                            console.error(
+                              "[System] Error updating call status:",
+                              err
+                            );
+                          }
+                        }
+
+                        if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                          elevenLabsWs.close();
+                        }
+
+                        if (callSid) {
+                          try {
+                            await twilioClient
+                              .calls(callSid)
+                              .update({ status: "completed" });
+                          } catch (err) {
+                            console.error("[Twilio] Error ending call:", err);
+                          }
+                        }
+
+                        if (ws.readyState === WebSocket.OPEN) {
+                          ws.close();
                         }
                       }
-
-                      if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                        elevenLabsWs.close();
-                      }
-
-                      if (callSid) {
-                        try {
-                          await twilioClient
-                            .calls(callSid)
-                            .update({ status: "completed" });
-                        } catch (err) {
-                          console.error("[Twilio] Error ending call:", err);
-                        }
-                      }
-
-                      if (ws.readyState === WebSocket.OPEN) {
-                        ws.close();
-                      }
-                    }
+                    }, 1000); // Delay de 1 segundo para evitar falsos positivos
                     break;
 
                   case "conversation_summary":
@@ -2795,6 +2947,12 @@ fastify.register(async (fastifyInstance) => {
               sentAudioChunks.clear();
               audioChunkCounter = 0;
               console.log("[Audio] Cleaned audio chunks on call stop");
+
+              // Limpiar intervalo de verificación de silencios
+              if (silenceCheckInterval) {
+                clearInterval(silenceCheckInterval);
+                console.log("[SILENCE] Cleaned silence check interval on stop");
+              }
               break;
 
             default:
@@ -2813,6 +2971,12 @@ fastify.register(async (fastifyInstance) => {
         sentAudioChunks.clear();
         audioChunkCounter = 0;
         console.log("[Audio] Cleaned audio chunks on WebSocket close");
+
+        // Limpiar intervalo de verificación de silencios
+        if (silenceCheckInterval) {
+          clearInterval(silenceCheckInterval);
+          console.log("[SILENCE] Cleaned silence check interval");
+        }
       });
     }
   );
