@@ -1505,6 +1505,11 @@ async function processQueueItem(queueItem, workerId = "unknown") {
         statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
         statusCallbackEvent: ["completed"],
         statusCallbackMethod: "POST",
+        record: true,
+        recordingStatusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-recording-status`,
+        recordingStatusCallbackMethod: "POST",
+        recordingChannels: "dual",
+        recordingStatusCallbackEvent: ["completed"],
       });
     } catch (twilioError) {
       console.error(
@@ -1716,6 +1721,11 @@ fastify.post("/outbound-call", async (request, reply) => {
       statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
       statusCallbackEvent: ["completed"],
       statusCallbackMethod: "POST",
+      record: true,
+      recordingStatusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-recording-status`,
+      recordingStatusCallbackMethod: "POST",
+      recordingChannels: "dual",
+      recordingStatusCallbackEvent: ["completed"],
     });
 
     reply.send({
@@ -5301,5 +5311,75 @@ fastify.post("/api/leads/unmark-invalid-phone", async (request, reply) => {
       success: false,
       error: "Internal server error",
     });
+  }
+});
+
+// Twilio recording status callback endpoint
+fastify.post("/twilio-recording-status", async (request, reply) => {
+  try {
+    console.log("🎙️ [TWILIO RECORDING] Recording status callback received");
+    console.log("🎙️ [TWILIO RECORDING] Body:", request.body);
+
+    const {
+      CallSid,
+      RecordingSid,
+      RecordingUrl,
+      RecordingDuration,
+      RecordingStatus,
+      RecordingChannels,
+      RecordingSource,
+    } = request.body;
+
+    if (!CallSid || !RecordingSid) {
+      console.error("❌ [TWILIO RECORDING] CallSid and RecordingSid required");
+      return reply
+        .code(400)
+        .send({ error: "CallSid and RecordingSid required" });
+    }
+
+    console.log("🎙️ [TWILIO RECORDING] Processing recording:", {
+      CallSid,
+      RecordingSid,
+      RecordingUrl,
+      RecordingDuration,
+      RecordingStatus,
+      RecordingChannels,
+      RecordingSource,
+    });
+
+    // Update call with recording information
+    const { error: updateError } = await supabase
+      .from("calls")
+      .update({
+        recording_url: RecordingUrl || null,
+        recording_sid: RecordingSid,
+        recording_duration: RecordingDuration
+          ? parseInt(RecordingDuration)
+          : null,
+        recording_status: RecordingStatus || null,
+        recording_channels: RecordingChannels || null,
+        recording_source: RecordingSource || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("call_sid", CallSid);
+
+    if (updateError) {
+      console.error(
+        "❌ [TWILIO RECORDING] Error updating call with recording info:",
+        updateError
+      );
+    } else {
+      console.log(
+        "✅ [TWILIO RECORDING] Call updated with recording info successfully"
+      );
+    }
+
+    reply.send({ success: true });
+  } catch (error) {
+    console.error(
+      "❌ [TWILIO RECORDING] Error processing recording callback:",
+      error
+    );
+    reply.code(500).send({ error: "Internal server error" });
   }
 });
