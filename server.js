@@ -2749,7 +2749,7 @@ async function cleanupStuckCalls() {
           );
 
           // Update the call in the database
-          await supabase
+          const { error: updateError } = await supabase
             .from("calls")
             .update({
               status: twilioCall.status,
@@ -2764,6 +2764,17 @@ async function cleanupStuckCalls() {
               updated_at: new Date().toISOString(),
             })
             .eq("call_sid", call.call_sid);
+
+          if (updateError) {
+            console.error(
+              `[CLEANUP][ERROR] Falló la actualización de la llamada ${call.call_sid}:`,
+              updateError
+            );
+          } else {
+            console.log(
+              `[CLEANUP][SUCCESS] Llamada ${call.call_sid} actualizada correctamente a estado ${twilioCall.status}`
+            );
+          }
 
           // Remove from global tracking
           globalActiveCalls.delete(call.call_sid);
@@ -2802,7 +2813,7 @@ async function cleanupStuckCalls() {
                 .update({ status: "completed" });
 
               // Update database
-              await supabase
+              const { error: timeoutUpdateError } = await supabase
                 .from("calls")
                 .update({
                   status: "completed",
@@ -2815,6 +2826,17 @@ async function cleanupStuckCalls() {
                   updated_at: new Date().toISOString(),
                 })
                 .eq("call_sid", call.call_sid);
+
+              if (timeoutUpdateError) {
+                console.error(
+                  `[CLEANUP][ERROR] Falló la actualización por timeout de la llamada ${call.call_sid}:`,
+                  timeoutUpdateError
+                );
+              } else {
+                console.log(
+                  `[CLEANUP][SUCCESS] Llamada ${call.call_sid} marcada como completada por timeout.`
+                );
+              }
 
               // Remove from global tracking
               globalActiveCalls.delete(call.call_sid);
