@@ -3210,16 +3210,15 @@ fastify.post("/twilio-status", async (request, reply) => {
         // Get current user data
         const { data: userData, error: userError } = await supabase
           .from("users")
-          .select("available_minutes, available_seconds")
+          .select("available_minutes")
           .eq("id", existingCall.user_id)
           .single();
 
         if (userError) {
           console.error("[TWILIO STATUS] Error fetching user data:", userError);
         } else if (userData) {
-          // Calculate total available seconds
-          const totalAvailableSeconds =
-            userData.available_minutes * 60 + (userData.available_seconds || 0);
+          // available_minutes stores the value in seconds
+          const totalAvailableSeconds = userData.available_minutes || 0;
 
           // Calculate remaining seconds after deduction
           const remainingSeconds = Math.max(
@@ -3227,28 +3226,26 @@ fastify.post("/twilio-status", async (request, reply) => {
             totalAvailableSeconds - callDuration
           );
 
-          // Convert back to minutes and seconds
-          const newMinutes = Math.floor(remainingSeconds / 60);
-          const newSeconds = remainingSeconds % 60;
-
           console.log(
             `[TWILIO STATUS] User ${existingCall.user_id} time deduction:`,
             {
               before: {
-                minutes: userData.available_minutes,
-                seconds: userData.available_seconds || 0,
+                seconds: totalAvailableSeconds,
+                minutes: Math.floor(totalAvailableSeconds / 60),
               },
               callDuration,
-              after: { minutes: newMinutes, seconds: newSeconds },
+              after: {
+                seconds: remainingSeconds,
+                minutes: Math.floor(remainingSeconds / 60),
+              },
             }
           );
 
-          // Update user's available time
+          // Update user's available time (stored in seconds)
           const { error: updateError } = await supabase
             .from("users")
             .update({
-              available_minutes: newMinutes,
-              available_seconds: newSeconds,
+              available_minutes: remainingSeconds,
               updated_at: new Date().toISOString(),
             })
             .eq("id", existingCall.user_id);
