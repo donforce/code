@@ -1845,6 +1845,9 @@ fastify.register(async (fastifyInstance) => {
       let isVoicemailDetectionMode = false; // Variable para evitar clear durante detección de buzón de voz
       let lastAudioTime = Date.now(); // Para detectar silencios largos
       let silenceThreshold = 8000; // 8 segundos de silencio para considerar buzón de voz
+      let audioBuffer = []; // Buffer para acumular audio antes de enviar
+      let bufferSize = 3; // Número de chunks a acumular antes de enviar
+      let bufferTimeout = null; // Timeout para enviar buffer parcial
 
       ws.on("error", console.error);
 
@@ -1923,6 +1926,31 @@ fastify.register(async (fastifyInstance) => {
         }
       };
 
+      const sendAudioBuffer = () => {
+        if (
+          audioBuffer.length > 0 &&
+          elevenLabsWs?.readyState === WebSocket.OPEN
+        ) {
+          // Enviar todos los chunks del buffer
+          audioBuffer.forEach((chunk) => {
+            elevenLabsWs.send(
+              JSON.stringify({
+                type: "user_audio_chunk",
+                user_audio_chunk: chunk,
+              })
+            );
+          });
+
+          console.log(
+            `[Audio] Sent ${audioBuffer.length} buffered chunks to ElevenLabs`
+          );
+
+          // Limpiar buffer
+          audioBuffer = [];
+          bufferTimeout = null;
+        }
+      };
+
       const setupElevenLabs = async () => {
         try {
           const signedUrl = await getSignedUrl();
@@ -1943,10 +1971,10 @@ fastify.register(async (fastifyInstance) => {
                 keep_alive: true,
                 interruption_settings: {
                   enabled: true,
-                  sensitivity: "medium", // Back to default medium sensitivity
-                  min_duration: 0.5, // Back to default 0.5 seconds
-                  max_duration: 5.0, // Back to default 5 seconds
-                  cooldown_period: 1.0, // Back to default 1 second
+                  sensitivity: "low", // Cambiar a baja sensibilidad para reducir falsos positivos
+                  min_duration: 1.0, // Aumentar a 1 segundo para evitar interrupciones muy cortas
+                  max_duration: 3.0, // Reducir a 3 segundos máximo
+                  cooldown_period: 2.0, // Aumentar cooldown para más estabilidad
                 },
               },
               dynamic_variables: {
@@ -1976,10 +2004,10 @@ fastify.register(async (fastifyInstance) => {
             );
             console.log("🎯 Interruption Settings:");
             console.log("   • Enabled: true");
-            console.log("   • Sensitivity: medium");
-            console.log("   • Min Duration: 0.5s");
-            console.log("   • Max Duration: 5.0s");
-            console.log("   • Cooldown: 1.0s");
+            console.log("   • Sensitivity: low");
+            console.log("   • Min Duration: 1.0s");
+            console.log("   • Max Duration: 3.0s");
+            console.log("   • Cooldown: 2.0s");
             console.log(
               "📅 [ElevenLabs] calendar_availability value:",
               initialConfig.dynamic_variables.calendar_availability
@@ -2184,6 +2212,12 @@ fastify.register(async (fastifyInstance) => {
                       "🚨 [INTERRUPTION] Interruption event received"
                     );
                     interrupted = true;
+                    // Limpiar buffer durante interrupciones
+                    audioBuffer = [];
+                    if (bufferTimeout) {
+                      clearTimeout(bufferTimeout);
+                      bufferTimeout = null;
+                    }
                     // Solo enviar clear si no estamos en modo de detección de buzón de voz
                     if (!isVoicemailDetectionMode) {
                       sendClearToTwilio(streamSid);
@@ -2745,7 +2779,14 @@ fastify.register(async (fastifyInstance) => {
               // Limpiar chunks de audio en caso de error
               sentAudioChunks.clear();
               audioChunkCounter = 0;
-              console.log("[Audio] Cleaned audio chunks on ElevenLabs error");
+              audioBuffer = [];
+              if (bufferTimeout) {
+                clearTimeout(bufferTimeout);
+                bufferTimeout = null;
+              }
+              console.log(
+                "[Audio] Cleaned audio chunks and buffer on ElevenLabs error"
+              );
             });
 
             elevenLabsWs.on("close", async () => {
@@ -2811,13 +2852,18 @@ fastify.register(async (fastifyInstance) => {
 
             case "media":
               if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                const audioChunk = Buffer.from(
-                  msg.media.payload,
-                  "base64"
-                ).toString("base64");
+                // Corregir: no convertir base64 a base64 nuevamente
+                // El audio ya viene en base64 desde Twilio
+                const audioChunk = msg.media.payload;
 
-                // Verificar si este chunk de audio ya fue enviado
-                if (!sentAudioChunks.has(audioChunk)) {
+                // Validar que el audio no esté vacío
+                if (!audioChunk || audioChunk.length < 10) {
+                  console.log("[Audio] Skipping empty or invalid audio chunk");
+                  break;
+                }
+
+                // Verificar si este chunk de audio ya fue enviado (solo si no está interrumpido)
+                if (!interrupted && !sentAudioChunks.has(audioChunk)) {
                   sentAudioChunks.add(audioChunk);
                   audioChunkCounter++;
 
@@ -2828,15 +2874,52 @@ fastify.register(async (fastifyInstance) => {
                     console.log("[Audio] Cleaned audio chunks cache");
                   }
 
-                  elevenLabsWs.send(
-                    JSON.stringify({
-                      type: "user_audio_chunk",
-                      user_audio_chunk: audioChunk,
-                    })
+                  // Actualizar timestamp de audio para control de silencios
+                  lastAudioTime = Date.now();
+
+                  // Agregar al buffer
+                  audioBuffer.push(audioChunk);
+
+                  // Limpiar timeout anterior si existe
+                  if (bufferTimeout) {
+                    clearTimeout(bufferTimeout);
+                  }
+
+                  // Si el buffer está lleno, enviar inmediatamente
+                  if (audioBuffer.length >= bufferSize) {
+                    sendAudioBuffer();
+                  } else {
+                    // Si no está lleno, programar envío con timeout
+                    bufferTimeout = setTimeout(() => {
+                      if (audioBuffer.length > 0) {
+                        sendAudioBuffer();
+                      }
+                    }, 100); // 100ms timeout para evitar latencia excesiva
+                  }
+
+                  // Log ocasional para debugging
+                  if (audioChunkCounter % 50 === 0) {
+                    console.log(
+                      `[Audio] Processed ${audioChunkCounter} audio chunks, buffer size: ${audioBuffer.length}`
+                    );
+                  }
+                } else if (interrupted) {
+                  console.log(
+                    "[Audio] Skipping audio chunk due to interruption"
                   );
+                  // Limpiar buffer durante interrupciones
+                  audioBuffer = [];
+                  if (bufferTimeout) {
+                    clearTimeout(bufferTimeout);
+                    bufferTimeout = null;
+                  }
                 } else {
-                  // console.log("[Audio] Skipping duplicate audio chunk");
+                  console.log("[Audio] Skipping duplicate audio chunk");
                 }
+              } else {
+                console.log(
+                  "[Audio] ElevenLabs WebSocket not ready, skipping audio chunk"
+                );
               }
               break;
 
@@ -2847,7 +2930,14 @@ fastify.register(async (fastifyInstance) => {
               // Limpiar chunks de audio al finalizar la llamada
               sentAudioChunks.clear();
               audioChunkCounter = 0;
-              console.log("[Audio] Cleaned audio chunks on call stop");
+              audioBuffer = [];
+              if (bufferTimeout) {
+                clearTimeout(bufferTimeout);
+                bufferTimeout = null;
+              }
+              console.log(
+                "[Audio] Cleaned audio chunks and buffer on call stop"
+              );
 
               // Limpiar intervalo de verificación de silencios
               if (silenceCheckInterval) {
@@ -2871,7 +2961,14 @@ fastify.register(async (fastifyInstance) => {
         // Limpiar chunks de audio al cerrar el WebSocket
         sentAudioChunks.clear();
         audioChunkCounter = 0;
-        console.log("[Audio] Cleaned audio chunks on WebSocket close");
+        audioBuffer = [];
+        if (bufferTimeout) {
+          clearTimeout(bufferTimeout);
+          bufferTimeout = null;
+        }
+        console.log(
+          "[Audio] Cleaned audio chunks and buffer on WebSocket close"
+        );
 
         // Limpiar intervalo de verificación de silencios
         if (silenceCheckInterval) {
