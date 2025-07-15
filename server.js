@@ -5819,14 +5819,24 @@ async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
       `🎙️ [RECORDING DOWNLOAD] Starting download for call ${callSid}`
     );
 
-    // Usar el cliente de Twilio para descargar la grabación con autenticación
+    // Usar el cliente de Twilio para obtener la grabación con autenticación
     const recording = await twilioClient.recordings(recordingSid).fetch();
+    const extension = recording.mediaFormat || "wav"; // fallback
+    const recordingUrl = `https://api.twilio.com${recording.uri.replace(
+      ".json",
+      `.${extension}`
+    )}`;
 
-    // Obtener la URL de descarga autenticada
-    const authenticatedUrl = await twilioClient.recordings(recordingSid).get();
+    const response = await fetch(recordingUrl, {
+      headers: {
+        Authorization:
+          "Basic " +
+          Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString(
+            "base64"
+          ),
+      },
+    });
 
-    // Descargar el archivo usando la URL autenticada
-    const response = await fetch(authenticatedUrl.mediaLocation);
     if (!response.ok) {
       throw new Error(
         `Failed to download recording: ${response.status} ${response.statusText}`
@@ -5841,13 +5851,13 @@ async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
     );
 
     // Generar nombre único para el archivo
-    const fileName = `recordings/${callSid}_${recordingSid}.wav`;
+    const fileName = `recordings/${callSid}_${recordingSid}.${extension}`;
 
     // Subir a Supabase Storage
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from("call-recordings")
       .upload(fileName, audioData, {
-        contentType: "audio/wav",
+        contentType: `audio/${extension}`,
         upsert: false,
       });
 
