@@ -5819,8 +5819,14 @@ async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
       `🎙️ [RECORDING DOWNLOAD] Starting download for call ${callSid}`
     );
 
-    // Descargar el archivo desde Twilio
-    const response = await fetch(recordingUrl);
+    // Usar el cliente de Twilio para descargar la grabación con autenticación
+    const recording = await twilioClient.recordings(recordingSid).fetch();
+
+    // Obtener la URL de descarga autenticada
+    const authenticatedUrl = await twilioClient.recordings(recordingSid).get();
+
+    // Descargar el archivo usando la URL autenticada
+    const response = await fetch(authenticatedUrl.mediaLocation);
     if (!response.ok) {
       throw new Error(
         `Failed to download recording: ${response.status} ${response.statusText}`
