@@ -1,5 +1,5 @@
 # Forzar actualización y sincronización del workflow en code
-# Última actualización: forzar sync con remoto
+# Última actualización: forzar sync con remoto - WORKFLOW READY
 # Trigger: update workflow to ensure latest version is pushed
 name: Cleanup Storage Recordings
 
