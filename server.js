@@ -2221,6 +2221,7 @@ fastify.register(async (fastifyInstance) => {
                     // Solo enviar clear si no estamos en modo de detección de buzón de voz
                     if (!isVoicemailDetectionMode) {
                       sendClearToTwilio(streamSid);
+                      interrupted = false;
                     }
                     break;
 
