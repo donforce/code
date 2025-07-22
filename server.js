@@ -2222,6 +2222,7 @@ fastify.register(async (fastifyInstance) => {
                     if (!isVoicemailDetectionMode) {
                       sendClearToTwilio(streamSid);
                       interrupted = false;
+                      // Resetear el buffer
                     }
                     break;
 
