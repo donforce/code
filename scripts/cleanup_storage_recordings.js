@@ -2,7 +2,7 @@
 
 /**
  * Script para limpiar grabaciones físicas en Supabase Storage y actualizar la base de datos
- * Elimina archivos de grabaciones con más de 72h y limpia los campos recording_storage_url y recording_storage_path
+ * Elimina archivos de grabaciones con más de 7 días (1 semana) y limpia los campos recording_storage_url y recording_storage_path
  * Ejecutar como cron job diario (ej: a la 1am)
  */
 
@@ -28,7 +28,7 @@ export async function cleanupStorageRecordings() {
       "🧹 [Storage Cleanup] Iniciando limpieza de grabaciones físicas en Storage..."
     );
 
-    // 1. Buscar grabaciones viejas (más de 72h) con archivo en Storage
+    // 1. Buscar grabaciones viejas (más de 7 días) con archivo en Storage
     const { data: calls, error } = await supabase
       .from("calls")
       .select("id, recording_storage_url, recording_storage_path, created_at")
@@ -36,7 +36,7 @@ export async function cleanupStorageRecordings() {
       .not("recording_storage_path", "is", null)
       .lt(
         "created_at",
-        new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString()
+        new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
       );
 
     if (error) {
