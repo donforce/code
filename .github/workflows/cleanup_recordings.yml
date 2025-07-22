@@ -1,10 +1,12 @@
+# Forzar actualización y sincronización del workflow en code
+# Última actualización: forzar sync con remoto
+# Trigger: update workflow to ensure latest version is pushed
 name: Cleanup Storage Recordings
 
 on:
   schedule:
     - cron: '0 1 * * *' # 1am UTC todos los días
   workflow_dispatch:
-    # Permite ejecución manual solo en main
     inputs: {}
 
 jobs:
@@ -19,11 +21,9 @@ jobs:
           node-version: '18'
       - name: Install dependencies
         run: npm install
-        working-directory: ./code
       - name: Run cleanup script
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_STORAGE_BUCKET: ${{ secrets.SUPABASE_STORAGE_BUCKET }}
-        run: node scripts/cleanup_storage_recordings.js
-        working-directory: ./code 
+        run: node scripts/cleanup_storage_recordings.js 
