@@ -1971,10 +1971,10 @@ fastify.register(async (fastifyInstance) => {
                 keep_alive: true,
                 interruption_settings: {
                   enabled: true,
-                  sensitivity: "low", // Cambiar a baja sensibilidad para reducir falsos positivos
-                  min_duration: 1.0, // Aumentar a 1 segundo para evitar interrupciones muy cortas
-                  max_duration: 3.0, // Reducir a 3 segundos máximo
-                  cooldown_period: 2.0, // Aumentar cooldown para más estabilidad
+                  sensitivity: "medium", // Cambiar a baja sensibilidad para reducir falsos positivos
+                  min_duration: 0.7, // Aumentar a 0.7 segundo para evitar interrupciones muy cortas
+                  max_duration: 2.5, // Reducir a 2.5 segundos máximo
+                  cooldown_period: 1.0, // Aumentar cooldown para más estabilidad
                 },
               },
               dynamic_variables: {
