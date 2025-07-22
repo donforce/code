@@ -6,7 +6,7 @@
  * Ejecutar como cron job diario (ej: a la 1am)
  */
 
-const { createClient } = require("@supabase/supabase-js");
+import { createClient } from "@supabase/supabase-js";
 
 // Configuración de Supabase
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -22,7 +22,7 @@ if (!supabaseUrl || !supabaseServiceKey) {
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-async function cleanupStorageRecordings() {
+export async function cleanupStorageRecordings() {
   try {
     console.log(
       "🧹 [Storage Cleanup] Iniciando limpieza de grabaciones físicas en Storage..."
@@ -100,8 +100,6 @@ async function cleanupStorageRecordings() {
   }
 }
 
-if (require.main === module) {
+if (import.meta.url === `file://${process.argv[1]}`) {
   cleanupStorageRecordings();
 }
-
-module.exports = { cleanupStorageRecordings };
