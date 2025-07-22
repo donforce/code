@@ -1,0 +1,29 @@
+name: Cleanup Storage Recordings
+
+on:
+  schedule:
+    - cron: '0 1 * * *' # 1am UTC todos los días
+  workflow_dispatch:
+    # Permite ejecución manual solo en main
+    inputs: {}
+
+jobs:
+  cleanup:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      - name: Install dependencies
+        run: npm install
+        working-directory: ./code
+      - name: Run cleanup script
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_STORAGE_BUCKET: ${{ secrets.SUPABASE_STORAGE_BUCKET }}
+        run: node scripts/cleanup_storage_recordings.js
+        working-directory: ./code 
