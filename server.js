@@ -1846,7 +1846,7 @@ fastify.register(async (fastifyInstance) => {
       let lastAudioTime = Date.now(); // Para detectar silencios largos
       let silenceThreshold = 8000; // 8 segundos de silencio para considerar buzón de voz
       let audioBuffer = []; // Buffer para acumular audio antes de enviar
-      let bufferSize = 3; // Número de chunks a acumular antes de enviar
+      let bufferSize = 5; // Número de chunks a acumular antes de enviar (aumentado de 3 a 5 para mayor estabilidad)
       let bufferTimeout = null; // Timeout para enviar buffer parcial
 
       ws.on("error", console.error);
@@ -2896,7 +2896,7 @@ fastify.register(async (fastifyInstance) => {
                       if (audioBuffer.length > 0) {
                         sendAudioBuffer();
                       }
-                    }, 100); // 100ms timeout para evitar latencia excesiva
+                    }, 150); // 150ms timeout para mayor estabilidad (aumentado de 100ms)
                   }
 
                   // Log ocasional para debugging
