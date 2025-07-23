@@ -141,6 +141,7 @@ function translateTwilioError(twilioError) {
     // Errores de números de teléfono
     21211: "El número de teléfono que intentas llamar no es válido",
     21214: "El número de teléfono no es válido para el país especificado",
+    13224: "El número de teléfono no es válido",
     21215: "El número de teléfono no es válido para el tipo de llamada",
     21216: "El número de teléfono no es válido para la región especificada",
     21217: "El número de teléfono no es válido para el tipo de servicio",
@@ -347,8 +348,13 @@ async function handleTwilioError(
 ) {
   const translatedError = translateTwilioError(twilioError);
 
-  // Check if it's a phone number validation error (code 21211)
-  if (twilioError.code === 21211 && leadId) {
+  // Check if it's a phone number validation error (code 21211, 21214, or 13224)
+  if (
+    (twilioError.code === 21211 ||
+      twilioError.code === 21214 ||
+      twilioError.code === 13224) &&
+    leadId
+  ) {
     console.log(
       `[TWILIO] Phone number validation error detected for lead ${leadId}, marking as invalid`
     );
@@ -1532,6 +1538,46 @@ async function processQueueItem(queueItem, workerId = "unknown") {
         code: translatedError.code,
       });
 
+      // Determine the appropriate result based on error type
+      let result = "failed";
+      if (
+        twilioError.code === "21211" ||
+        twilioError.code === "21214" ||
+        twilioError.code === "13224" ||
+        translatedError.message.toLowerCase().includes("invalid phone")
+      ) {
+        result = "invalid_phone";
+      }
+
+      // Register the call with the correct result
+      const { error: callError } = await supabase.from("calls").insert({
+        lead_id: queueItem.lead_id,
+        user_id: queueItem.user_id,
+        call_sid: null, // No call SID since call creation failed
+        status: "failed",
+        result: result,
+        error_code: translatedError.code,
+        error_message: translatedError.message,
+        error_details: JSON.stringify({
+          originalMessage: translatedError.originalMessage,
+          translated: translatedError.translated,
+          twilioCode: twilioError.code,
+          twilioStatus: twilioError.status,
+          context: "queue_processing",
+        }),
+        queue_id: queueItem.id,
+        conversation_id: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      if (callError) {
+        console.error(
+          `[Queue] Worker ${workerId} - Error registering failed call:`,
+          callError
+        );
+      }
+
       // Update queue item with translated error
       await supabase
         .from("call_queue")
@@ -1844,7 +1890,7 @@ fastify.register(async (fastifyInstance) => {
       let interrupted = false; // Variable para controlar interrupciones
       let isVoicemailDetectionMode = false; // Variable para evitar clear durante detección de buzón de voz
       let lastAudioTime = Date.now(); // Para detectar silencios largos
-      let silenceThreshold = 8000; // 8 segundos de silencio para considerar buzón de voz
+      let silenceThreshold = 15000; // 15 segundos de silencio para considerar buzón de voz
       let audioBuffer = []; // Buffer para acumular audio antes de enviar
       let bufferSize = 5; // Número de chunks a acumular antes de enviar (aumentado de 3 a 5 para mayor estabilidad)
       let bufferTimeout = null; // Timeout para enviar buffer parcial
@@ -1911,7 +1957,7 @@ fastify.register(async (fastifyInstance) => {
       };
 
       // Verificar silencios cada 2 segundos
-      const silenceCheckInterval = setInterval(checkForLongSilence, 2000);
+      const silenceCheckInterval = setInterval(checkForLongSilence, 5000);
 
       const sendClearToTwilio = (streamSid) => {
         if (streamSid) {
@@ -2308,6 +2354,13 @@ fastify.register(async (fastifyInstance) => {
                         "contestador automático",
                         "contestador automatico",
                         "presiona la tecla numeral",
+                        "si sabes la extensión",
+                        "si conoces la extensión",
+                        "si conoce la extensión",
+                        "si sabe la extensión",
+                        "si conoces la extension",
+                        "si conoce la extension",
+                        "si sabe la extension",
 
                         // English phrases
                         "leave a message",
@@ -2333,6 +2386,11 @@ fastify.register(async (fastifyInstance) => {
                         "not available",
                         "disconnected",
                         "unavailable",
+                        "if you know the extension",
+                        "if you know the extension number",
+                        "if you have the extension",
+                        "if you know the extension please",
+                        "if you know the extension number please",
                       ].some((phrase) => {
                         const normalizedPhrase = phrase
                           .toLowerCase()
@@ -3146,11 +3204,22 @@ async function cleanupStuckCalls() {
           code: translatedError.code,
         });
 
+        // Determine the appropriate result based on error type
+        let result = "failed";
+        if (
+          twilioError.code === "21211" ||
+          twilioError.code === "21214" ||
+          twilioError.code === "13224" ||
+          translatedError.message.toLowerCase().includes("invalid phone")
+        ) {
+          result = "invalid_phone";
+        }
+
         await supabase
           .from("calls")
           .update({
             status: "failed",
-            result: "failed",
+            result: result,
             error_code: translatedError.code,
             error_message: translatedError.message,
             error_details: JSON.stringify({
@@ -3287,6 +3356,110 @@ fastify.post("/twilio-status", async (request, reply) => {
     }
 
     await supabase.from("calls").update(updateData).eq("call_sid", callSid);
+
+    // Handle error cases and mark leads accordingly
+    if (existingCall && existingCall.lead_id) {
+      try {
+        // Handle failed calls with specific error messages
+        if (result === "failed" && callErrorMessage) {
+          console.log(
+            `[TWILIO STATUS] Processing failed call for lead ${existingCall.lead_id}: ${callErrorMessage}`
+          );
+
+          // Check for invalid phone number
+          if (
+            callErrorMessage.toLowerCase().includes("invalid phone number") ||
+            callErrorMessage.toLowerCase().includes("invalid phone") ||
+            callErrorCode === "21211" || // Twilio error code for invalid phone
+            callErrorCode === "21214" || // Twilio error code for invalid phone (actual code received)
+            callErrorCode === "13224" // Twilio error code for invalid phone (actual code received)
+          ) {
+            // Twilio error code for invalid phone
+            console.log(
+              `[TWILIO STATUS] Marking lead ${existingCall.lead_id} as invalid phone`
+            );
+            await markLeadInvalidPhone(
+              existingCall.lead_id,
+              true,
+              "twilio_status_webhook"
+            );
+
+            // Update the result to show "invalid phone" in the interface
+            await supabase
+              .from("calls")
+              .update({
+                result: "invalid_phone",
+                error_message: callErrorMessage,
+                error_code: callErrorCode,
+                updated_at: new Date().toISOString(),
+              })
+              .eq("call_sid", callSid);
+          }
+        }
+
+        // Handle no_answer status - mark lead for reprocessing
+        if (connectionFailureReason === "no_answer") {
+          console.log(
+            `[TWILIO STATUS] Marking lead ${existingCall.lead_id} for reprocessing due to no_answer`
+          );
+          await supabase
+            .from("leads")
+            .update({
+              should_reprocess: true,
+              reprocess_reason: "no_answer",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", existingCall.lead_id);
+        }
+
+        // Handle success calls - mark lead for reprocessing if needed
+        if (result === "success") {
+          console.log(
+            `[TWILIO STATUS] Call successful for lead ${existingCall.lead_id}, checking if reprocessing is needed`
+          );
+          // You can add logic here to determine if a successful call needs reprocessing
+          // For example, if the call was too short or didn't achieve the goal
+          if (callDuration < 30) {
+            // Less than 30 seconds might indicate a quick hangup
+            console.log(
+              `[TWILIO STATUS] Call was too short (${callDuration}s), marking lead for reprocessing`
+            );
+            await supabase
+              .from("leads")
+              .update({
+                should_reprocess: true,
+                reprocess_reason: "call_too_short",
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", existingCall.lead_id);
+          }
+        }
+
+        // Handle voicemail detection - mark lead for reprocessing
+        if (
+          updateData.end_reason === "voicemail_detected_by_transcript" ||
+          updateData.end_reason === "voicemail_detected_by_silence" ||
+          updateData.end_reason === "elevenlabs_voicemail_detected"
+        ) {
+          console.log(
+            `[TWILIO STATUS] Marking lead ${existingCall.lead_id} for reprocessing due to voicemail detection`
+          );
+          await supabase
+            .from("leads")
+            .update({
+              should_reprocess: true,
+              reprocess_reason: "voicemail_detected",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", existingCall.lead_id);
+        }
+      } catch (error) {
+        console.error(
+          `[TWILIO STATUS] Error handling lead updates for lead ${existingCall.lead_id}:`,
+          error
+        );
+      }
+    }
 
     // Remove from global tracking
     globalActiveCalls.delete(callSid);
