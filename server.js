@@ -117,11 +117,11 @@ let lastMetricsCheck = Date.now();
 // Optimized queue configuration
 const QUEUE_CONFIG = {
   maxConcurrentCalls: parseInt(MAX_CONCURRENT_CALLS) || 5,
-  maxCallsPerUser: parseInt(MAX_CALLS_PER_USER) || 1,
-  workerPoolSize: parseInt(WORKER_POOL_SIZE) || 3,
-  queueCheckInterval: parseInt(QUEUE_CHECK_INTERVAL) || 30000, // Increased to 30 seconds
-  retryAttempts: parseInt(RETRY_ATTEMPTS) || 2, // Reduced retry attempts
-  retryDelay: parseInt(RETRY_DELAY) || 3000, // Reduced retry delay
+  maxCallsPerUser: parseInt(MAX_CALLS_PER_USER) || 3, // Cambiado de 1 a 3 para permitir múltiples workers
+  workerPoolSize: parseInt(WORKER_POOL_SIZE) || 10,
+  queueCheckInterval: parseInt(QUEUE_CHECK_INTERVAL) || 5000,
+  retryAttempts: parseInt(RETRY_ATTEMPTS) || 3,
+  retryDelay: parseInt(RETRY_DELAY) || 30000,
 };
 
 // Optimized tracking with WeakMap for better memory management
@@ -3961,7 +3961,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
       const batchResults = await Promise.all(
         batch.map(async ({ index, data }) => {
           try {
-            // Buscar lead existente por external_id o email
+            // Buscar lead existente por external_id, email o teléfono
             let existingLead = null;
 
             if (data.external_id) {
@@ -3984,6 +3984,17 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                 .maybeSingle();
 
               existingLead = emailLead;
+            }
+
+            if (!existingLead) {
+              const { data: phoneLead } = await supabase
+                .from("leads")
+                .select("id")
+                .eq("user_id", userId)
+                .eq("phone", data.phone)
+                .maybeSingle();
+
+              existingLead = phoneLead;
             }
 
             if (existingLead) {
