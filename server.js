@@ -3309,9 +3309,18 @@ fastify.post("/twilio-status", async (request, reply) => {
     let connectionStatus = "connected";
     let connectionFailureReason = null;
 
-    if (callStatus === "completed" && callDuration > 0) {
+    if (callStatus === "completed" && callDuration > 10) {
       result = "success";
       connectionStatus = "connected";
+    } else if (
+      callStatus === "completed" &&
+      callDuration > 0 &&
+      callDuration <= 10
+    ) {
+      // Very short calls (likely voicemail or quick hangup)
+      result = "not_answered";
+      connectionStatus = "no_connection";
+      connectionFailureReason = "short_call_likely_voicemail";
     } else if (callStatus === "completed" && callDuration === 0) {
       // Client hung up without answering
       result = "not_answered";
@@ -3407,6 +3416,36 @@ fastify.post("/twilio-status", async (request, reply) => {
             .update({
               should_reprocess: true,
               reprocess_reason: "no_answer",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", existingCall.lead_id);
+        }
+
+        // Handle short calls (likely voicemail) - mark lead for reprocessing
+        if (connectionFailureReason === "short_call_likely_voicemail") {
+          console.log(
+            `[TWILIO STATUS] Marking lead ${existingCall.lead_id} for reprocessing due to short call (likely voicemail)`
+          );
+          await supabase
+            .from("leads")
+            .update({
+              should_reprocess: true,
+              reprocess_reason: "short_call_likely_voicemail",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", existingCall.lead_id);
+        }
+
+        // Handle not_answered calls - mark lead for reprocessing
+        if (result === "not_answered") {
+          console.log(
+            `[TWILIO STATUS] Marking lead ${existingCall.lead_id} for reprocessing due to not_answered`
+          );
+          await supabase
+            .from("leads")
+            .update({
+              should_reprocess: true,
+              reprocess_reason: "not_answered",
               updated_at: new Date().toISOString(),
             })
             .eq("id", existingCall.lead_id);
