@@ -3451,6 +3451,21 @@ fastify.post("/twilio-status", async (request, reply) => {
             .eq("id", existingCall.lead_id);
         }
 
+        // Handle busy calls - mark lead for reprocessing
+        if (connectionFailureReason === "line_busy") {
+          console.log(
+            `[TWILIO STATUS] Marking lead ${existingCall.lead_id} for reprocessing due to line_busy`
+          );
+          await supabase
+            .from("leads")
+            .update({
+              should_reprocess: true,
+              reprocess_reason: "line_busy",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", existingCall.lead_id);
+        }
+
         // Handle success calls - mark lead for reprocessing if needed
         if (result === "success") {
           console.log(
@@ -5571,23 +5586,50 @@ async function handleCheckoutSessionCompleted(session, stripe) {
 async function handleInvoicePaymentSucceeded(invoice, stripe) {
   try {
     console.log("✅ [STRIPE] Processing invoice.payment_succeeded");
+
+    // Extract subscription ID from different possible locations
+    let subscriptionId = invoice.subscription;
+
+    // If not found directly, check in parent.subscription_details
+    if (!subscriptionId && invoice.parent?.subscription_details?.subscription) {
+      subscriptionId = invoice.parent.subscription_details.subscription;
+    }
+
+    // Also check in lines for subscription items
+    if (!subscriptionId && invoice.lines?.data?.length > 0) {
+      const subscriptionLine = invoice.lines.data.find(
+        (line) => line.parent?.subscription_item_details?.subscription
+      );
+      if (subscriptionLine) {
+        subscriptionId =
+          subscriptionLine.parent.subscription_item_details.subscription;
+      }
+    }
+
     console.log("📋 [STRIPE] Invoice details:", {
       id: invoice.id,
       customer: invoice.customer,
-      subscription: invoice.subscription,
+      subscription: subscriptionId,
       amount_paid: invoice.amount_paid,
       currency: invoice.currency,
+      billing_reason: invoice.billing_reason,
     });
 
-    if (!invoice.subscription) {
+    if (!subscriptionId) {
       console.log("❌ [STRIPE] No subscription found in invoice");
+      console.log("🔍 [STRIPE] Invoice structure debug:", {
+        hasDirectSubscription: !!invoice.subscription,
+        hasParentSubscription:
+          !!invoice.parent?.subscription_details?.subscription,
+        parentType: invoice.parent?.type,
+        linesCount: invoice.lines?.data?.length || 0,
+        firstLineParent: invoice.lines?.data?.[0]?.parent?.type,
+      });
       return;
     }
 
     // Get subscription details
-    const subscription = await stripe.subscriptions.retrieve(
-      invoice.subscription
-    );
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
 
     // Helper function to safely convert Stripe timestamp to ISO string
     const convertStripeTimestamp = (timestamp) => {
