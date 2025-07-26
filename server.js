@@ -1237,7 +1237,9 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     // Check available minutes before proceeding
     const { data: userData, error: userError } = await supabase
       .from("users")
-      .select("available_minutes, email, first_name, last_name, assistant_name")
+      .select(
+        "available_minutes, email, first_name, last_name, assistant_name, twilio_phone_number, twilio_subaccount_sid, twilio_auth_token"
+      )
       .eq("id", queueItem.user_id)
       .single();
 
@@ -1481,13 +1483,44 @@ async function processQueueItem(queueItem, workerId = "unknown") {
         }
       }
 
+      // Determine which phone number and Twilio client to use
+      let fromPhoneNumber = TWILIO_PHONE_NUMBER; // Default
+      let twilioClientToUse = twilioClient; // Default
+
+      if (
+        userData.twilio_phone_number &&
+        userData.twilio_subaccount_sid &&
+        userData.twilio_auth_token
+      ) {
+        // User has their own Twilio number, use it
+        fromPhoneNumber = userData.twilio_phone_number;
+        twilioClientToUse = new Twilio(
+          userData.twilio_subaccount_sid,
+          userData.twilio_auth_token
+        );
+
+        console.log(
+          `[Queue] Worker ${workerId} - Using user's Twilio number:`,
+          {
+            userId: queueItem.user_id,
+            fromNumber: fromPhoneNumber,
+            subaccountSid: userData.twilio_subaccount_sid,
+          }
+        );
+      } else {
+        console.log(
+          `[Queue] Worker ${workerId} - Using default Twilio number:`,
+          fromPhoneNumber
+        );
+      }
+
       const availabilityParam = encodeURIComponent(availabilityText);
       const timezoneParam = encodeURIComponent(calendarTimezone);
       const clientPhoneParam = encodeURIComponent(queueItem.lead.phone);
       const clientEmailParam = encodeURIComponent(queueItem.lead.email);
 
-      call = await twilioClient.calls.create({
-        from: TWILIO_PHONE_NUMBER,
+      call = await twilioClientToUse.calls.create({
+        from: fromPhoneNumber,
         to: queueItem.lead.phone,
         url: `https://${RAILWAY_PUBLIC_DOMAIN}/outbound-call-twiml?prompt=${encodeURIComponent(
           "Eres un asistente de ventas inmobiliarias."
@@ -1706,16 +1739,43 @@ fastify.post("/outbound-call", async (request, reply) => {
     return reply.code(400).send({ error: "User ID is required" });
   }
 
-  // Get user configuration
+  // Get user configuration including Twilio phone number
   const { data: userData, error: userError } = await supabase
     .from("users")
-    .select("first_name, last_name, assistant_name")
+    .select(
+      "first_name, last_name, assistant_name, twilio_phone_number, twilio_subaccount_sid, twilio_auth_token"
+    )
     .eq("id", user_id)
     .single();
 
   if (userError || !userData) {
     console.error("[API] Error fetching user data:", userError);
     return reply.code(400).send({ error: "User not found" });
+  }
+
+  // Determine which phone number and Twilio client to use
+  let fromPhoneNumber = TWILIO_PHONE_NUMBER; // Default
+  let twilioClientToUse = twilioClient; // Default
+
+  if (
+    userData.twilio_phone_number &&
+    userData.twilio_subaccount_sid &&
+    userData.twilio_auth_token
+  ) {
+    // User has their own Twilio number, use it
+    fromPhoneNumber = userData.twilio_phone_number;
+    twilioClientToUse = new Twilio(
+      userData.twilio_subaccount_sid,
+      userData.twilio_auth_token
+    );
+
+    console.log("[API] Using user's Twilio number:", {
+      userId: user_id,
+      fromNumber: fromPhoneNumber,
+      subaccountSid: userData.twilio_subaccount_sid,
+    });
+  } else {
+    console.log("[API] Using default Twilio number:", fromPhoneNumber);
   }
 
   // Create agent_name from first_name and last_name
@@ -1740,8 +1800,8 @@ fastify.post("/outbound-call", async (request, reply) => {
   ).padStart(2, "0")}/${String(date.getFullYear()).slice(-2)}`;
 
   try {
-    const call = await twilioClient.calls.create({
-      from: TWILIO_PHONE_NUMBER,
+    const call = await twilioClientToUse.calls.create({
+      from: fromPhoneNumber,
       to: number,
       url: `https://${RAILWAY_PUBLIC_DOMAIN}/outbound-call-twiml?prompt=${encodeURIComponent(
         prompt
@@ -2861,7 +2921,7 @@ fastify.register(async (fastifyInstance) => {
 
               if (callSid) {
                 try {
-                  await twilioClient
+                  await twilioClientToUse
                     .calls(callSid)
                     .update({ status: "completed" });
                   console.log(
@@ -6672,3 +6732,649 @@ fastify.post("/api/recordings/download/:callSid", async (request, reply) => {
 });
 
 // Endpoint para limpiar grabaciones antiguas manualmente
+
+// =============================================================================
+// TWILIO SUBACCOUNTS MANAGEMENT ENDPOINTS
+// =============================================================================
+
+// Endpoint para crear subcuenta de Twilio para un usuario
+fastify.post("/twilio/create-subaccount", async (request, reply) => {
+  try {
+    console.log("🔧 [TWILIO SUBACCOUNT] Creating new subaccount...");
+
+    const { userId, userName, userEmail, adminUserId } = request.body;
+
+    if (!userId || !userName || !adminUserId) {
+      return reply.code(400).send({
+        error: "Missing required fields: userId, userName, adminUserId",
+      });
+    }
+
+    // Verificar que el usuario que hace la petición es admin
+    const { data: adminUser, error: adminError } = await supabase
+      .from("users")
+      .select("is_admin")
+      .eq("id", adminUserId)
+      .single();
+
+    if (adminError || !adminUser?.is_admin) {
+      return reply.code(403).send({
+        error: "Unauthorized: Admin access required",
+      });
+    }
+
+    // Verificar que el usuario target existe
+    const { data: targetUser, error: userError } = await supabase
+      .from("users")
+      .select("id, first_name, last_name, email, twilio_subaccount_sid")
+      .eq("id", userId)
+      .single();
+
+    if (userError || !targetUser) {
+      return reply.code(404).send({
+        error: "User not found",
+      });
+    }
+
+    // Verificar si ya tiene una subcuenta
+    if (targetUser.twilio_subaccount_sid) {
+      return reply.code(400).send({
+        error: "User already has a Twilio subaccount",
+        subaccountSid: targetUser.twilio_subaccount_sid,
+      });
+    }
+
+    // Log de inicio de operación
+    const { data: logEntry } = await supabase
+      .from("twilio_operations_log")
+      .insert({
+        user_id: userId,
+        operation_type: "create_subaccount",
+        operation_status: "pending",
+        executed_by: adminUserId,
+        twilio_request: {
+          userName,
+          userEmail,
+          timestamp: new Date().toISOString(),
+        },
+      })
+      .select()
+      .single();
+
+    try {
+      // Crear subcuenta en Twilio
+      const subaccountName = `${userName} - ${userEmail}`;
+      const subaccount = await twilioClient.api.accounts.create({
+        friendlyName: subaccountName,
+      });
+
+      console.log("✅ [TWILIO SUBACCOUNT] Subaccount created:", {
+        sid: subaccount.sid,
+        friendlyName: subaccount.friendlyName,
+        status: subaccount.status,
+      });
+
+      // Guardar en base de datos
+      const { data: savedSubaccount, error: saveError } = await supabase
+        .from("twilio_subaccounts")
+        .insert({
+          user_id: userId,
+          subaccount_sid: subaccount.sid,
+          subaccount_name: subaccountName,
+          auth_token: subaccount.authToken,
+          status: subaccount.status,
+          created_by: adminUserId,
+          subaccount_metadata: {
+            twilio_status: subaccount.status,
+            date_created: subaccount.dateCreated,
+            date_updated: subaccount.dateUpdated,
+            owner_account_sid: subaccount.ownerAccountSid,
+          },
+        })
+        .select()
+        .single();
+
+      if (saveError) {
+        console.error(
+          "❌ [TWILIO SUBACCOUNT] Error saving to database:",
+          saveError
+        );
+        throw new Error("Failed to save subaccount to database");
+      }
+
+      // Actualizar tabla users
+      const { error: updateUserError } = await supabase
+        .from("users")
+        .update({
+          twilio_subaccount_sid: subaccount.sid,
+          twilio_auth_token: subaccount.authToken,
+          twilio_subaccount_status: "active",
+          twilio_subaccount_created_at: new Date().toISOString(),
+        })
+        .eq("id", userId);
+
+      if (updateUserError) {
+        console.error(
+          "❌ [TWILIO SUBACCOUNT] Error updating user:",
+          updateUserError
+        );
+        throw new Error("Failed to update user with subaccount info");
+      }
+
+      // Actualizar log como exitoso
+      await supabase
+        .from("twilio_operations_log")
+        .update({
+          operation_status: "success",
+          completed_at: new Date().toISOString(),
+          twilio_response: {
+            sid: subaccount.sid,
+            friendlyName: subaccount.friendlyName,
+            status: subaccount.status,
+            authToken: "***hidden***", // No guardar el token completo en logs
+            dateCreated: subaccount.dateCreated,
+          },
+        })
+        .eq("id", logEntry.id);
+
+      return reply.send({
+        success: true,
+        message: "Subaccount created successfully",
+        data: {
+          subaccountSid: subaccount.sid,
+          subaccountName: subaccountName,
+          status: subaccount.status,
+          userId: userId,
+          createdAt: new Date().toISOString(),
+        },
+      });
+    } catch (twilioError) {
+      console.error("❌ [TWILIO SUBACCOUNT] Twilio API error:", twilioError);
+
+      // Actualizar log como fallido
+      await supabase
+        .from("twilio_operations_log")
+        .update({
+          operation_status: "failed",
+          completed_at: new Date().toISOString(),
+          error_message: twilioError.message,
+          twilio_response: {
+            error: twilioError.message,
+            code: twilioError.code,
+            status: twilioError.status,
+          },
+        })
+        .eq("id", logEntry.id);
+
+      return reply.code(500).send({
+        error: "Failed to create Twilio subaccount",
+        details: twilioError.message,
+        code: twilioError.code,
+      });
+    }
+  } catch (error) {
+    console.error("❌ [TWILIO SUBACCOUNT] General error:", error);
+    return reply.code(500).send({
+      error: "Internal server error",
+      details: error.message,
+    });
+  }
+});
+
+// Endpoint para comprar número de teléfono para una subcuenta
+fastify.post("/twilio/purchase-phone-number", async (request, reply) => {
+  try {
+    console.log("📞 [TWILIO PHONE] Purchasing phone number...");
+
+    const {
+      userId,
+      areaCode,
+      phoneType = "local", // local, toll-free
+      redirectEnabled = false,
+      redirectNumber,
+      adminUserId,
+    } = request.body;
+
+    if (!userId || !adminUserId) {
+      return reply.code(400).send({
+        error: "Missing required fields: userId, adminUserId",
+      });
+    }
+
+    // Verificar admin
+    const { data: adminUser, error: adminError } = await supabase
+      .from("users")
+      .select("is_admin")
+      .eq("id", adminUserId)
+      .single();
+
+    if (adminError || !adminUser?.is_admin) {
+      return reply.code(403).send({
+        error: "Unauthorized: Admin access required",
+      });
+    }
+
+    // Obtener información del usuario y su subcuenta
+    const { data: targetUser, error: userError } = await supabase
+      .from("users")
+      .select(
+        `
+        id, 
+        first_name, 
+        last_name, 
+        email, 
+        twilio_subaccount_sid, 
+        twilio_auth_token,
+        twilio_phone_number
+      `
+      )
+      .eq("id", userId)
+      .single();
+
+    if (userError || !targetUser) {
+      return reply.code(404).send({
+        error: "User not found",
+      });
+    }
+
+    if (!targetUser.twilio_subaccount_sid) {
+      return reply.code(400).send({
+        error: "User does not have a Twilio subaccount. Create one first.",
+      });
+    }
+
+    if (targetUser.twilio_phone_number) {
+      return reply.code(400).send({
+        error: "User already has a phone number",
+        phoneNumber: targetUser.twilio_phone_number,
+      });
+    }
+
+    // Log de inicio de operación
+    const { data: logEntry } = await supabase
+      .from("twilio_operations_log")
+      .insert({
+        user_id: userId,
+        operation_type: "purchase_number",
+        operation_status: "pending",
+        executed_by: adminUserId,
+        subaccount_sid: targetUser.twilio_subaccount_sid,
+        twilio_request: {
+          areaCode,
+          phoneType,
+          redirectEnabled,
+          redirectNumber,
+          timestamp: new Date().toISOString(),
+        },
+      })
+      .select()
+      .single();
+
+    try {
+      // Crear cliente de Twilio para la subcuenta
+      const subaccountClient = new Twilio(
+        targetUser.twilio_subaccount_sid,
+        targetUser.twilio_auth_token
+      );
+
+      // Buscar números disponibles
+      let availableNumbers;
+      const searchOptions = {
+        limit: 10,
+      };
+
+      if (areaCode) {
+        searchOptions.areaCode = areaCode;
+      }
+
+      if (phoneType === "toll-free") {
+        availableNumbers = await subaccountClient
+          .availablePhoneNumbers("US")
+          .tollFree.list(searchOptions);
+      } else {
+        availableNumbers = await subaccountClient
+          .availablePhoneNumbers("US")
+          .local.list(searchOptions);
+      }
+
+      if (!availableNumbers || availableNumbers.length === 0) {
+        throw new Error(
+          `No available ${phoneType} numbers found${
+            areaCode ? ` in area code ${areaCode}` : ""
+          }`
+        );
+      }
+
+      // Seleccionar el primer número disponible
+      const selectedNumber = availableNumbers[0];
+      console.log(
+        "📞 [TWILIO PHONE] Selected number:",
+        selectedNumber.phoneNumber
+      );
+
+      // Configurar webhook URL para redirección si está habilitada
+      let voiceUrl = `https://${RAILWAY_PUBLIC_DOMAIN}/outbound-call-twiml`;
+      if (redirectEnabled && redirectNumber) {
+        voiceUrl = `https://${RAILWAY_PUBLIC_DOMAIN}/twilio/redirect-call?redirect_to=${encodeURIComponent(
+          redirectNumber
+        )}&user_id=${userId}`;
+      }
+
+      // Comprar el número
+      const purchasedNumber =
+        await subaccountClient.incomingPhoneNumbers.create({
+          phoneNumber: selectedNumber.phoneNumber,
+          friendlyName: `${targetUser.first_name} ${targetUser.last_name}`,
+          voiceUrl: voiceUrl,
+          voiceMethod: "POST",
+          statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
+          statusCallbackMethod: "POST",
+        });
+
+      console.log("✅ [TWILIO PHONE] Number purchased:", {
+        sid: purchasedNumber.sid,
+        phoneNumber: purchasedNumber.phoneNumber,
+        friendlyName: purchasedNumber.friendlyName,
+      });
+
+      // Guardar en base de datos
+      const { data: savedPhone, error: savePhoneError } = await supabase
+        .from("twilio_phone_numbers")
+        .insert({
+          user_id: userId,
+          phone_number: purchasedNumber.phoneNumber,
+          phone_number_sid: purchasedNumber.sid,
+          friendly_name: purchasedNumber.friendlyName,
+          country_code: "US",
+          phone_number_type: phoneType,
+          redirect_enabled: redirectEnabled,
+          redirect_number: redirectNumber,
+          capabilities: {
+            voice: selectedNumber.capabilities.voice,
+            sms: selectedNumber.capabilities.sms,
+            mms: selectedNumber.capabilities.mms,
+          },
+          created_by: adminUserId,
+          phone_metadata: {
+            twilio_sid: purchasedNumber.sid,
+            account_sid: purchasedNumber.accountSid,
+            date_created: purchasedNumber.dateCreated,
+            voice_url: voiceUrl,
+            selected_from: {
+              locality: selectedNumber.locality,
+              region: selectedNumber.region,
+              iso_country: selectedNumber.isoCountry,
+            },
+          },
+        })
+        .select()
+        .single();
+
+      if (savePhoneError) {
+        console.error(
+          "❌ [TWILIO PHONE] Error saving phone to database:",
+          savePhoneError
+        );
+        throw new Error("Failed to save phone number to database");
+      }
+
+      // Actualizar tabla users
+      const { error: updateUserError } = await supabase
+        .from("users")
+        .update({
+          twilio_phone_number: purchasedNumber.phoneNumber,
+          twilio_phone_number_sid: purchasedNumber.sid,
+          twilio_phone_redirect_number: redirectNumber,
+          twilio_redirect_enabled: redirectEnabled,
+        })
+        .eq("id", userId);
+
+      if (updateUserError) {
+        console.error(
+          "❌ [TWILIO PHONE] Error updating user:",
+          updateUserError
+        );
+        throw new Error("Failed to update user with phone number info");
+      }
+
+      // Actualizar log como exitoso
+      await supabase
+        .from("twilio_operations_log")
+        .update({
+          operation_status: "success",
+          completed_at: new Date().toISOString(),
+          phone_number_sid: purchasedNumber.sid,
+          twilio_response: {
+            sid: purchasedNumber.sid,
+            phoneNumber: purchasedNumber.phoneNumber,
+            friendlyName: purchasedNumber.friendlyName,
+            capabilities: selectedNumber.capabilities,
+            locality: selectedNumber.locality,
+            region: selectedNumber.region,
+          },
+        })
+        .eq("id", logEntry.id);
+
+      return reply.send({
+        success: true,
+        message: "Phone number purchased successfully",
+        data: {
+          phoneNumber: purchasedNumber.phoneNumber,
+          phoneNumberSid: purchasedNumber.sid,
+          friendlyName: purchasedNumber.friendlyName,
+          phoneType: phoneType,
+          redirectEnabled: redirectEnabled,
+          redirectNumber: redirectNumber,
+          capabilities: selectedNumber.capabilities,
+          location: {
+            locality: selectedNumber.locality,
+            region: selectedNumber.region,
+            country: selectedNumber.isoCountry,
+          },
+          userId: userId,
+          purchasedAt: new Date().toISOString(),
+        },
+      });
+    } catch (twilioError) {
+      console.error("❌ [TWILIO PHONE] Twilio API error:", twilioError);
+
+      // Actualizar log como fallido
+      await supabase
+        .from("twilio_operations_log")
+        .update({
+          operation_status: "failed",
+          completed_at: new Date().toISOString(),
+          error_message: twilioError.message,
+          twilio_response: {
+            error: twilioError.message,
+            code: twilioError.code,
+            status: twilioError.status,
+          },
+        })
+        .eq("id", logEntry.id);
+
+      return reply.code(500).send({
+        error: "Failed to purchase phone number",
+        details: twilioError.message,
+        code: twilioError.code,
+      });
+    }
+  } catch (error) {
+    console.error("❌ [TWILIO PHONE] General error:", error);
+    return reply.code(500).send({
+      error: "Internal server error",
+      details: error.message,
+    });
+  }
+});
+
+// Endpoint para manejar redirección de llamadas entrantes
+fastify.all("/twilio/redirect-call", async (request, reply) => {
+  try {
+    const { redirect_to, user_id } = request.query;
+
+    console.log("📞 [TWILIO REDIRECT] Redirecting call:", {
+      redirectTo: redirect_to,
+      userId: user_id,
+      from: request.body?.From,
+      to: request.body?.To,
+    });
+
+    if (!redirect_to) {
+      return reply.code(400).send({ error: "Missing redirect_to parameter" });
+    }
+
+    // Crear respuesta TwiML para redireccionar la llamada
+    const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+      <Response>
+        <Dial timeout="30" record="true">
+          <Number>${redirect_to}</Number>
+        </Dial>
+        <Say voice="alice" language="es-MX">
+          Lo sentimos, no pudimos conectar su llamada. Por favor intente más tarde.
+        </Say>
+      </Response>`;
+
+    // Log de la redirección
+    if (user_id) {
+      await supabase.from("twilio_operations_log").insert({
+        user_id: user_id,
+        operation_type: "redirect_call",
+        operation_status: "success",
+        twilio_request: {
+          from: request.body?.From,
+          to: request.body?.To,
+          redirect_to: redirect_to,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+
+    reply.type("text/xml").send(twimlResponse);
+  } catch (error) {
+    console.error("❌ [TWILIO REDIRECT] Error:", error);
+
+    // Respuesta TwiML de error
+    const errorResponse = `<?xml version="1.0" encoding="UTF-8"?>
+      <Response>
+        <Say voice="alice" language="es-MX">
+          Lo sentimos, ocurrió un error. Por favor intente más tarde.
+        </Say>
+      </Response>`;
+
+    reply.type("text/xml").send(errorResponse);
+  }
+});
+
+// Endpoint para obtener información de subcuentas y números de teléfono
+fastify.get("/twilio/user-info/:userId", async (request, reply) => {
+  try {
+    const { userId } = request.params;
+    const { adminUserId } = request.query;
+
+    // Verificar admin
+    const { data: adminUser, error: adminError } = await supabase
+      .from("users")
+      .select("is_admin")
+      .eq("id", adminUserId)
+      .single();
+
+    if (adminError || !adminUser?.is_admin) {
+      return reply.code(403).send({
+        error: "Unauthorized: Admin access required",
+      });
+    }
+
+    // Obtener información completa del usuario
+    const { data: userInfo, error: userError } = await supabase
+      .from("users")
+      .select(
+        `
+        id,
+        first_name,
+        last_name,
+        email,
+        twilio_subaccount_sid,
+        twilio_phone_number,
+        twilio_phone_number_sid,
+        twilio_subaccount_status,
+        twilio_subaccount_created_at,
+        twilio_phone_redirect_number,
+        twilio_redirect_enabled
+      `
+      )
+      .eq("id", userId)
+      .single();
+
+    if (userError || !userInfo) {
+      return reply.code(404).send({ error: "User not found" });
+    }
+
+    // Obtener información detallada de subcuenta si existe
+    let subaccountDetails = null;
+    if (userInfo.twilio_subaccount_sid) {
+      const { data: subaccount } = await supabase
+        .from("twilio_subaccounts")
+        .select("*")
+        .eq("user_id", userId)
+        .single();
+
+      subaccountDetails = subaccount;
+    }
+
+    // Obtener información detallada del número de teléfono si existe
+    let phoneDetails = null;
+    if (userInfo.twilio_phone_number_sid) {
+      const { data: phone } = await supabase
+        .from("twilio_phone_numbers")
+        .select("*")
+        .eq("user_id", userId)
+        .single();
+
+      phoneDetails = phone;
+    }
+
+    // Obtener historial de operaciones recientes
+    const { data: recentOperations } = await supabase
+      .from("twilio_operations_log")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    return reply.send({
+      success: true,
+      data: {
+        user: {
+          id: userInfo.id,
+          name: `${userInfo.first_name} ${userInfo.last_name}`,
+          email: userInfo.email,
+        },
+        subaccount: {
+          exists: !!userInfo.twilio_subaccount_sid,
+          sid: userInfo.twilio_subaccount_sid,
+          status: userInfo.twilio_subaccount_status,
+          createdAt: userInfo.twilio_subaccount_created_at,
+          details: subaccountDetails,
+        },
+        phoneNumber: {
+          exists: !!userInfo.twilio_phone_number,
+          number: userInfo.twilio_phone_number,
+          sid: userInfo.twilio_phone_number_sid,
+          redirectEnabled: userInfo.twilio_redirect_enabled,
+          redirectNumber: userInfo.twilio_phone_redirect_number,
+          details: phoneDetails,
+        },
+        recentOperations: recentOperations || [],
+      },
+    });
+  } catch (error) {
+    console.error("❌ [TWILIO INFO] Error:", error);
+    return reply.code(500).send({
+      error: "Internal server error",
+      details: error.message,
+    });
+  }
+});
+
+start();
