@@ -5264,6 +5264,10 @@ fastify.post("/webhook/stripe", async (request, reply) => {
         await handleInvoicePaymentSucceeded(event.data.object, stripe);
         break;
 
+      case "invoice.payment_failed":
+        await handleInvoicePaymentFailed(event.data.object, stripe);
+        break;
+
       case "customer.subscription.updated":
         await handleSubscriptionUpdated(event.data.object);
         break;
@@ -5757,6 +5761,167 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
   }
 }
 
+// Handle invoice.payment_failed event
+async function handleInvoicePaymentFailed(invoice, stripe) {
+  try {
+    console.log("❌ [STRIPE] Processing invoice.payment_failed");
+
+    // Extract subscription ID from different possible locations (same logic as payment_succeeded)
+    let subscriptionId = invoice.subscription;
+
+    if (!subscriptionId && invoice.parent?.subscription_details?.subscription) {
+      subscriptionId = invoice.parent.subscription_details.subscription;
+    }
+
+    if (!subscriptionId && invoice.lines?.data?.length > 0) {
+      const subscriptionLine = invoice.lines.data.find(
+        (line) => line.parent?.subscription_item_details?.subscription
+      );
+      if (subscriptionLine) {
+        subscriptionId =
+          subscriptionLine.parent.subscription_item_details.subscription;
+      }
+    }
+
+    console.log("📋 [STRIPE] Failed invoice details:", {
+      id: invoice.id,
+      customer: invoice.customer,
+      subscription: subscriptionId,
+      amount_due: invoice.amount_due,
+      currency: invoice.currency,
+      billing_reason: invoice.billing_reason,
+      attempt_count: invoice.attempt_count,
+      next_payment_attempt: invoice.next_payment_attempt,
+    });
+
+    if (!subscriptionId) {
+      console.log("❌ [STRIPE] No subscription found in failed invoice");
+      return;
+    }
+
+    // Get subscription details
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+
+    // Get the user subscription record
+    const { data: userSubscription, error: subscriptionError } = await supabase
+      .from("user_subscriptions")
+      .select("user_id, minutes_per_month, plan_id")
+      .eq("stripe_subscription_id", subscription.id)
+      .single();
+
+    if (subscriptionError || !userSubscription) {
+      console.error(
+        "❌ [STRIPE] Error getting user subscription for failed payment:",
+        subscriptionError
+      );
+      return;
+    }
+
+    console.log("📦 [STRIPE] User subscription found for failed payment:", {
+      userId: userSubscription.user_id,
+      minutesPerMonth: userSubscription.minutes_per_month,
+      planId: userSubscription.plan_id,
+    });
+
+    // Update subscription status to past_due or incomplete
+    const newStatus =
+      subscription.status === "past_due" ? "past_due" : "incomplete";
+
+    const { error: updateError } = await supabase
+      .from("user_subscriptions")
+      .update({
+        status: newStatus,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("stripe_subscription_id", subscription.id);
+
+    if (updateError) {
+      console.error(
+        "❌ [STRIPE] Error updating subscription status for failed payment:",
+        updateError
+      );
+      return;
+    }
+
+    console.log(
+      `✅ [STRIPE] Subscription marked as ${newStatus} due to payment failure`
+    );
+
+    // Check if this is a final failure (no more retry attempts)
+    const isFinalFailure =
+      !invoice.next_payment_attempt ||
+      (invoice.attempt_count && invoice.attempt_count >= 4);
+
+    if (isFinalFailure) {
+      console.log(
+        "💰 [STRIPE] Final payment failure - resetting user minutes to 0..."
+      );
+
+      // Get current user minutes for logging
+      const { data: currentUser, error: userError } = await supabase
+        .from("users")
+        .select("available_minutes")
+        .eq("id", userSubscription.user_id)
+        .single();
+
+      if (userError) {
+        console.error(
+          "❌ [STRIPE] Error getting current user minutes:",
+          userError
+        );
+        return;
+      }
+
+      const previousMinutes = currentUser.available_minutes || 0;
+
+      // Set minutes to 0 for final payment failure
+      const { error: updateMinutesError } = await supabase
+        .from("users")
+        .update({
+          available_minutes: 0,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", userSubscription.user_id);
+
+      if (updateMinutesError) {
+        console.error(
+          "❌ [STRIPE] Error resetting user minutes for failed payment:",
+          updateMinutesError
+        );
+        return;
+      }
+
+      console.log(
+        "✅ [STRIPE] User minutes reset to 0 due to final payment failure:",
+        {
+          userId: userSubscription.user_id,
+          previousMinutes: previousMinutes,
+          newMinutes: 0,
+          reason: "payment_failed_final",
+          attemptCount: invoice.attempt_count,
+        }
+      );
+    } else {
+      console.log(
+        "⚠️ [STRIPE] Payment failed but retries remain - keeping current minutes:",
+        {
+          userId: userSubscription.user_id,
+          attemptCount: invoice.attempt_count,
+          nextRetry: invoice.next_payment_attempt,
+        }
+      );
+    }
+
+    // Sync referral data
+    await syncReferralData(userSubscription.user_id);
+  } catch (error) {
+    console.error(
+      "❌ [STRIPE] Error processing invoice payment failure:",
+      error
+    );
+  }
+}
+
 // Handle customer.subscription.updated event
 async function handleSubscriptionUpdated(subscription) {
   try {
@@ -5831,12 +5996,35 @@ async function handleSubscriptionDeleted(subscription) {
     console.log("📋 [STRIPE] Subscription details:", {
       id: subscription.id,
       status: subscription.status,
+      canceled_at: subscription.canceled_at,
+      ended_at: subscription.ended_at,
     });
 
+    // Get the user subscription record first to get user_id
+    const { data: userSubscription, error: subscriptionError } = await supabase
+      .from("user_subscriptions")
+      .select("user_id, minutes_per_month")
+      .eq("stripe_subscription_id", subscription.id)
+      .single();
+
+    if (subscriptionError || !userSubscription) {
+      console.error(
+        "❌ [STRIPE] Error getting user subscription:",
+        subscriptionError
+      );
+      return;
+    }
+
+    console.log("📦 [STRIPE] User subscription found:", {
+      userId: userSubscription.user_id,
+      previousMinutes: userSubscription.minutes_per_month,
+    });
+
+    // Update subscription status to deleted/cancelled
     const { error: updateError } = await supabase
       .from("user_subscriptions")
       .update({
-        status: subscription.status,
+        status: "cancelled",
         updated_at: new Date().toISOString(),
       })
       .eq("stripe_subscription_id", subscription.id);
@@ -5846,18 +6034,56 @@ async function handleSubscriptionDeleted(subscription) {
       return;
     }
 
-    console.log("✅ [STRIPE] Subscription marked as deleted");
+    console.log("✅ [STRIPE] Subscription marked as cancelled");
 
-    // Get user_id from subscription to sync referral data
-    const { data: userSubscription } = await supabase
-      .from("user_subscriptions")
-      .select("user_id")
-      .eq("stripe_subscription_id", subscription.id)
+    // Reset user's available minutes to 0 when subscription is cancelled
+    console.log(
+      "💰 [STRIPE] Resetting user minutes to 0 due to subscription cancellation..."
+    );
+
+    // Get current user minutes for logging
+    const { data: currentUser, error: userError } = await supabase
+      .from("users")
+      .select("available_minutes")
+      .eq("id", userSubscription.user_id)
       .single();
 
-    if (userSubscription) {
-      await syncReferralData(userSubscription.user_id);
+    if (userError) {
+      console.error(
+        "❌ [STRIPE] Error getting current user minutes:",
+        userError
+      );
+      return;
     }
+
+    const previousMinutes = currentUser.available_minutes || 0;
+
+    // Set minutes to 0
+    const { error: updateMinutesError } = await supabase
+      .from("users")
+      .update({
+        available_minutes: 0,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", userSubscription.user_id);
+
+    if (updateMinutesError) {
+      console.error(
+        "❌ [STRIPE] Error resetting user minutes:",
+        updateMinutesError
+      );
+      return;
+    }
+
+    console.log("✅ [STRIPE] User minutes reset to 0 successfully:", {
+      userId: userSubscription.user_id,
+      previousMinutes: previousMinutes,
+      newMinutes: 0,
+      reason: "subscription_cancelled",
+    });
+
+    // Sync referral data
+    await syncReferralData(userSubscription.user_id);
   } catch (error) {
     console.error("❌ [STRIPE] Error processing subscription deletion:", error);
   }
