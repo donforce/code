@@ -7443,8 +7443,6 @@ fastify.get("/twilio/user-info/:userId", async (request, reply) => {
   }
 });
 
-start();
-
 // Función para limpiar grabaciones de Twilio (tanto cuenta principal como subcuentas)
 async function cleanupTwilioRecordings(olderThanHours = 72) {
   try {
