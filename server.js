@@ -3339,10 +3339,16 @@ fastify.post("/twilio-status", async (request, reply) => {
   const callStatus = request.body.CallStatus;
   const callErrorCode = request.body.ErrorCode;
   const callErrorMessage = request.body.ErrorMessage;
+  const accountSid = request.body.AccountSid; // Para identificar subcuentas
 
   console.log(
     `📱 [TWILIO STATUS] Call ${callSid}: ${callStatus} (${callDuration}s)`
   );
+
+  // Log si la llamada viene de una subcuenta
+  if (accountSid && accountSid !== TWILIO_ACCOUNT_SID) {
+    console.log(`📱 [TWILIO STATUS] Call from subaccount: ${accountSid}`);
+  }
 
   try {
     // Get call info from global tracking
@@ -6265,6 +6271,7 @@ fastify.post("/twilio-recording-status", async (request, reply) => {
       RecordingStatus,
       RecordingChannels,
       RecordingSource,
+      AccountSid, // Este campo nos dice de qué cuenta viene la grabación
     } = request.body;
 
     if (!CallSid || !RecordingSid) {
@@ -6282,7 +6289,17 @@ fastify.post("/twilio-recording-status", async (request, reply) => {
       RecordingStatus,
       RecordingChannels,
       RecordingSource,
+      AccountSid,
     });
+
+    // Verificar si la grabación viene de una subcuenta
+    let isFromSubaccount = false;
+    if (AccountSid && AccountSid !== TWILIO_ACCOUNT_SID) {
+      isFromSubaccount = true;
+      console.log(
+        `🎙️ [TWILIO RECORDING] Recording from subaccount: ${AccountSid}`
+      );
+    }
 
     // Update call with recording information
     const { error: updateError } = await supabase
@@ -6318,6 +6335,7 @@ fastify.post("/twilio-recording-status", async (request, reply) => {
       );
 
       // Ejecutar la descarga de forma asíncrona para no bloquear la respuesta
+      // La función downloadAndStoreRecording ya maneja las credenciales correctas
       downloadAndStoreRecording(RecordingUrl, CallSid, RecordingSid)
         .then((publicUrl) => {
           console.log(
@@ -6466,21 +6484,69 @@ async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
       `🎙️ [RECORDING DOWNLOAD] Starting download for call ${callSid}`
     );
 
-    // Usar el cliente de Twilio para obtener la grabación con autenticación
-    const recording = await twilioClient.recordings(recordingSid).fetch();
+    // Primero, obtener información de la llamada para determinar qué credenciales usar
+    const { data: callData, error: callError } = await supabase
+      .from("calls")
+      .select(
+        `
+        user_id,
+        users!inner(
+          twilio_subaccount_sid,
+          twilio_auth_token
+        )
+      `
+      )
+      .eq("call_sid", callSid)
+      .single();
+
+    if (callError) {
+      console.error(
+        `❌ [RECORDING DOWNLOAD] Error getting call data for ${callSid}:`,
+        callError
+      );
+      throw new Error(`Failed to get call data: ${callError.message}`);
+    }
+
+    // Determinar qué cliente de Twilio usar
+    let twilioClientToUse = twilioClient; // Default
+    let accountSid = TWILIO_ACCOUNT_SID;
+    let authToken = TWILIO_AUTH_TOKEN;
+
+    if (
+      callData.users?.twilio_subaccount_sid &&
+      callData.users?.twilio_auth_token
+    ) {
+      // Usar las credenciales de la subcuenta del usuario
+      accountSid = callData.users.twilio_subaccount_sid;
+      authToken = callData.users.twilio_auth_token;
+      twilioClientToUse = new Twilio(accountSid, authToken);
+
+      console.log(
+        `🎙️ [RECORDING DOWNLOAD] Using user's subaccount for call ${callSid}:`,
+        {
+          userId: callData.user_id,
+          subaccountSid: accountSid,
+        }
+      );
+    } else {
+      console.log(
+        `🎙️ [RECORDING DOWNLOAD] Using main account for call ${callSid}`
+      );
+    }
+
+    // Usar el cliente correcto para obtener la grabación con autenticación
+    const recording = await twilioClientToUse.recordings(recordingSid).fetch();
     const extension = recording.mediaFormat || "wav"; // fallback
-    const recordingUrl = `https://api.twilio.com${recording.uri.replace(
+    const actualRecordingUrl = `https://api.twilio.com${recording.uri.replace(
       ".json",
       `.${extension}`
     )}`;
 
-    const response = await fetch(recordingUrl, {
+    const response = await fetch(actualRecordingUrl, {
       headers: {
         Authorization:
           "Basic " +
-          Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString(
-            "base64"
-          ),
+          Buffer.from(`${accountSid}:${authToken}`).toString("base64"),
       },
     });
 
@@ -7378,3 +7444,206 @@ fastify.get("/twilio/user-info/:userId", async (request, reply) => {
 });
 
 start();
+
+// Función para limpiar grabaciones de Twilio (tanto cuenta principal como subcuentas)
+async function cleanupTwilioRecordings(olderThanHours = 72) {
+  try {
+    console.log(
+      `🧹 [TWILIO CLEANUP] Starting Twilio recordings cleanup (older than ${olderThanHours}h)`
+    );
+
+    // Obtener grabaciones que necesitan ser eliminadas de Twilio
+    const { data: recordingsToDelete, error: fetchError } = await supabase
+      .from("calls")
+      .select(
+        `
+        recording_sid,
+        call_sid,
+        user_id,
+        created_at,
+        users!inner(
+          twilio_subaccount_sid,
+          twilio_auth_token
+        )
+      `
+      )
+      .not("recording_sid", "is", null)
+      .lt(
+        "created_at",
+        new Date(Date.now() - olderThanHours * 60 * 60 * 1000).toISOString()
+      );
+
+    if (fetchError) {
+      console.error(
+        "❌ [TWILIO CLEANUP] Error fetching recordings to delete:",
+        fetchError
+      );
+      throw fetchError;
+    }
+
+    if (!recordingsToDelete || recordingsToDelete.length === 0) {
+      console.log("✅ [TWILIO CLEANUP] No recordings to delete from Twilio");
+      return { deletedCount: 0, errors: [] };
+    }
+
+    console.log(
+      `🧹 [TWILIO CLEANUP] Found ${recordingsToDelete.length} recordings to delete from Twilio`
+    );
+
+    let deletedCount = 0;
+    const errors = [];
+
+    // Agrupar por tipo de cuenta (principal vs subcuentas)
+    const mainAccountRecordings = [];
+    const subaccountRecordings = new Map(); // Map<subaccountSid, recordings[]>
+
+    for (const recording of recordingsToDelete) {
+      if (
+        recording.users?.twilio_subaccount_sid &&
+        recording.users?.twilio_auth_token
+      ) {
+        // Es de una subcuenta
+        const subaccountSid = recording.users.twilio_subaccount_sid;
+        if (!subaccountRecordings.has(subaccountSid)) {
+          subaccountRecordings.set(subaccountSid, []);
+        }
+        subaccountRecordings.get(subaccountSid).push(recording);
+      } else {
+        // Es de la cuenta principal
+        mainAccountRecordings.push(recording);
+      }
+    }
+
+    // Limpiar grabaciones de la cuenta principal
+    if (mainAccountRecordings.length > 0) {
+      console.log(
+        `🧹 [TWILIO CLEANUP] Deleting ${mainAccountRecordings.length} recordings from main account`
+      );
+
+      for (const recording of mainAccountRecordings) {
+        try {
+          await twilioClient.recordings(recording.recording_sid).remove();
+          deletedCount++;
+          console.log(
+            `✅ [TWILIO CLEANUP] Deleted recording ${recording.recording_sid} from main account`
+          );
+        } catch (error) {
+          console.error(
+            `❌ [TWILIO CLEANUP] Error deleting recording ${recording.recording_sid} from main account:`,
+            error
+          );
+          errors.push({
+            recordingSid: recording.recording_sid,
+            callSid: recording.call_sid,
+            accountType: "main",
+            error: error.message,
+          });
+        }
+      }
+    }
+
+    // Limpiar grabaciones de subcuentas
+    for (const [subaccountSid, recordings] of subaccountRecordings.entries()) {
+      console.log(
+        `🧹 [TWILIO CLEANUP] Deleting ${recordings.length} recordings from subaccount ${subaccountSid}`
+      );
+
+      // Obtener las credenciales de la subcuenta (usar la primera grabación como referencia)
+      const firstRecording = recordings[0];
+      const authToken = firstRecording.users.twilio_auth_token;
+
+      try {
+        // Crear cliente para esta subcuenta
+        const subaccountClient = new Twilio(subaccountSid, authToken);
+
+        for (const recording of recordings) {
+          try {
+            await subaccountClient.recordings(recording.recording_sid).remove();
+            deletedCount++;
+            console.log(
+              `✅ [TWILIO CLEANUP] Deleted recording ${recording.recording_sid} from subaccount ${subaccountSid}`
+            );
+          } catch (error) {
+            console.error(
+              `❌ [TWILIO CLEANUP] Error deleting recording ${recording.recording_sid} from subaccount ${subaccountSid}:`,
+              error
+            );
+            errors.push({
+              recordingSid: recording.recording_sid,
+              callSid: recording.call_sid,
+              accountType: "subaccount",
+              subaccountSid: subaccountSid,
+              error: error.message,
+            });
+          }
+        }
+      } catch (error) {
+        console.error(
+          `❌ [TWILIO CLEANUP] Error creating client for subaccount ${subaccountSid}:`,
+          error
+        );
+        // Agregar todos los recordings de esta subcuenta como errores
+        for (const recording of recordings) {
+          errors.push({
+            recordingSid: recording.recording_sid,
+            callSid: recording.call_sid,
+            accountType: "subaccount",
+            subaccountSid: subaccountSid,
+            error: `Failed to create subaccount client: ${error.message}`,
+          });
+        }
+      }
+    }
+
+    console.log(
+      `✅ [TWILIO CLEANUP] Cleanup completed. Deleted: ${deletedCount}, Errors: ${errors.length}`
+    );
+
+    return {
+      deletedCount,
+      errors,
+      totalRecordings: recordingsToDelete.length,
+      mainAccountDeleted: mainAccountRecordings.length,
+      subaccountDeleted: deletedCount - mainAccountRecordings.length,
+    };
+  } catch (error) {
+    console.error("❌ [TWILIO CLEANUP] Error in cleanup process:", error);
+    throw error;
+  }
+}
+
+// Endpoint para limpiar grabaciones de Twilio manualmente
+fastify.post("/api/admin/cleanup-twilio-recordings", async (request, reply) => {
+  try {
+    console.log("🧹 [ADMIN] Manual Twilio recordings cleanup requested");
+
+    // Verificar API key
+    const apiKey =
+      request.headers["x-api-key"] ||
+      request.headers.authorization?.replace("Bearer ", "");
+
+    if (!apiKey) {
+      return reply.code(401).send({
+        error: "API key requerida",
+        message: "Se requiere autenticación para esta operación",
+      });
+    }
+
+    const { olderThanHours = 72 } = request.body || {};
+
+    // Ejecutar la limpieza de Twilio
+    const result = await cleanupTwilioRecordings(olderThanHours);
+
+    return reply.send({
+      success: true,
+      message: `Twilio recordings cleanup completed`,
+      data: result,
+    });
+  } catch (error) {
+    console.error("❌ [ADMIN] Error en limpieza de Twilio:", error);
+    return reply.code(500).send({
+      error: "Error interno del servidor",
+      message: "Error inesperado al ejecutar limpieza de Twilio",
+    });
+  }
+});
