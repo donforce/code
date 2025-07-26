@@ -7762,3 +7762,8 @@ fastify.get(
     }
   }
 );
+
+// Iniciar el servidor al final del archivo
+if (!fastify.server.listening) {
+  start();
+}
