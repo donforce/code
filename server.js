@@ -7647,3 +7647,118 @@ fastify.post("/api/admin/cleanup-twilio-recordings", async (request, reply) => {
     });
   }
 });
+
+// Función para verificar y activar subcuenta de Twilio
+async function verifyAndActivateSubaccount(subaccountSid, authToken) {
+  try {
+    console.log(`🔍 [TWILIO VERIFY] Verifying subaccount: ${subaccountSid}`);
+
+    // Crear cliente para la subcuenta
+    const subaccountClient = new Twilio(subaccountSid, authToken);
+
+    // Verificar estado de la subcuenta
+    const account = await subaccountClient.api.accounts(subaccountSid).fetch();
+
+    console.log(`📋 [TWILIO VERIFY] Subaccount status:`, {
+      sid: account.sid,
+      status: account.status,
+      type: account.type,
+      dateCreated: account.dateCreated,
+    });
+
+    // Verificar límites y capacidades
+    const balance = await subaccountClient.balance.fetch();
+
+    console.log(`💰 [TWILIO VERIFY] Subaccount balance:`, {
+      balance: balance.balance,
+      currency: balance.currency,
+    });
+
+    // Verificar si puede hacer llamadas (intentar listar números disponibles)
+    try {
+      const availableNumbers = await subaccountClient
+        .availablePhoneNumbers("US")
+        .local.list({ limit: 1 });
+
+      console.log(
+        `📞 [TWILIO VERIFY] Can search phone numbers: ${
+          availableNumbers.length > 0 ? "YES" : "NO"
+        }`
+      );
+    } catch (error) {
+      console.warn(
+        `⚠️ [TWILIO VERIFY] Cannot search phone numbers:`,
+        error.message
+      );
+    }
+
+    return {
+      isActive: account.status === "active",
+      status: account.status,
+      type: account.type,
+      balance: balance.balance,
+      currency: balance.currency,
+      canMakeCalls: account.status === "active",
+    };
+  } catch (error) {
+    console.error(
+      `❌ [TWILIO VERIFY] Error verifying subaccount ${subaccountSid}:`,
+      error
+    );
+    throw error;
+  }
+}
+
+// Endpoint para verificar estado de subcuenta
+fastify.get(
+  "/twilio/verify-subaccount/:subaccountSid",
+  async (request, reply) => {
+    try {
+      const { subaccountSid } = request.params;
+      const { adminUserId } = request.query;
+
+      // Verificar admin
+      const { data: adminUser, error: adminError } = await supabase
+        .from("users")
+        .select("is_admin")
+        .eq("id", adminUserId)
+        .single();
+
+      if (adminError || !adminUser?.is_admin) {
+        return reply.code(403).send({
+          error: "Unauthorized: Admin access required",
+        });
+      }
+
+      // Obtener las credenciales de la subcuenta
+      const { data: subaccountData, error: subaccountError } = await supabase
+        .from("users")
+        .select("twilio_auth_token")
+        .eq("twilio_subaccount_sid", subaccountSid)
+        .single();
+
+      if (subaccountError || !subaccountData) {
+        return reply.code(404).send({
+          error: "Subaccount not found",
+        });
+      }
+
+      // Verificar la subcuenta
+      const verificationResult = await verifyAndActivateSubaccount(
+        subaccountSid,
+        subaccountData.twilio_auth_token
+      );
+
+      return reply.send({
+        success: true,
+        data: verificationResult,
+      });
+    } catch (error) {
+      console.error("❌ [TWILIO VERIFY] Error:", error);
+      return reply.code(500).send({
+        error: "Internal server error",
+        details: error.message,
+      });
+    }
+  }
+);
