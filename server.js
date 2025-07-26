@@ -4377,7 +4377,7 @@ const start = async () => {
   }
 };
 
-start();
+// start(); // Moved to end of file
 
 // Function to check for scheduled call in ElevenLabs summary
 async function checkForScheduledCall(webhookData, call) {
