@@ -1751,29 +1751,48 @@ fastify.post("/outbound-call", async (request, reply) => {
   if (userError || !userData) {
     console.error("[API] Error fetching user data:", userError);
 
-  // Verificar si la cuenta está activa
-  if (!userData.is_active) {
-    console.error("[API] User account is disabled:", { userId: user_id });
-    return reply.code(403).send({ error: "User account is disabled" });
-  }
+    // Verificar si la cuenta está activa
+    if (!userData.is_active) {
+      console.error("[API] User account is disabled:", { userId: user_id });
+      return reply.code(403).send({ error: "User account is disabled" });
+    }
 
-  // Verificar consentimiento legal básico (términos y privacidad)
-  if (!userData.terms_accepted_at || !userData.privacy_accepted_at) {
-    console.error("[API] User missing basic legal consent:", { userId, terms: userData.terms_accepted_at, privacy: userData.privacy_accepted_at });
-    return reply.code(403).send({ error: "Legal consent required. Please accept terms and privacy policy." });
-  }
+    // Verificar consentimiento legal básico (términos y privacidad)
+    if (!userData.terms_accepted_at || !userData.privacy_accepted_at) {
+      console.error("[API] User missing basic legal consent:", {
+        userId,
+        terms: userData.terms_accepted_at,
+        privacy: userData.privacy_accepted_at,
+      });
+      return reply.code(403).send({
+        error:
+          "Legal consent required. Please accept terms and privacy policy.",
+      });
+    }
 
-  // Verificar consentimiento para llamadas automatizadas
-  if (!userData.automated_calls_consent) {
-    console.error("[API] User missing automated calls consent:", { userId, automated_calls_consent: userData.automated_calls_consent });
-    return reply.code(403).send({ error: "Automated calls consent required. Please accept automated calls consent." });
-  }
+    // Verificar consentimiento para llamadas automatizadas
+    if (!userData.automated_calls_consent) {
+      console.error("[API] User missing automated calls consent:", {
+        userId,
+        automated_calls_consent: userData.automated_calls_consent,
+      });
+      return reply.code(403).send({
+        error:
+          "Automated calls consent required. Please accept automated calls consent.",
+      });
+    }
 
-  // Verificar si tiene minutos disponibles (a menos que sea admin)
-  if (!userData.is_admin && (!userData.available_minutes || userData.available_minutes <= 0)) {
-    console.error("[API] User has no available minutes:", { userId, available_minutes: userData.available_minutes });
-    return reply.code(403).send({ error: "No available minutes" });
-  }
+    // Verificar si tiene minutos disponibles (a menos que sea admin)
+    if (
+      !userData.is_admin &&
+      (!userData.available_minutes || userData.available_minutes <= 0)
+    ) {
+      console.error("[API] User has no available minutes:", {
+        userId,
+        available_minutes: userData.available_minutes,
+      });
+      return reply.code(403).send({ error: "No available minutes" });
+    }
     return reply.code(400).send({ error: "User not found" });
   }
 
@@ -7393,24 +7412,120 @@ fastify.post("/twilio/purchase-phone-number", async (request, reply) => {
 // Endpoint para manejar redirección de llamadas entrantes
 fastify.all("/twilio/redirect-call", async (request, reply) => {
   try {
-    const { redirect_to, user_id } = request.query;
+    const accountSid = request.body?.AccountSid;
+    const toNumber = request.body?.To;
+    const fromNumber = request.body?.From;
+    const callSid = request.body?.CallSid;
 
-    console.log("📞 [TWILIO REDIRECT] Redirecting call:", {
-      redirectTo: redirect_to,
-      userId: user_id,
-      from: request.body?.From,
-      to: request.body?.To,
+    console.log("📞 [TWILIO REDIRECT] Incoming call details:", {
+      accountSid,
+      toNumber,
+      fromNumber,
+      callSid,
+      method: request.method,
+      url: request.url,
+      body: request.body,
     });
 
-    if (!redirect_to) {
-      return reply.code(400).send({ error: "Missing redirect_to parameter" });
+    if (!accountSid || !toNumber) {
+      console.error("❌ [TWILIO REDIRECT] Missing AccountSid or To number");
+      return reply
+        .code(400)
+        .send({ error: "Missing required Twilio parameters" });
     }
+
+    // Buscar la configuración del número de teléfono en la base de datos
+    const { data: phoneConfigs, error: phoneError } = await supabase
+      .from("twilio_phone_numbers")
+      .select(
+        `
+        *,
+        users!inner(*)
+      `
+      )
+      .eq("phone_number", toNumber)
+      .eq("users.twilio_subaccount_sid", accountSid);
+
+    if (phoneError || !phoneConfigs || phoneConfigs.length === 0) {
+      console.error("❌ [TWILIO REDIRECT] Phone number not found:", {
+        toNumber,
+        accountSid,
+        error: phoneError,
+      });
+
+      // Respuesta TwiML por defecto si no se encuentra configuración
+      const defaultResponse = `<?xml version="1.0" encoding="UTF-8"?>
+        <Response>
+          <Say voice="alice" language="es-MX">
+            Lo sentimos, no pudimos procesar su llamada. Por favor intente más tarde.
+          </Say>
+        </Response>`;
+
+      return reply.type("text/xml").send(defaultResponse);
+    }
+
+    const phoneConfig = phoneConfigs[0]; // Tomar el primer resultado
+    const user = phoneConfig.users;
+
+    console.log("📞 [TWILIO REDIRECT] Phone config found:", {
+      userId: user.id,
+      userName: `${user.first_name} ${user.last_name}`,
+      redirectEnabled: phoneConfig.redirect_enabled,
+      redirectNumber: phoneConfig.redirect_number,
+    });
+
+    // Verificar si la redirección está habilitada
+    if (!phoneConfig.redirect_enabled || !phoneConfig.redirect_number) {
+      console.log(
+        "📞 [TWILIO REDIRECT] Redirect not enabled, using default flow"
+      );
+
+      // Si no hay redirección, usar el flujo normal (outbound-call-twiml)
+      const defaultResponse = `<?xml version="1.0" encoding="UTF-8"?>
+        <Response>
+          <Say voice="alice" language="es-MX">
+            Hola, en un momento lo atenderemos.
+          </Say>
+          <Redirect>https://${
+            process.env.RAILWAY_PUBLIC_DOMAIN || "localhost:3000"
+          }/outbound-call-twiml</Redirect>
+        </Response>`;
+
+      return reply.type("text/xml").send(defaultResponse);
+    }
+
+    // Formatear el número de redirección correctamente
+    let redirectNumber = phoneConfig.redirect_number.toString();
+
+    // Limpiar el número (remover espacios, guiones, etc.)
+    redirectNumber = redirectNumber.replace(/[\s\-\(\)]/g, "");
+
+    // Si no tiene +, agregarlo
+    if (!redirectNumber.startsWith("+")) {
+      // Si es un número de 10 dígitos (US), agregar +1
+      if (redirectNumber.length === 10) {
+        redirectNumber = `+1${redirectNumber}`;
+      }
+      // Si es un número de 11 dígitos que empieza con 1, agregar +
+      else if (redirectNumber.length === 11 && redirectNumber.startsWith("1")) {
+        redirectNumber = `+${redirectNumber}`;
+      }
+      // Si no, asumir que necesita +1
+      else {
+        redirectNumber = `+1${redirectNumber}`;
+      }
+    }
+
+    console.log("📞 [TWILIO REDIRECT] Formatted redirect number:", {
+      original: phoneConfig.redirect_number,
+      formatted: redirectNumber,
+    });
 
     // Crear respuesta TwiML para redireccionar la llamada
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
       <Response>
         <Dial timeout="30" record="true">
-          <Number>${redirect_to}</Number>
+          <Number>${redirectNumber}</Number>
         </Dial>
         <Say voice="alice" language="es-MX">
           Lo sentimos, no pudimos conectar su llamada. Por favor intente más tarde.
@@ -7418,20 +7533,21 @@ fastify.all("/twilio/redirect-call", async (request, reply) => {
       </Response>`;
 
     // Log de la redirección
-    if (user_id) {
-      await supabase.from("twilio_operations_log").insert({
-        user_id: user_id,
-        operation_type: "redirect_call",
-        operation_status: "success",
-        twilio_request: {
-          from: request.body?.From,
-          to: request.body?.To,
-          redirect_to: redirect_to,
-          timestamp: new Date().toISOString(),
-        },
-      });
-    }
+    await supabase.from("twilio_operations_log").insert({
+      user_id: user.id,
+      operation_type: "redirect_call",
+      operation_status: "success",
+      twilio_request: {
+        from: fromNumber,
+        to: toNumber,
+        callSid: callSid,
+        accountSid: accountSid,
+        redirect_to: redirectNumber,
+        timestamp: new Date().toISOString(),
+      },
+    });
 
+    console.log("✅ [TWILIO REDIRECT] Redirecting to:", redirectNumber);
     reply.type("text/xml").send(twimlResponse);
   } catch (error) {
     console.error("❌ [TWILIO REDIRECT] Error:", error);
