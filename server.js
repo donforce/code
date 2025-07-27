@@ -4377,7 +4377,10 @@ const start = async () => {
   }
 };
 
-// start(); // Moved to end of file
+// Iniciar el servidor al final del archivo
+if (!fastify.server.listening) {
+  start();
+}
 
 // Function to check for scheduled call in ElevenLabs summary
 async function checkForScheduledCall(webhookData, call) {
@@ -6807,36 +6810,72 @@ fastify.post("/api/recordings/download/:callSid", async (request, reply) => {
 fastify.post("/twilio/create-subaccount", async (request, reply) => {
   try {
     console.log("🔧 [TWILIO SUBACCOUNT] Creating new subaccount...");
+    console.log("📥 [TWILIO SUBACCOUNT] Request received:");
+    console.log("🌐 [TWILIO SUBACCOUNT] Request headers:", request.headers);
+    console.log(
+      "📋 [TWILIO SUBACCOUNT] Request body:",
+      JSON.stringify(request.body, null, 2)
+    );
+    console.log("⏰ [TWILIO SUBACCOUNT] Timestamp:", new Date().toISOString());
 
     const { userId, userName, userEmail, adminUserId } = request.body;
 
+    console.log("🔍 [TWILIO SUBACCOUNT] Extracted fields:", {
+      hasUserId: !!userId,
+      hasUserName: !!userName,
+      hasUserEmail: !!userEmail,
+      hasAdminUserId: !!adminUserId,
+      userId,
+      userName,
+      userEmail,
+      adminUserId,
+    });
+
     if (!userId || !userName || !adminUserId) {
+      console.error("❌ [TWILIO SUBACCOUNT] Missing required fields");
       return reply.code(400).send({
         error: "Missing required fields: userId, userName, adminUserId",
       });
     }
 
     // Verificar que el usuario que hace la petición es admin
+    console.log("👤 [TWILIO SUBACCOUNT] Verifying admin user:", adminUserId);
     const { data: adminUser, error: adminError } = await supabase
       .from("users")
       .select("is_admin")
       .eq("id", adminUserId)
       .single();
 
+    console.log("🔍 [TWILIO SUBACCOUNT] Admin verification result:", {
+      hasAdminUser: !!adminUser,
+      isAdmin: adminUser?.is_admin,
+      adminError: adminError?.message,
+    });
+
     if (adminError || !adminUser?.is_admin) {
+      console.error("❌ [TWILIO SUBACCOUNT] Admin verification failed");
       return reply.code(403).send({
         error: "Unauthorized: Admin access required",
       });
     }
 
     // Verificar que el usuario target existe
+    console.log("🎯 [TWILIO SUBACCOUNT] Verifying target user:", userId);
     const { data: targetUser, error: userError } = await supabase
       .from("users")
       .select("id, first_name, last_name, email, twilio_subaccount_sid")
       .eq("id", userId)
       .single();
 
+    console.log("🔍 [TWILIO SUBACCOUNT] Target user verification result:", {
+      hasTargetUser: !!targetUser,
+      targetUserEmail: targetUser?.email,
+      hasExistingSubaccount: !!targetUser?.twilio_subaccount_sid,
+      userError: userError?.message,
+    });
+
     if (userError || !targetUser) {
+      console.error("❌ [TWILIO SUBACCOUNT] Target user not found");
       return reply.code(404).send({
         error: "User not found",
       });
@@ -6844,6 +6883,10 @@ fastify.post("/twilio/create-subaccount", async (request, reply) => {
 
     // Verificar si ya tiene una subcuenta
     if (targetUser.twilio_subaccount_sid) {
+      console.warn(
+        "⚠️ [TWILIO SUBACCOUNT] User already has subaccount:",
+        targetUser.twilio_subaccount_sid
+      );
       return reply.code(400).send({
         error: "User already has a Twilio subaccount",
         subaccountSid: targetUser.twilio_subaccount_sid,
@@ -6869,9 +6912,43 @@ fastify.post("/twilio/create-subaccount", async (request, reply) => {
 
     try {
       // Crear subcuenta en Twilio
+      console.log("🔧 [TWILIO SUBACCOUNT] Starting Twilio API call...");
+      console.log("📋 [TWILIO SUBACCOUNT] Request data:", {
+        userId,
+        userName,
+        userEmail,
+        adminUserId,
+        targetUserId: targetUser.id,
+        targetUserEmail: targetUser.email,
+      });
+
       const subaccountName = `${userName} - ${userEmail}`;
+      console.log("🏷️  [TWILIO SUBACCOUNT] Subaccount name:", subaccountName);
+
+      console.log(
+        "📞 [TWILIO SUBACCOUNT] Calling Twilio API to create subaccount..."
+      );
+      console.log("🔑 [TWILIO SUBACCOUNT] Twilio client config:", {
+        hasTwilioClient: !!twilioClient,
+        hasApiAccounts: !!twilioClient?.api?.accounts,
+        twilioAccountSid: process.env.TWILIO_ACCOUNT_SID
+          ? "Present"
+          : "Missing",
+        twilioAuthToken: process.env.TWILIO_AUTH_TOKEN ? "Present" : "Missing",
+      });
+
       const subaccount = await twilioClient.api.accounts.create({
         friendlyName: subaccountName,
+      });
+
+      console.log("✅ [TWILIO SUBACCOUNT] Twilio API response received:");
+      console.log("📊 [TWILIO SUBACCOUNT] Subaccount details:", {
+        sid: subaccount.sid,
+        friendlyName: subaccount.friendlyName,
+        status: subaccount.status,
+        authToken: subaccount.authToken ? "Present" : "Missing",
+        dateCreated: subaccount.dateCreated,
+        ownerAccountSid: subaccount.ownerAccountSid,
       });
 
       console.log("✅ [TWILIO SUBACCOUNT] Subaccount created:", {
@@ -6956,6 +7033,18 @@ fastify.post("/twilio/create-subaccount", async (request, reply) => {
       });
     } catch (twilioError) {
       console.error("❌ [TWILIO SUBACCOUNT] Twilio API error:", twilioError);
+      console.error("🔍 [TWILIO SUBACCOUNT] Error details:", {
+        message: twilioError.message,
+        code: twilioError.code,
+        status: twilioError.status,
+        moreInfo: twilioError.moreInfo,
+        details: twilioError.details,
+        stack: twilioError.stack?.substring(0, 500) + "...", // Primeras 500 chars del stack
+      });
+      console.error(
+        "📞 [TWILIO SUBACCOUNT] Full Twilio error object:",
+        JSON.stringify(twilioError, null, 2)
+      );
 
       // Actualizar log como fallido
       await supabase
@@ -6968,6 +7057,8 @@ fastify.post("/twilio/create-subaccount", async (request, reply) => {
             error: twilioError.message,
             code: twilioError.code,
             status: twilioError.status,
+            moreInfo: twilioError.moreInfo,
+            details: twilioError.details,
           },
         })
         .eq("id", logEntry.id);
@@ -6976,6 +7067,7 @@ fastify.post("/twilio/create-subaccount", async (request, reply) => {
         error: "Failed to create Twilio subaccount",
         details: twilioError.message,
         code: twilioError.code,
+        moreInfo: twilioError.moreInfo,
       });
     }
   } catch (error) {
@@ -7760,8 +7852,3 @@ fastify.get(
     }
   }
 );
-
-// Iniciar el servidor al final del archivo
-if (!fastify.server.listening) {
-  start();
-}
