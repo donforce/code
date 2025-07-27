@@ -7456,7 +7456,7 @@ fastify.all("/twilio/redirect-call", async (request, reply) => {
       // Respuesta TwiML por defecto si no se encuentra configuración
       const defaultResponse = `<?xml version="1.0" encoding="UTF-8"?>
         <Response>
-          <Say voice="alice" language="es-MX">
+          <Say language="es-US" voice="Lupe">
             Lo sentimos, no pudimos procesar su llamada. Por favor intente más tarde.
           </Say>
         </Response>`;
@@ -7483,7 +7483,7 @@ fastify.all("/twilio/redirect-call", async (request, reply) => {
       // Si no hay redirección, usar el flujo normal (outbound-call-twiml)
       const defaultResponse = `<?xml version="1.0" encoding="UTF-8"?>
         <Response>
-          <Say voice="alice" language="es-MX">
+          <Say language="es-US" voice="Lupe">
             Hola, en un momento lo atenderemos.
           </Say>
           <Redirect>https://${
@@ -7527,7 +7527,7 @@ fastify.all("/twilio/redirect-call", async (request, reply) => {
         <Dial timeout="30" record="true">
           <Number>${redirectNumber}</Number>
         </Dial>
-        <Say voice="alice" language="es-MX">
+        <Say language="es-US" voice="Lupe">
           Lo sentimos, no pudimos conectar su llamada. Por favor intente más tarde.
         </Say>
       </Response>`;
@@ -7555,7 +7555,7 @@ fastify.all("/twilio/redirect-call", async (request, reply) => {
     // Respuesta TwiML de error
     const errorResponse = `<?xml version="1.0" encoding="UTF-8"?>
       <Response>
-        <Say voice="alice" language="es-MX">
+        <Say language="es-US" voice="Lupe">
           Lo sentimos, ocurrió un error. Por favor intente más tarde.
         </Say>
       </Response>`;
