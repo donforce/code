@@ -1743,13 +1743,37 @@ fastify.post("/outbound-call", async (request, reply) => {
   const { data: userData, error: userError } = await supabase
     .from("users")
     .select(
-      "first_name, last_name, assistant_name, twilio_phone_number, twilio_subaccount_sid, twilio_auth_token"
+      "first_name, last_name, assistant_name, twilio_phone_number, twilio_subaccount_sid, twilio_auth_token, automated_calls_consent, terms_accepted_at, privacy_accepted_at, is_active, available_minutes, is_admin"
     )
     .eq("id", user_id)
     .single();
 
   if (userError || !userData) {
     console.error("[API] Error fetching user data:", userError);
+
+  // Verificar si la cuenta está activa
+  if (!userData.is_active) {
+    console.error("[API] User account is disabled:", { userId: user_id });
+    return reply.code(403).send({ error: "User account is disabled" });
+  }
+
+  // Verificar consentimiento legal básico (términos y privacidad)
+  if (!userData.terms_accepted_at || !userData.privacy_accepted_at) {
+    console.error("[API] User missing basic legal consent:", { userId, terms: userData.terms_accepted_at, privacy: userData.privacy_accepted_at });
+    return reply.code(403).send({ error: "Legal consent required. Please accept terms and privacy policy." });
+  }
+
+  // Verificar consentimiento para llamadas automatizadas
+  if (!userData.automated_calls_consent) {
+    console.error("[API] User missing automated calls consent:", { userId, automated_calls_consent: userData.automated_calls_consent });
+    return reply.code(403).send({ error: "Automated calls consent required. Please accept automated calls consent." });
+  }
+
+  // Verificar si tiene minutos disponibles (a menos que sea admin)
+  if (!userData.is_admin && (!userData.available_minutes || userData.available_minutes <= 0)) {
+    console.error("[API] User has no available minutes:", { userId, available_minutes: userData.available_minutes });
+    return reply.code(403).send({ error: "No available minutes" });
+  }
     return reply.code(400).send({ error: "User not found" });
   }
 
