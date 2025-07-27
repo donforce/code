@@ -7440,7 +7440,7 @@ fastify.all("/twilio/redirect-call", async (request, reply) => {
       .select(
         `
         *,
-        users!inner(*)
+        users!twilio_phone_numbers_user_id_fkey(*)
       `
       )
       .eq("phone_number", toNumber)
