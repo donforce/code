@@ -1568,6 +1568,10 @@ async function processQueueItem(queueItem, workerId = "unknown") {
 
       // Obtener la voz seleccionada del usuario
       let selectedVoiceId = null;
+      console.log(
+        `🔊 [VOICE] Worker ${workerId} - Starting voice selection for user: ${queueItem.user_id}`
+      );
+
       try {
         const { data: voiceSettingsData, error: voiceSettingsError } =
           await supabase
@@ -1577,26 +1581,45 @@ async function processQueueItem(queueItem, workerId = "unknown") {
             .eq("is_active", true)
             .single();
 
+        console.log(
+          `🔊 [VOICE] Worker ${workerId} - Voice settings query result:`,
+          {
+            data: voiceSettingsData,
+            error: voiceSettingsError,
+            hasData: !!voiceSettingsData,
+            hasError: !!voiceSettingsError,
+          }
+        );
+
         if (!voiceSettingsError && voiceSettingsData) {
           selectedVoiceId = voiceSettingsData.voice_id;
           console.log(
-            `[Queue] Worker ${workerId} - User selected voice: ${selectedVoiceId}`
+            `🔊 [VOICE] Worker ${workerId} - ✅ User selected voice: ${selectedVoiceId}`
           );
         } else {
           console.log(
-            `[Queue] Worker ${workerId} - No voice selected for user, using default`
+            `🔊 [VOICE] Worker ${workerId} - ❌ No voice selected for user, using default. Error: ${
+              voiceSettingsError?.message || "No data found"
+            }`
           );
         }
       } catch (voiceError) {
         console.log(
-          `[Queue] Worker ${workerId} - Error getting user voice (using default):`,
-          voiceError
+          `🔊 [VOICE] Worker ${workerId} - ❌ Error getting user voice (using default):`,
+          voiceError.message
         );
       }
 
       const voiceParam = selectedVoiceId
         ? `&user_voice_id=${encodeURIComponent(selectedVoiceId)}`
         : "";
+
+      console.log(
+        `🔊 [VOICE] Worker ${workerId} - Final voice parameter: "${voiceParam}"`
+      );
+      console.log(
+        `🔊 [VOICE] Worker ${workerId} - Selected voice ID: "${selectedVoiceId}"`
+      );
 
       call = await twilioClientToUse.calls.create({
         from: fromPhoneNumber,
@@ -2011,6 +2034,11 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     user_voice_id,
   } = request.query;
 
+  console.log(
+    `🔊 [TWiML] Received outbound-call-twiml request with user_voice_id: "${user_voice_id}"`
+  );
+  console.log(`🔊 [TWiML] All query parameters:`, request.query);
+
   // Función para escapar caracteres especiales en XML
   const escapeXml = (str) => {
     if (!str) return "";
@@ -2052,6 +2080,12 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
         </Stream>
       </Connect>
     </Response>`;
+
+  console.log(
+    `🔊 [TWiML] Generated TwiML with user_voice_id parameter: "${escapeXml(
+      user_voice_id
+    )}"`
+  );
 
   reply.type("text/xml").send(twimlResponse);
 });
@@ -2257,6 +2291,15 @@ fastify.register(async (fastifyInstance) => {
             console.log(
               "📧 [ElevenLabs] client_email value:",
               initialConfig.dynamic_variables.client_email
+            );
+            console.log(
+              `🔊 [ElevenLabs] voice_id value: "${initialConfig.dynamic_variables.voice_id}"`
+            );
+            console.log(
+              `🔊 [ElevenLabs] user_voice_id from customParameters: "${customParameters?.user_voice_id}"`
+            );
+            console.log(
+              `🔊 [ElevenLabs] voice_id from customParameters: "${customParameters?.voice_id}"`
             );
             console.log(
               "📋 [ElevenLabs] Full dynamic_variables:",
@@ -3091,6 +3134,9 @@ fastify.register(async (fastifyInstance) => {
               console.log(
                 "📅 calendar_availability:",
                 customParameters?.calendar_availability
+              );
+              console.log(
+                `🔊 [WebSocket] user_voice_id from customParameters: "${customParameters?.user_voice_id}"`
               );
 
               // Setup ElevenLabs AFTER receiving customParameters
