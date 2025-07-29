@@ -1576,13 +1576,20 @@ async function processQueueItem(queueItem, workerId = "unknown") {
         const { data: voiceSettingsData, error: voiceSettingsError } =
           await supabase
             .from("user_voice_settings")
-            .select("voice_id")
+            .select(
+              `
+              voice_id,
+              elevenlabs_voices!user_voice_settings_voice_id_fkey(
+                voice_id
+              )
+            `
+            )
             .eq("user_id", queueItem.user_id)
             .eq("is_active", true)
             .single();
 
         if (!voiceSettingsError && voiceSettingsData) {
-          selectedVoiceId = voiceSettingsData.voice_id;
+          selectedVoiceId = voiceSettingsData.elevenlabs_voices?.voice_id;
           console.log(`🔊 [VOICE] ✅ User selected voice: ${selectedVoiceId}`);
         } else {
           console.log(
