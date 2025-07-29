@@ -293,43 +293,52 @@ function translateTwilioError(twilioError) {
     translated: translatedMessage,
   };
 
-// Function to get the correct Twilio client for a call
-async function getTwilioClientForCall(callSid) {
-  try {
-    // Get call data with user information
-    const { data: callData, error } = await supabase
-      .from("calls")
-      .select(`
+  // Function to get the correct Twilio client for a call
+  async function getTwilioClientForCall(callSid) {
+    try {
+      // Get call data with user information
+      const { data: callData, error } = await supabase
+        .from("calls")
+        .select(
+          `
         user_id,
         users!calls_user_id_fkey(
           twilio_subaccount_sid,
           twilio_auth_token
         )
-      `)
-      .eq("call_sid", callSid)
-      .single();
+      `
+        )
+        .eq("call_sid", callSid)
+        .single();
 
-    if (error || !callData) {
-      console.log(`[TWILIO CLIENT] Call ${callSid} not found or no user data, using default client`);
-      return twilioClient; // Default client
+      if (error || !callData) {
+        console.log(
+          `[TWILIO CLIENT] Call ${callSid} not found or no user data, using default client`
+        );
+        return twilioClient; // Default client
+      }
+
+      const user = callData.users;
+
+      // If user has subaccount, create specific client
+      if (user.twilio_subaccount_sid && user.twilio_auth_token) {
+        console.log(
+          `[TWILIO CLIENT] Using subaccount client for call ${callSid}`
+        );
+        return new Twilio(user.twilio_subaccount_sid, user.twilio_auth_token);
+      }
+
+      // Otherwise use default client
+      console.log(`[TWILIO CLIENT] Using default client for call ${callSid}`);
+      return twilioClient;
+    } catch (error) {
+      console.error(
+        `[TWILIO CLIENT] Error getting client for call ${callSid}:`,
+        error
+      );
+      return twilioClient; // Fallback to default client
     }
-
-    const user = callData.users;
-    
-    // If user has subaccount, create specific client
-    if (user.twilio_subaccount_sid && user.twilio_auth_token) {
-      console.log(`[TWILIO CLIENT] Using subaccount client for call ${callSid}`);
-      return new Twilio(user.twilio_subaccount_sid, user.twilio_auth_token);
-    }
-
-    // Otherwise use default client
-    console.log(`[TWILIO CLIENT] Using default client for call ${callSid}`);
-    return twilioClient;
-  } catch (error) {
-    console.error(`[TWILIO CLIENT] Error getting client for call ${callSid}:`, error);
-    return twilioClient; // Fallback to default client
   }
-}
 }
 
 // Function to mark/unmark leads with invalid phone numbers
@@ -1557,6 +1566,38 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       const clientPhoneParam = encodeURIComponent(queueItem.lead.phone);
       const clientEmailParam = encodeURIComponent(queueItem.lead.email);
 
+      // Obtener la voz seleccionada del usuario
+      let selectedVoiceId = null;
+      try {
+        const { data: voiceSettingsData, error: voiceSettingsError } =
+          await supabase
+            .from("user_voice_settings")
+            .select("voice_id")
+            .eq("user_id", queueItem.user_id)
+            .eq("is_active", true)
+            .single();
+
+        if (!voiceSettingsError && voiceSettingsData) {
+          selectedVoiceId = voiceSettingsData.voice_id;
+          console.log(
+            `[Queue] Worker ${workerId} - User selected voice: ${selectedVoiceId}`
+          );
+        } else {
+          console.log(
+            `[Queue] Worker ${workerId} - No voice selected for user, using default`
+          );
+        }
+      } catch (voiceError) {
+        console.log(
+          `[Queue] Worker ${workerId} - Error getting user voice (using default):`,
+          voiceError
+        );
+      }
+
+      const voiceParam = selectedVoiceId
+        ? `&voice_id=${encodeURIComponent(selectedVoiceId)}`
+        : "";
+
       call = await twilioClientToUse.calls.create({
         from: fromPhoneNumber,
         to: queueItem.lead.phone,
@@ -1576,7 +1617,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
           agentName
         )}&assistant_name=${encodeURIComponent(
           userData.assistant_name
-        )}&calendar_availability=${availabilityParam}&calendar_timezone=${timezoneParam}`,
+        )}&calendar_availability=${availabilityParam}&calendar_timezone=${timezoneParam}${voiceParam}`,
         statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
         statusCallbackEvent: ["completed"],
         statusCallbackMethod: "POST",
@@ -2180,6 +2221,7 @@ fastify.register(async (fastifyInstance) => {
                   "Disponible todos los dias",
                 calendar_timezone:
                   customParameters?.calendar_timezone || "America/New_York",
+                voice_id: customParameters?.voice_id || "",
               },
               usage: {
                 no_ip_reason: "user_ip_not_collected",
@@ -3003,9 +3045,8 @@ fastify.register(async (fastifyInstance) => {
               if (callSid) {
                 try {
                   const client = await getTwilioClientForCall(callSid);
-                  await client
-                    .calls(callSid)
-                    .update({ status: "completed" });                  console.log(
+                  await client.calls(callSid).update({ status: "completed" });
+                  console.log(
                     `[Twilio] Call ${callSid} ended due to ElevenLabs disconnection.`
                   );
                 } catch (err) {
