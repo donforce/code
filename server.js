@@ -2008,6 +2008,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     assistant_name,
     calendar_availability,
     calendar_timezone,
+    user_voice_id,
   } = request.query;
 
   // Función para escapar caracteres especiales en XML
@@ -2047,6 +2048,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
           <Parameter name="calendar_timezone" value="${escapeXml(
             calendar_timezone || "America/New_York"
           )}" />
+          <Parameter name="user_voice_id" value="${escapeXml(user_voice_id)}" />
         </Stream>
       </Connect>
     </Response>`;
@@ -2221,7 +2223,10 @@ fastify.register(async (fastifyInstance) => {
                   "Disponible todos los dias",
                 calendar_timezone:
                   customParameters?.calendar_timezone || "America/New_York",
-                voice_id: customParameters?.voice_id || "",
+                voice_id:
+                  customParameters?.user_voice_id ||
+                  customParameters?.voice_id ||
+                  "",
               },
               usage: {
                 no_ip_reason: "user_ip_not_collected",
