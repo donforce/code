@@ -1569,7 +1569,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       // Obtener la voz seleccionada del usuario
       let selectedVoiceId = null;
       console.log(
-        `🔊 [VOICE] Worker ${workerId} - Starting voice selection for user: ${queueItem.user_id}`
+        `🔊 [VOICE] Starting voice selection for user: ${queueItem.user_id}`
       );
 
       try {
@@ -1581,32 +1581,19 @@ async function processQueueItem(queueItem, workerId = "unknown") {
             .eq("is_active", true)
             .single();
 
-        console.log(
-          `🔊 [VOICE] Worker ${workerId} - Voice settings query result:`,
-          {
-            data: voiceSettingsData,
-            error: voiceSettingsError,
-            hasData: !!voiceSettingsData,
-            hasError: !!voiceSettingsError,
-          }
-        );
-
         if (!voiceSettingsError && voiceSettingsData) {
           selectedVoiceId = voiceSettingsData.voice_id;
-          console.log(
-            `🔊 [VOICE] Worker ${workerId} - ✅ User selected voice: ${selectedVoiceId}`
-          );
+          console.log(`🔊 [VOICE] ✅ User selected voice: ${selectedVoiceId}`);
         } else {
           console.log(
-            `🔊 [VOICE] Worker ${workerId} - ❌ No voice selected for user, using default. Error: ${
+            `🔊 [VOICE] ❌ No voice selected for user, using default. Error: ${
               voiceSettingsError?.message || "No data found"
             }`
           );
         }
       } catch (voiceError) {
         console.log(
-          `🔊 [VOICE] Worker ${workerId} - ❌ Error getting user voice (using default):`,
-          voiceError.message
+          `🔊 [VOICE] ❌ Error getting user voice (using default): ${voiceError.message}`
         );
       }
 
@@ -1614,12 +1601,8 @@ async function processQueueItem(queueItem, workerId = "unknown") {
         ? `&user_voice_id=${encodeURIComponent(selectedVoiceId)}`
         : "";
 
-      console.log(
-        `🔊 [VOICE] Worker ${workerId} - Final voice parameter: "${voiceParam}"`
-      );
-      console.log(
-        `🔊 [VOICE] Worker ${workerId} - Selected voice ID: "${selectedVoiceId}"`
-      );
+      console.log(`🔊 [VOICE] Final voice parameter: "${voiceParam}"`);
+      console.log(`🔊 [VOICE] Selected voice ID: "${selectedVoiceId}"`);
 
       call = await twilioClientToUse.calls.create({
         from: fromPhoneNumber,
@@ -2034,10 +2017,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     user_voice_id,
   } = request.query;
 
-  console.log(
-    `🔊 [TWiML] Received outbound-call-twiml request with user_voice_id: "${user_voice_id}"`
-  );
-  console.log(`🔊 [TWiML] All query parameters:`, request.query);
+  console.log(`🔊 [TWiML] Received user_voice_id: "${user_voice_id}"`);
 
   // Función para escapar caracteres especiales en XML
   const escapeXml = (str) => {
@@ -2080,12 +2060,6 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
         </Stream>
       </Connect>
     </Response>`;
-
-  console.log(
-    `🔊 [TWiML] Generated TwiML with user_voice_id parameter: "${escapeXml(
-      user_voice_id
-    )}"`
-  );
 
   reply.type("text/xml").send(twimlResponse);
 });
@@ -2222,9 +2196,6 @@ fastify.register(async (fastifyInstance) => {
 
           elevenLabsWs.on("open", () => {
             console.log("[ElevenLabs] Connected to Conversational AI");
-            console.log(
-              "[ElevenLabs] Initializing conversation with ULTRA-AGGRESSIVE interruptions"
-            );
 
             const initialConfig = {
               type: "conversation_initiation_client_data",
@@ -2268,52 +2239,12 @@ fastify.register(async (fastifyInstance) => {
             };
 
             console.log(
-              "🔧 [ElevenLabs] Initial config with ULTRA-AGGRESSIVE interruptions:"
-            );
-            console.log("🎯 Interruption Settings:");
-            console.log("   • Enabled: true");
-            console.log("   • Sensitivity: low");
-            console.log("   • Min Duration: 1.0s");
-            console.log("   • Max Duration: 3.0s");
-            console.log("   • Cooldown: 2.0s");
-            console.log(
-              "📅 [ElevenLabs] calendar_availability value:",
-              initialConfig.dynamic_variables.calendar_availability
+              `🔊 [ElevenLabs] Sending voice_id: "${initialConfig.conversation_config_override.voice_id}"`
             );
             console.log(
-              "🌍 [ElevenLabs] calendar_timezone value:",
-              initialConfig.dynamic_variables.calendar_timezone
+              `🔊 [ElevenLabs] Full config sent to ElevenLabs:`,
+              JSON.stringify(initialConfig, null, 2)
             );
-            console.log(
-              "📞 [ElevenLabs] client_phone value:",
-              initialConfig.dynamic_variables.client_phone
-            );
-            console.log(
-              "📧 [ElevenLabs] client_email value:",
-              initialConfig.dynamic_variables.client_email
-            );
-            console.log(
-              `🔊 [ElevenLabs] voice_id value: "${initialConfig.conversation_config_override.voice_id}"`
-            );
-            console.log(
-              `🔊 [ElevenLabs] user_voice_id from customParameters: "${customParameters?.user_voice_id}"`
-            );
-            console.log(
-              `🔊 [ElevenLabs] voice_id from customParameters: "${customParameters?.voice_id}"`
-            );
-            console.log(
-              "📋 [ElevenLabs] Full dynamic_variables:",
-              JSON.stringify(initialConfig.dynamic_variables, null, 2)
-            );
-            console.log(JSON.stringify(initialConfig, null, 2));
-
-            // Log the first message that will be spoken
-            if (customParameters?.first_message) {
-              console.log(
-                "🎯 [AGENT] First message to be spoken:",
-                customParameters.first_message
-              );
-            }
 
             // Verificar que el WebSocket esté abierto antes de enviar
             if (elevenLabsWs.readyState === WebSocket.OPEN) {
@@ -3125,18 +3056,7 @@ fastify.register(async (fastifyInstance) => {
               customParameters = msg.start.customParameters;
 
               console.log(
-                "🔍 [WebSocket] Received customParameters from Twilio:"
-              );
-              console.log(
-                "📋 customParameters:",
-                JSON.stringify(customParameters, null, 2)
-              );
-              console.log(
-                "📅 calendar_availability:",
-                customParameters?.calendar_availability
-              );
-              console.log(
-                `🔊 [WebSocket] user_voice_id from customParameters: "${customParameters?.user_voice_id}"`
+                `🔊 [WebSocket] Received user_voice_id: "${customParameters?.user_voice_id}"`
               );
 
               // Setup ElevenLabs AFTER receiving customParameters
