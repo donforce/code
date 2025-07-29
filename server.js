@@ -2232,6 +2232,10 @@ fastify.register(async (fastifyInstance) => {
                 agent: {
                   agent_id: ELEVENLABS_AGENT_ID,
                 },
+                voice_id:
+                  customParameters?.user_voice_id ||
+                  customParameters?.voice_id ||
+                  "",
                 keep_alive: true,
                 interruption_settings: {
                   enabled: true,
@@ -2257,10 +2261,6 @@ fastify.register(async (fastifyInstance) => {
                   "Disponible todos los dias",
                 calendar_timezone:
                   customParameters?.calendar_timezone || "America/New_York",
-                voice_id:
-                  customParameters?.user_voice_id ||
-                  customParameters?.voice_id ||
-                  "",
               },
               usage: {
                 no_ip_reason: "user_ip_not_collected",
@@ -2293,7 +2293,7 @@ fastify.register(async (fastifyInstance) => {
               initialConfig.dynamic_variables.client_email
             );
             console.log(
-              `🔊 [ElevenLabs] voice_id value: "${initialConfig.dynamic_variables.voice_id}"`
+              `🔊 [ElevenLabs] voice_id value: "${initialConfig.conversation_config_override.voice_id}"`
             );
             console.log(
               `🔊 [ElevenLabs] user_voice_id from customParameters: "${customParameters?.user_voice_id}"`
