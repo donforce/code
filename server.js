@@ -1595,7 +1595,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       }
 
       const voiceParam = selectedVoiceId
-        ? `&voice_id=${encodeURIComponent(selectedVoiceId)}`
+        ? `&user_voice_id=${encodeURIComponent(selectedVoiceId)}`
         : "";
 
       call = await twilioClientToUse.calls.create({
