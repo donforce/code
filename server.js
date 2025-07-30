@@ -1564,6 +1564,53 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       console.log(`🔊 [VOICE] Final voice parameter: "${voiceParam}"`);
       console.log(`🔊 [VOICE] Selected voice ID: "${selectedVoiceId}"`);
 
+      // Obtener preguntas personalizadas del usuario para custom_llm_extra_body
+      let customLlmPrompt = null;
+      try {
+        const { data: questionsData, error: questionsError } = await supabase
+          .from("agent_questions")
+          .select("question_text, question_type, is_required, order_index")
+          .eq("is_active", true)
+          .order("order_index", { ascending: true });
+
+        if (!questionsError && questionsData && questionsData.length > 0) {
+          const questionsList = questionsData
+            .map((q, index) => `${index + 1}. ${q.question_text}`)
+            .join("\n");
+
+          customLlmPrompt = `Durante el paso 1 (Descubrir Interés y Necesidades), inicia siempre preguntando con frases como: ¿Estás buscando mudarte o hacer una inversión? o ¿Qué tipo de propiedad estás buscando?.
+
+Luego, asegúrate de hacer las siguientes preguntas específicas:
+${questionsList}
+
+No avances al paso 2 hasta obtener una respuesta clara. Varía las preguntas para evitar repetición y mantén un tono profesional y cálido.`;
+
+          console.log(
+            `🤖 [CUSTOM_LLM] ✅ Custom prompt built with ${questionsData.length} questions`
+          );
+        } else {
+          console.log(
+            `🤖 [CUSTOM_LLM] ❌ No custom questions found. Error: ${
+              questionsError?.message || "No questions data"
+            }`
+          );
+        }
+      } catch (questionsError) {
+        console.log(
+          `🤖 [CUSTOM_LLM] ❌ Error getting custom questions: ${questionsError.message}`
+        );
+      }
+
+      const customLlmParam = customLlmPrompt
+        ? `&custom_llm_prompt=${encodeURIComponent(customLlmPrompt)}`
+        : "";
+
+      console.log(
+        `�� [CUSTOM_LLM] Final custom LLM parameter: "${
+          customLlmParam ? "Present" : "Not present"
+        }"`
+      );
+
       call = await twilioClientToUse.calls.create({
         from: fromPhoneNumber,
         to: queueItem.lead.phone,
@@ -1583,7 +1630,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
           agentName
         )}&assistant_name=${encodeURIComponent(
           userData.assistant_name
-        )}&calendar_availability=${availabilityParam}&calendar_timezone=${timezoneParam}${voiceParam}`,
+        )}&calendar_availability=${availabilityParam}&calendar_timezone=${timezoneParam}${voiceParam}${customLlmParam}`,
         statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
         statusCallbackEvent: ["completed"],
         statusCallbackMethod: "POST",
@@ -1961,6 +2008,7 @@ fastify.post("/outbound-call", async (request, reply) => {
 // Your existing outbound-call-twiml endpoint
 fastify.all("/outbound-call-twiml", async (request, reply) => {
   const {
+    custom_llm_prompt,
     prompt,
     first_message,
     client_name,
@@ -2017,6 +2065,9 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
             calendar_timezone || "America/New_York"
           )}" />
           <Parameter name="user_voice_id" value="${escapeXml(user_voice_id)}" />
+          <Parameter name="custom_llm_prompt" value="${escapeXml(
+            custom_llm_prompt || ""
+          )}" />
         </Stream>
       </Connect>
     </Response>`;
@@ -2170,6 +2221,11 @@ fastify.register(async (fastifyInstance) => {
                     "",
                 },
                 keep_alive: true,
+                custom_llm_extra_body: customParameters?.custom_llm_prompt
+                  ? {
+                      custom_llm_prompt: customParameters.custom_llm_prompt,
+                    }
+                  : null,
                 interruption_settings: {
                   enabled: true,
                   sensitivity: "medium", // Cambiar a baja sensibilidad para reducir falsos positivos
