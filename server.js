@@ -2219,11 +2219,7 @@ fastify.register(async (fastifyInstance) => {
                     "",
                 },
                 keep_alive: true,
-                custom_llm_extra_body: customParameters?.custom_llm_prompt
-                  ? {
-                      system_prompt: customParameters.custom_llm_prompt,
-                    }
-                  : null,
+
                 interruption_settings: {
                   enabled: true,
                   sensitivity: "medium", // Cambiar a baja sensibilidad para reducir falsos positivos
@@ -2248,6 +2244,7 @@ fastify.register(async (fastifyInstance) => {
                   "Disponible todos los dias",
                 calendar_timezone:
                   customParameters?.calendar_timezone || "America/New_York",
+                preguntas: customParameters?.custom_llm_prompt || "",
               },
               usage: {
                 no_ip_reason: "user_ip_not_collected",
