@@ -1578,12 +1578,10 @@ async function processQueueItem(queueItem, workerId = "unknown") {
             .map((q, index) => `${index + 1}. ${q.question_text}`)
             .join("\n");
 
-          customLlmPrompt = `Durante el paso 1 (Descubrir Interés y Necesidades), inicia siempre preguntando con frases como: ¿Estás buscando mudarte o hacer una inversión? o ¿Qué tipo de propiedad estás buscando?.
-
-Luego, asegúrate de hacer las siguientes preguntas específicas:
+          customLlmPrompt = `Durante el paso 1 (Descubrir Interés y Necesidades), asegúrate de hacer las siguientes preguntas siempre teniendo en cuenta la respuesta a cada una cuando formules la proxima pregunta:
 ${questionsList}
 
-No avances al paso 2 hasta obtener una respuesta clara. Varía las preguntas para evitar repetición y mantén un tono profesional y cálido.`;
+No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varía las preguntas para evitar repetición y mantén un tono profesional y cálido.`;
 
           console.log(
             `🤖 [CUSTOM_LLM] ✅ Custom prompt built with ${questionsData.length} questions`
@@ -2223,7 +2221,7 @@ fastify.register(async (fastifyInstance) => {
                 keep_alive: true,
                 custom_llm_extra_body: customParameters?.custom_llm_prompt
                   ? {
-                      custom_llm_prompt: customParameters.custom_llm_prompt,
+                      system_prompt: customParameters.custom_llm_prompt,
                     }
                   : null,
                 interruption_settings: {
