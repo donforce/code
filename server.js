@@ -2163,10 +2163,12 @@ fastify.register(async (fastifyInstance) => {
                 agent: {
                   agent_id: ELEVENLABS_AGENT_ID,
                 },
-                voice_id:
-                  customParameters?.user_voice_id ||
-                  customParameters?.voice_id ||
-                  "",
+                tts: {
+                  voice_id:
+                    customParameters?.user_voice_id ||
+                    customParameters?.voice_id ||
+                    "",
+                },
                 keep_alive: true,
                 interruption_settings: {
                   enabled: true,
@@ -2198,9 +2200,6 @@ fastify.register(async (fastifyInstance) => {
               },
             };
 
-            console.log(
-              `🔊 [ElevenLabs] Sending voice_id: "${initialConfig.conversation_config_override.voice_id}"`
-            );
             console.log(
               `🔊 [ElevenLabs] Full config sent to ElevenLabs:`,
               JSON.stringify(initialConfig, null, 2)
