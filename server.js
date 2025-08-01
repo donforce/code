@@ -10,6 +10,7 @@ import { createClient } from "@supabase/supabase-js";
 import os from "os";
 import { performance } from "perf_hooks";
 import crypto from "crypto";
+import { sendCallCompletionData } from "./webhook-handlers.js";
 
 dotenv.config();
 
@@ -3801,6 +3802,8 @@ fastify.post("/twilio-status", async (request, reply) => {
       }
     }
 
+    // Run async webhook/meta events after updating call status
+    sendCallCompletionData(supabase, callSid);
     // Return 200 OK with empty response as Twilio expects
     reply.code(200).send();
   } catch (error) {
