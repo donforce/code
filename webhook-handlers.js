@@ -61,8 +61,79 @@ async function sendWebhookData(supabase, callData, leadData, userData) {
       timestamp: new Date().toISOString(),
     };
 
+    // 🆕 FUNCIÓN PARA LOGGING ASÍNCRONO DE WEBHOOKS
+    const logWebhookCall = async (
+      integration,
+      response,
+      error,
+      executionTime
+    ) => {
+      try {
+        const logData = {
+          user_id: userData.id,
+          webhook_integration_id: integration.id,
+          webhook_name: integration.name,
+          webhook_url: integration.webhook_url,
+          call_id: callData.id,
+          call_sid: callData.call_sid,
+          lead_id: leadData.id,
+          request_payload: webhookPayload,
+          execution_time_ms: executionTime,
+          created_at: new Date().toISOString(),
+        };
+
+        if (error) {
+          logData.error_message = error.message || error.toString();
+          logData.response_status = null;
+          logData.response_body = null;
+          logData.response_headers = null;
+        } else if (response) {
+          logData.response_status = response.status;
+          logData.response_body = response.body || null;
+          logData.response_headers = response.headers || null;
+          logData.error_message = null;
+        }
+
+        // 🆕 INSERTAR LOG DE FORMA ASÍNCRONA (no esperar respuesta)
+        setImmediate(async () => {
+          try {
+            const { error: logError } = await supabase
+              .from("webhook_logs")
+              .insert(logData);
+
+            if (logError) {
+              console.error(
+                `[WEBHOOK LOG] Error saving log for ${integration.name}:`,
+                logError
+              );
+            } else {
+              console.log(
+                `[WEBHOOK LOG] Log saved for ${integration.name} - Status: ${
+                  logData.response_status || "ERROR"
+                }`
+              );
+            }
+          } catch (logErr) {
+            console.error(
+              `[WEBHOOK LOG] Exception saving log for ${integration.name}:`,
+              logErr
+            );
+          }
+        });
+      } catch (logErr) {
+        console.error(
+          `[WEBHOOK LOG] Error preparing log for ${integration.name}:`,
+          logErr
+        );
+      }
+    };
+
     // Enviar a cada webhook de forma asíncrona
     const webhookPromises = integrations.map(async (integration) => {
+      const startTime = Date.now();
+      let response = null;
+      let error = null;
+
       try {
         console.log(
           `[WEBHOOK] Sending to ${integration.name}: ${integration.webhook_url}`
@@ -99,45 +170,62 @@ async function sendWebhookData(supabase, callData, leadData, userData) {
           }
         }
 
-        // Preparar payload según el tipo de contenido
-        let payload;
-        if (integration.content_type === "application/x-www-form-urlencoded") {
-          payload = new URLSearchParams();
-          Object.entries(webhookPayload).forEach(([key, value]) => {
-            payload.append(key, JSON.stringify(value));
-          });
-        } else {
-          payload = JSON.stringify(webhookPayload);
-        }
+        // Enviar request con timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 segundos timeout
 
-        // Enviar webhook
-        const response = await fetch(integration.webhook_url, {
+        response = await fetch(integration.webhook_url, {
           method: "POST",
           headers,
-          body: payload,
-          timeout: 10000, // 10 segundos de timeout
+          body: JSON.stringify(webhookPayload),
+          signal: controller.signal,
         });
 
-        if (response.ok) {
-          console.log(`[WEBHOOK] Successfully sent to ${integration.name}`);
-        } else {
-          console.error(
-            `[WEBHOOK] Failed to send to ${integration.name}: ${response.status} ${response.statusText}`
-          );
-        }
-      } catch (error) {
+        clearTimeout(timeoutId);
+
+        const responseBody = await response.text();
+
+        console.log(
+          `[WEBHOOK] Response from ${integration.name}: ${
+            response.status
+          } - ${responseBody.substring(0, 100)}...`
+        );
+
+        // 🆕 LOGGING ASÍNCRONO - No esperar respuesta
+        const executionTime = Date.now() - startTime;
+        await logWebhookCall(
+          integration,
+          {
+            status: response.status,
+            body: responseBody,
+            headers: Object.fromEntries(response.headers.entries()),
+          },
+          null,
+          executionTime
+        );
+      } catch (err) {
+        error = err;
+        const executionTime = Date.now() - startTime;
+
         console.error(
           `[WEBHOOK] Error sending to ${integration.name}:`,
-          error.message
+          err.message
         );
+
+        // 🆕 LOGGING ASÍNCRONO DEL ERROR - No esperar respuesta
+        await logWebhookCall(integration, null, err, executionTime);
       }
     });
 
-    // Ejecutar todos los webhooks en paralelo
-    await Promise.allSettled(webhookPromises);
-    console.log(
-      `[WEBHOOK] Completed sending to ${integrations.length} webhooks (excluding Meta Events)`
-    );
+    // 🆕 EJECUTAR TODOS LOS WEBHOOKS EN PARALELO SIN ESPERAR RESPUESTAS
+    Promise.allSettled(webhookPromises).then((results) => {
+      const successful = results.filter((r) => r.status === "fulfilled").length;
+      const failed = results.filter((r) => r.status === "rejected").length;
+
+      console.log(
+        `[WEBHOOK] Completed: ${successful} successful, ${failed} failed webhook calls`
+      );
+    });
   } catch (error) {
     console.error("[WEBHOOK] Error in sendWebhookData:", error);
   }
@@ -203,8 +291,79 @@ async function sendMetaEvents(supabase, callData, leadData, userData) {
       ],
     };
 
+    // 🆕 FUNCIÓN PARA LOGGING ASÍNCRONO DE META EVENTS
+    const logMetaEvent = async (
+      integration,
+      response,
+      error,
+      executionTime
+    ) => {
+      try {
+        const logData = {
+          user_id: userData.id,
+          webhook_integration_id: integration.id,
+          webhook_name: `${integration.name} (Meta Pixel)`,
+          webhook_url: `https://graph.facebook.com/v18.0/${integration.meta_pixel_id}/events`,
+          call_id: callData.id,
+          call_sid: callData.call_sid,
+          lead_id: leadData.id,
+          request_payload: metaPayload,
+          execution_time_ms: executionTime,
+          created_at: new Date().toISOString(),
+        };
+
+        if (error) {
+          logData.error_message = error.message || error.toString();
+          logData.response_status = null;
+          logData.response_body = null;
+          logData.response_headers = null;
+        } else if (response) {
+          logData.response_status = response.status;
+          logData.response_body = response.body || null;
+          logData.response_headers = response.headers || null;
+          logData.error_message = null;
+        }
+
+        // 🆕 INSERTAR LOG DE FORMA ASÍNCRONA (no esperar respuesta)
+        setImmediate(async () => {
+          try {
+            const { error: logError } = await supabase
+              .from("webhook_logs")
+              .insert(logData);
+
+            if (logError) {
+              console.error(
+                `[META LOG] Error saving log for ${integration.name}:`,
+                logError
+              );
+            } else {
+              console.log(
+                `[META LOG] Log saved for ${integration.name} - Status: ${
+                  logData.response_status || "ERROR"
+                }`
+              );
+            }
+          } catch (logErr) {
+            console.error(
+              `[META LOG] Exception saving log for ${integration.name}:`,
+              logErr
+            );
+          }
+        });
+      } catch (logErr) {
+        console.error(
+          `[META LOG] Error preparing log for ${integration.name}:`,
+          logErr
+        );
+      }
+    };
+
     // Enviar a cada integración de Meta de forma asíncrona
     const metaPromises = integrations.map(async (integration) => {
+      const startTime = Date.now();
+      let response = null;
+      let error = null;
+
       try {
         console.log(
           `[META] Sending event to pixel ${integration.meta_pixel_id}`
@@ -212,41 +371,84 @@ async function sendMetaEvents(supabase, callData, leadData, userData) {
 
         const metaUrl = `https://graph.facebook.com/v18.0/${integration.meta_pixel_id}/events?access_token=${integration.meta_access_token}`;
 
-        const response = await fetch(metaUrl, {
+        // Enviar request con timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 segundos timeout
+
+        response = await fetch(metaUrl, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(metaPayload),
-          timeout: 10000, // 10 segundos de timeout
+          signal: controller.signal,
         });
 
+        clearTimeout(timeoutId);
+
+        const responseBody = await response.text();
+
         if (response.ok) {
-          const result = await response.json();
+          const result = JSON.parse(responseBody);
           console.log(
             `[META] Successfully sent event to pixel ${integration.meta_pixel_id}:`,
             result
           );
+
+          // 🆕 LOGGING ASÍNCRONO - No esperar respuesta
+          const executionTime = Date.now() - startTime;
+          await logMetaEvent(
+            integration,
+            {
+              status: response.status,
+              body: responseBody,
+              headers: Object.fromEntries(response.headers.entries()),
+            },
+            null,
+            executionTime
+          );
         } else {
-          const errorText = await response.text();
           console.error(
             `[META] Failed to send event to pixel ${integration.meta_pixel_id}: ${response.status} ${response.statusText}`,
-            errorText
+            responseBody
+          );
+
+          // 🆕 LOGGING ASÍNCRONO DEL ERROR - No esperar respuesta
+          const executionTime = Date.now() - startTime;
+          await logMetaEvent(
+            integration,
+            {
+              status: response.status,
+              body: responseBody,
+              headers: Object.fromEntries(response.headers.entries()),
+            },
+            null,
+            executionTime
           );
         }
-      } catch (error) {
+      } catch (err) {
+        error = err;
+        const executionTime = Date.now() - startTime;
+
         console.error(
           `[META] Error sending event to pixel ${integration.meta_pixel_id}:`,
-          error.message
+          err.message
         );
+
+        // 🆕 LOGGING ASÍNCRONO DEL ERROR - No esperar respuesta
+        await logMetaEvent(integration, null, err, executionTime);
       }
     });
 
-    // Ejecutar todos los envíos de Meta en paralelo
-    await Promise.allSettled(metaPromises);
-    console.log(
-      `[META] Completed sending events to ${integrations.length} Meta pixels`
-    );
+    // 🆕 EJECUTAR TODOS LOS META EVENTS EN PARALELO SIN ESPERAR RESPUESTAS
+    Promise.allSettled(metaPromises).then((results) => {
+      const successful = results.filter((r) => r.status === "fulfilled").length;
+      const failed = results.filter((r) => r.status === "rejected").length;
+
+      console.log(
+        `[META] Completed: ${successful} successful, ${failed} failed Meta events`
+      );
+    });
   } catch (error) {
     console.error("[META] Error in sendMetaEvents:", error);
   }
