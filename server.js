@@ -127,7 +127,7 @@ const QUEUE_CONFIG = {
 
 // Optimized tracking with WeakMap for better memory management
 const globalActiveCalls = new Map();
-const userActiveCalls = new Map();
+const userActiveCalls = new Map(); // Map<userId, number> - Count of active calls per user
 const workerPool = new Set();
 const processingQueueItems = new Set(); // Track items being processed to prevent duplicates
 
@@ -522,7 +522,7 @@ async function processAllPendingQueues() {
     const userPriority = [];
 
     for (const [userId, items] of userQueues) {
-      const hasActiveCalls = userActiveCalls.has(userId);
+      const hasActiveCalls = (userActiveCalls.get(userId) || 0) > 0;
       const queueLength = items.length;
       const user = usersMap.get(userId);
 
@@ -555,7 +555,7 @@ async function processAllPendingQueues() {
 
       // Calculate how many slots this user can use
       const currentUserSlots = userSlotCount.get(userData.userId) || 0;
-      const userActiveCallCount = userActiveCalls.has(userData.userId) ? 1 : 0;
+      const userActiveCallCount = userActiveCalls.get(userData.userId) || 0;
 
       // User can use up to maxCallsPerUser, but needs 60 minutes per additional call
       const maxSlotsForUser = Math.min(
@@ -638,7 +638,7 @@ async function processQueueItemWithRetry(queueItem, attempt = 1) {
       return false;
     }
 
-    if (userActiveCalls.has(queueItem.user_id)) {
+    if ((userActiveCalls.get(queueItem.user_id) || 0) >= QUEUE_CONFIG.maxCallsPerUser) {
       return false;
     }
 
@@ -1445,7 +1445,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     }
 
     // Mark user as having active call (global tracking)
-    userActiveCalls.set(queueItem.user_id, true);
+    userActiveCalls.set(queueItem.user_id, (userActiveCalls.get(queueItem.user_id) || 0) + 1);
 
     // Create agent_firstname from first_name and agent_name from full name
     const agentFirstName = userData.first_name || "Agente";
@@ -1720,7 +1720,7 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
         .eq("id", queueItem.id);
 
       // Release user tracking
-      userActiveCalls.delete(queueItem.user_id);
+      const currentCount = userActiveCalls.get(queueItem.user_id) || 0; if (currentCount <= 1) { userActiveCalls.delete(queueItem.user_id); } else { userActiveCalls.set(queueItem.user_id, currentCount - 1); }
       activeCalls--;
 
       return false;
@@ -1762,7 +1762,7 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
     console.error(`[Queue] Worker ${workerId} - Error processing call:`, error);
 
     // Release user and global tracking in case of error
-    userActiveCalls.delete(queueItem.user_id);
+    const currentCount = userActiveCalls.get(queueItem.user_id) || 0; if (currentCount <= 1) { userActiveCalls.delete(queueItem.user_id); } else { userActiveCalls.set(queueItem.user_id, currentCount - 1); }
 
     // Update queue item with error
     try {
@@ -3371,7 +3371,7 @@ async function cleanupStuckCalls() {
 
           // Remove from global tracking
           globalActiveCalls.delete(call.call_sid);
-          if (call.user_id) userActiveCalls.delete(call.user_id);
+          if (call.user_id) { const currentCount = userActiveCalls.get(call.user_id) || 0; if (currentCount <= 1) { userActiveCalls.delete(call.user_id); } else { userActiveCalls.set(call.user_id, currentCount - 1); } }
           activeCalls--;
 
           // Update associated queue item if exists
@@ -3433,7 +3433,7 @@ async function cleanupStuckCalls() {
 
               // Remove from global tracking
               globalActiveCalls.delete(call.call_sid);
-              if (call.user_id) userActiveCalls.delete(call.user_id);
+              if (call.user_id) { const currentCount = userActiveCalls.get(call.user_id) || 0; if (currentCount <= 1) { userActiveCalls.delete(call.user_id); } else { userActiveCalls.set(call.user_id, currentCount - 1); } }
               activeCalls--;
             } catch (hangupError) {
               console.error(
@@ -3494,7 +3494,7 @@ async function cleanupStuckCalls() {
 
         // Remove from global tracking
         globalActiveCalls.delete(call.call_sid);
-        if (call.user_id) userActiveCalls.delete(call.user_id);
+        if (call.user_id) { const currentCount = userActiveCalls.get(call.user_id) || 0; if (currentCount <= 1) { userActiveCalls.delete(call.user_id); } else { userActiveCalls.set(call.user_id, currentCount - 1); } }
         activeCalls--;
       }
     }
@@ -3782,8 +3782,14 @@ fastify.post("/twilio-status", async (request, reply) => {
 
     // Remove from global tracking
     globalActiveCalls.delete(callSid);
-    if (existingCall && existingCall.user_id)
-      userActiveCalls.delete(existingCall.user_id);
+    if (existingCall && existingCall.user_id) {
+      const currentCount = userActiveCalls.get(existingCall.user_id) || 0;
+      if (currentCount <= 1) {
+        userActiveCalls.delete(existingCall.user_id);
+      } else {
+        userActiveCalls.set(existingCall.user_id, currentCount - 1);
+      }
+    }
     activeCalls--;
 
     // Deduct minutes from user's available time if call was successful
