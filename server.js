@@ -2270,7 +2270,7 @@ fastify.register(async (fastifyInstance) => {
         ) {
           // Enviar todos los chunks del buffer
           audioBuffer.forEach((chunk) => {
-            newWs.send(
+            elevenLabsConnections.get(callSid)?.send(
               JSON.stringify({
                 type: "user_audio_chunk",
                 user_audio_chunk: chunk,
