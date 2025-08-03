@@ -1605,7 +1605,7 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
         : "";
 
       console.log(
-        `�� [CUSTOM_LLM] Final custom LLM parameter: "${
+        ` [CUSTOM_LLM] Final custom LLM parameter: "${
           customLlmParam ? "Present" : "Not present"
         }"`
       );
@@ -2097,7 +2097,94 @@ fastify.register(async (fastifyInstance) => {
       let bufferSize = 5; // Número de chunks a acumular antes de enviar (aumentado de 3 a 5 para mayor estabilidad)
       let bufferTimeout = null; // Timeout para enviar buffer parcial
 
+      // 🆕 NUEVAS VARIABLES PARA MEJORAR DETECCIÓN DE DUPLICADOS
+      let lastAudioHash = null; // Hash del último chunk de audio enviado
+      let consecutiveDuplicates = 0; // Contador de duplicados consecutivos
+      let maxConsecutiveDuplicates = 3; // Máximo de duplicados consecutivos permitidos
+      let audioSequenceId = 0; // ID secuencial para tracking de chunks
+      let lastProcessedSequence = -1; // Último sequence ID procesado
+      let audioChunkTimestamps = new Map(); // Timestamps de chunks para detectar duplicados temporales
+      let duplicateDetectionWindow = 1000; // Ventana de 1 segundo para detectar duplicados
+
       ws.on("error", console.error);
+
+      // 🆕 FUNCIÓN PARA GENERAR HASH DE AUDIO
+      const generateAudioHash = (audioChunk) => {
+        // Crear un hash simple del chunk de audio para detectar duplicados
+        let hash = 0;
+        for (let i = 0; i < Math.min(audioChunk.length, 100); i++) {
+          const char = audioChunk.charCodeAt(i);
+          hash = (hash << 5) - hash + char;
+          hash = hash & hash; // Convertir a 32-bit integer
+        }
+        return hash.toString();
+      };
+
+      // 🆕 FUNCIÓN PARA VERIFICAR SI UN CHUNK ES DUPLICADO
+      const isDuplicateAudioChunk = (audioChunk) => {
+        const now = Date.now();
+        const audioHash = generateAudioHash(audioChunk);
+
+        // Verificar si ya existe en el Set
+        if (sentAudioChunks.has(audioChunk)) {
+          return true;
+        }
+
+        // Verificar si el hash es igual al anterior
+        if (lastAudioHash === audioHash) {
+          consecutiveDuplicates++;
+          if (consecutiveDuplicates > maxConsecutiveDuplicates) {
+            console.log(
+              `[Audio] Too many consecutive duplicates (${consecutiveDuplicates}), skipping`
+            );
+            return true;
+          }
+        } else {
+          consecutiveDuplicates = 0;
+        }
+
+        // Verificar duplicados temporales (mismo audio en ventana de tiempo)
+        const existingTimestamp = audioChunkTimestamps.get(audioHash);
+        if (
+          existingTimestamp &&
+          now - existingTimestamp < duplicateDetectionWindow
+        ) {
+          console.log(`[Audio] Temporal duplicate detected, skipping`);
+          return true;
+        }
+
+        // Actualizar tracking
+        lastAudioHash = audioHash;
+        audioChunkTimestamps.set(audioHash, now);
+
+        // Limpiar timestamps antiguos
+        for (const [hash, timestamp] of audioChunkTimestamps.entries()) {
+          if (now - timestamp > duplicateDetectionWindow) {
+            audioChunkTimestamps.delete(hash);
+          }
+        }
+
+        return false;
+      };
+
+      // 🆕 FUNCIÓN PARA LIMPIAR ESTADO DE AUDIO
+      const clearAudioState = () => {
+        sentAudioChunks.clear();
+        audioChunkCounter = 0;
+        audioBuffer = [];
+        lastAudioHash = null;
+        consecutiveDuplicates = 0;
+        audioSequenceId = 0;
+        lastProcessedSequence = -1;
+        audioChunkTimestamps.clear();
+
+        if (bufferTimeout) {
+          clearTimeout(bufferTimeout);
+          bufferTimeout = null;
+        }
+
+        console.log("[Audio] Audio state cleared");
+      };
 
       // Función para detectar silencios largos
       const checkForLongSilence = () => {
@@ -2223,10 +2310,10 @@ fastify.register(async (fastifyInstance) => {
 
                 interruption_settings: {
                   enabled: true,
-                  sensitivity: "medium", // Cambiar a baja sensibilidad para reducir falsos positivos
-                  min_duration: 0.7, // Aumentar a 0.7 segundo para evitar interrupciones muy cortas
-                  max_duration: 2.5, // Reducir a 2.5 segundos máximo
-                  cooldown_period: 1.0, // Aumentar cooldown para más estabilidad
+                  sensitivity: "low", // 🆕 CAMBIADO: Baja sensibilidad para reducir falsos positivos
+                  min_duration: 1.0, // 🆕 AUMENTADO: 1 segundo mínimo para evitar interrupciones muy cortas
+                  max_duration: 3.0, // 🆕 AUMENTADO: 3 segundos máximo para mayor estabilidad
+                  cooldown_period: 1.5, // 🆕 AUMENTADO: 1.5 segundos de cooldown para más estabilidad
                 },
               },
               dynamic_variables: {
@@ -2321,7 +2408,7 @@ fastify.register(async (fastifyInstance) => {
                         message.audio_event?.audio_base_64;
 
                       // Verificar si este audio ya fue enviado
-                      if (!sentAudioChunks.has(audioPayload)) {
+                      if (!isDuplicateAudioChunk(audioPayload)) {
                         sentAudioChunks.add(audioPayload);
                         audioChunkCounter++;
 
@@ -2431,12 +2518,8 @@ fastify.register(async (fastifyInstance) => {
                       "🚨 [INTERRUPTION] Interruption event received"
                     );
                     interrupted = true;
-                    // Limpiar buffer durante interrupciones
-                    audioBuffer = [];
-                    if (bufferTimeout) {
-                      clearTimeout(bufferTimeout);
-                      bufferTimeout = null;
-                    }
+                    // 🆕 MEJORADO: Limpiar estado completo durante interrupciones
+                    clearAudioState();
                     // Solo enviar clear si no estamos en modo de detección de buzón de voz
                     if (!isVoicemailDetectionMode) {
                       sendClearToTwilio(streamSid);
@@ -3010,27 +3093,14 @@ fastify.register(async (fastifyInstance) => {
               console.error("[ElevenLabs] WebSocket error:", error);
 
               // Limpiar chunks de audio en caso de error
-              sentAudioChunks.clear();
-              audioChunkCounter = 0;
-              audioBuffer = [];
-              if (bufferTimeout) {
-                clearTimeout(bufferTimeout);
-                bufferTimeout = null;
-              }
-              console.log(
-                "[Audio] Cleaned audio chunks and buffer on ElevenLabs error"
-              );
+              clearAudioState();
             });
 
             elevenLabsWs.on("close", async () => {
               console.log("[ElevenLabs] Disconnected");
 
               // Limpiar chunks de audio al desconectar ElevenLabs
-              sentAudioChunks.clear();
-              audioChunkCounter = 0;
-              console.log(
-                "[Audio] Cleaned audio chunks on ElevenLabs disconnect"
-              );
+              clearAudioState();
 
               if (callSid) {
                 try {
@@ -3088,16 +3158,25 @@ fastify.register(async (fastifyInstance) => {
                 }
 
                 // Verificar si este chunk de audio ya fue enviado (solo si no está interrumpido)
-                if (!interrupted && !sentAudioChunks.has(audioChunk)) {
+                if (!interrupted && !isDuplicateAudioChunk(audioChunk)) {
                   sentAudioChunks.add(audioChunk);
                   audioChunkCounter++;
 
-                  // Limpiar el Set cada 100 chunks para evitar problemas de memoria
-                  if (audioChunkCounter > 100) {
-                    sentAudioChunks.clear();
-                    audioChunkCounter = 0;
-                    console.log("[Audio] Cleaned audio chunks cache");
+                  // 🆕 TRACKING DE SECUENCIA PARA EVITAR CHUNKS FUERA DE ORDEN
+                  audioSequenceId++;
+                  const currentSequence = audioSequenceId;
+
+                  // Verificar que no estamos procesando chunks muy antiguos
+                  if (
+                    lastProcessedSequence > 0 &&
+                    currentSequence - lastProcessedSequence > 50
+                  ) {
+                    console.log(
+                      `[Audio] Skipping out-of-order chunk: current=${currentSequence}, last=${lastProcessedSequence}`
+                    );
+                    break;
                   }
+                  lastProcessedSequence = currentSequence;
 
                   // Actualizar timestamp de audio para control de silencios
                   lastAudioTime = Date.now();
@@ -3128,16 +3207,27 @@ fastify.register(async (fastifyInstance) => {
                       `[Audio] Processed ${audioChunkCounter} audio chunks, buffer size: ${audioBuffer.length}`
                     );
                   }
+
+                  // 🆕 LOGGING MEJORADO PARA DEBUGGING DE DUPLICADOS
+                  if (consecutiveDuplicates > 0) {
+                    console.log(
+                      `[Audio] Consecutive duplicates: ${consecutiveDuplicates}/${maxConsecutiveDuplicates}`
+                    );
+                  }
+
+                  // 🆕 LIMPIEZA PERIÓDICA DEL CACHE DE AUDIO
+                  if (audioChunkCounter > 100) {
+                    // Limpiar solo el Set, mantener el contador
+                    sentAudioChunks.clear();
+                    audioChunkCounter = 0;
+                    console.log("[Audio] Cleaned audio chunks cache");
+                  }
                 } else if (interrupted) {
                   console.log(
                     "[Audio] Skipping audio chunk due to interruption"
                   );
-                  // Limpiar buffer durante interrupciones
-                  audioBuffer = [];
-                  if (bufferTimeout) {
-                    clearTimeout(bufferTimeout);
-                    bufferTimeout = null;
-                  }
+                  // Limpiar estado completo durante interrupciones
+                  clearAudioState();
                 } else {
                   console.log("[Audio] Skipping duplicate audio chunk");
                 }
@@ -3153,16 +3243,7 @@ fastify.register(async (fastifyInstance) => {
                 elevenLabsWs.close();
               }
               // Limpiar chunks de audio al finalizar la llamada
-              sentAudioChunks.clear();
-              audioChunkCounter = 0;
-              audioBuffer = [];
-              if (bufferTimeout) {
-                clearTimeout(bufferTimeout);
-                bufferTimeout = null;
-              }
-              console.log(
-                "[Audio] Cleaned audio chunks and buffer on call stop"
-              );
+              clearAudioState();
 
               // Limpiar intervalo de verificación de silencios
               if (silenceCheckInterval) {
@@ -3184,16 +3265,7 @@ fastify.register(async (fastifyInstance) => {
           elevenLabsWs.close();
         }
         // Limpiar chunks de audio al cerrar el WebSocket
-        sentAudioChunks.clear();
-        audioChunkCounter = 0;
-        audioBuffer = [];
-        if (bufferTimeout) {
-          clearTimeout(bufferTimeout);
-          bufferTimeout = null;
-        }
-        console.log(
-          "[Audio] Cleaned audio chunks and buffer on WebSocket close"
-        );
+        clearAudioState();
 
         // Limpiar intervalo de verificación de silencios
         if (silenceCheckInterval) {
@@ -4007,12 +4079,6 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     reply.code(500).send({ error: "Internal server error" });
   }
 });
-
-// Function to analyze call with OpenAI
-// Comentado: Definición de analyzeCallWithOpenAI
-// async function analyzeCallWithOpenAI(webhookData, call) {
-//   ...
-// }
 
 // API Integration endpoints for leads
 fastify.post("/api/integration/leads", async (request, reply) => {
