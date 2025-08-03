@@ -131,7 +131,7 @@ const userActiveCalls = new Map();
 const workerPool = new Set();
 const processingQueueItems = new Set(); // Track items being processed to prevent duplicates
 
-// Function to translate Twilio error codes to Spanish
+const elevenLabsConnections = new Map(); // Map<callSid, WebSocket> - Aislamiento de WebSockets por llamada// Function to translate Twilio error codes to Spanish
 function translateTwilioError(twilioError) {
   const errorCode = twilioError?.code;
   const errorMessage =
@@ -2084,7 +2084,7 @@ fastify.register(async (fastifyInstance) => {
 
       let streamSid = null;
       let callSid = null;
-      let elevenLabsWs = null;
+      //let elevenLabsWs = null;
       let customParameters = null;
       let lastUserTranscript = "";
       let sentAudioChunks = new Set(); // Para evitar audio duplicado
@@ -2223,8 +2223,10 @@ fastify.register(async (fastifyInstance) => {
               });
           }
 
-          if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-            elevenLabsWs.close();
+          if (
+            elevenLabsConnections.get(callSid)?.readyState === WebSocket.OPEN
+          ) {
+            elevenLabsConnections.get(callSid)?.close();
           }
 
           if (callSid) {
@@ -2264,11 +2266,11 @@ fastify.register(async (fastifyInstance) => {
       const sendAudioBuffer = () => {
         if (
           audioBuffer.length > 0 &&
-          elevenLabsWs?.readyState === WebSocket.OPEN
+          elevenLabsConnections.get(callSid)?.readyState === WebSocket.OPEN
         ) {
           // Enviar todos los chunks del buffer
           audioBuffer.forEach((chunk) => {
-            elevenLabsWs.send(
+            newWs.send(
               JSON.stringify({
                 type: "user_audio_chunk",
                 user_audio_chunk: chunk,
@@ -2289,9 +2291,19 @@ fastify.register(async (fastifyInstance) => {
       const setupElevenLabs = async () => {
         try {
           const signedUrl = await getSignedUrl();
-          elevenLabsWs = new WebSocket(signedUrl);
+          // 🆕 AISLAMIENTO DE WEBSOCKETS POR LLAMADA
+          if (elevenLabsConnections.has(callSid)) {
+            const existingWs = elevenLabsConnections.get(callSid);
+            if (existingWs.readyState === WebSocket.OPEN) {
+              existingWs.close();
+            }
+            elevenLabsConnections.delete(callSid);
+          }
 
-          elevenLabsWs.on("open", () => {
+          const newWs = new WebSocket(signedUrl);
+          elevenLabsConnections.set(callSid, newWs);
+
+          newWs.on("open", () => {
             console.log("[ElevenLabs] Connected to Conversational AI");
 
             const initialConfig = {
@@ -2345,18 +2357,18 @@ fastify.register(async (fastifyInstance) => {
             );
 
             // Verificar que el WebSocket esté abierto antes de enviar
-            if (elevenLabsWs.readyState === WebSocket.OPEN) {
-              elevenLabsWs.send(JSON.stringify(initialConfig));
+            if (newWs.readyState === WebSocket.OPEN) {
+              newWs.send(JSON.stringify(initialConfig));
 
               // No enviar audio inicial vacío para evitar duplicados
             } else {
               console.error(
                 "[ElevenLabs] WebSocket not ready, state:",
-                elevenLabsWs.readyState
+                newWs.readyState
               );
             }
 
-            elevenLabsWs.on("message", async (data) => {
+            newWs.on("message", async (data) => {
               try {
                 const message = JSON.parse(data);
 
@@ -2726,8 +2738,11 @@ fastify.register(async (fastifyInstance) => {
                           }
                         }
 
-                        if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                          elevenLabsWs.close();
+                        if (
+                          elevenLabsConnections.get(callSid)?.readyState ===
+                          WebSocket.OPEN
+                        ) {
+                          elevenLabsConnections.get(callSid)?.close();
                         }
 
                         if (callSid) {
@@ -3089,14 +3104,14 @@ fastify.register(async (fastifyInstance) => {
               }
             });
 
-            elevenLabsWs.on("error", (error) => {
+            newWs.on("error", (error) => {
               console.error("[ElevenLabs] WebSocket error:", error);
 
               // Limpiar chunks de audio en caso de error
               clearAudioState();
             });
 
-            elevenLabsWs.on("close", async () => {
+            newWs.on("close", async () => {
               console.log("[ElevenLabs] Disconnected");
 
               // Limpiar chunks de audio al desconectar ElevenLabs
@@ -3115,8 +3130,11 @@ fastify.register(async (fastifyInstance) => {
                 }
               }
 
-              if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                elevenLabsWs.close();
+              if (
+                elevenLabsConnections.get(callSid)?.readyState ===
+                WebSocket.OPEN
+              ) {
+                elevenLabsConnections.get(callSid)?.close();
               }
             });
           });
@@ -3146,7 +3164,10 @@ fastify.register(async (fastifyInstance) => {
               break;
 
             case "media":
-              if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+              if (
+                elevenLabsConnections.get(callSid)?.readyState ===
+                WebSocket.OPEN
+              ) {
                 // Corregir: no convertir base64 a base64 nuevamente
                 // El audio ya viene en base64 desde Twilio
                 const audioChunk = msg.media.payload;
@@ -3239,8 +3260,11 @@ fastify.register(async (fastifyInstance) => {
               break;
 
             case "stop":
-              if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                elevenLabsWs.close();
+              if (
+                elevenLabsConnections.get(callSid)?.readyState ===
+                WebSocket.OPEN
+              ) {
+                elevenLabsConnections.get(callSid)?.close();
               }
               // Limpiar chunks de audio al finalizar la llamada
               clearAudioState();
@@ -3261,8 +3285,8 @@ fastify.register(async (fastifyInstance) => {
       });
 
       ws.on("close", () => {
-        if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-          elevenLabsWs.close();
+        if (elevenLabsConnections.get(callSid)?.readyState === WebSocket.OPEN) {
+          elevenLabsConnections.get(callSid)?.close();
         }
         // Limpiar chunks de audio al cerrar el WebSocket
         clearAudioState();
