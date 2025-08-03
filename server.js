@@ -3143,8 +3143,6 @@ fastify.register(async (fastifyInstance) => {
         }
       };
 
-      setupElevenLabs();
-
       ws.on("message", (message) => {
         try {
           const msg = JSON.parse(message);
