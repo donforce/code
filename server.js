@@ -428,8 +428,20 @@ const queueChannel = supabase
   )
   .subscribe();
 
+// Mutex para evitar procesamiento simultáneo
+let isProcessingQueue = false;
+
 // Optimized queue processing with minimal logging
 async function processAllPendingQueues() {
+  // Mutex: evitar procesamiento simultáneo
+  if (isProcessingQueue) {
+    console.log("[Queue] ⏸️ Already processing queue, skipping");
+    return;
+  }
+  
+  isProcessingQueue = true;
+  
+  try {
   try {
     // Check if we can process more calls
     if (globalActiveCalls.size >= QUEUE_CONFIG.maxConcurrentCalls) {
@@ -621,6 +633,10 @@ async function processAllPendingQueues() {
   } catch (error) {
     console.error("[Queue] ❌ Error in queue processing:", error);
   }
+  } finally {
+    // Liberar el mutex
+    isProcessingQueue = false;
+  }
 }
 
 // Optimized queue item processing with minimal logging
@@ -638,7 +654,10 @@ async function processQueueItemWithRetry(queueItem, attempt = 1) {
       return false;
     }
 
-    if ((userActiveCalls.get(queueItem.user_id) || 0) >= QUEUE_CONFIG.maxCallsPerUser) {
+    if (
+      (userActiveCalls.get(queueItem.user_id) || 0) >=
+      QUEUE_CONFIG.maxCallsPerUser
+    ) {
       return false;
     }
 
@@ -1445,7 +1464,10 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     }
 
     // Mark user as having active call (global tracking)
-    userActiveCalls.set(queueItem.user_id, (userActiveCalls.get(queueItem.user_id) || 0) + 1);
+    userActiveCalls.set(
+      queueItem.user_id,
+      (userActiveCalls.get(queueItem.user_id) || 0) + 1
+    );
 
     // Create agent_firstname from first_name and agent_name from full name
     const agentFirstName = userData.first_name || "Agente";
@@ -1720,7 +1742,12 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
         .eq("id", queueItem.id);
 
       // Release user tracking
-      const currentCount = userActiveCalls.get(queueItem.user_id) || 0; if (currentCount <= 1) { userActiveCalls.delete(queueItem.user_id); } else { userActiveCalls.set(queueItem.user_id, currentCount - 1); }
+      const currentCount = userActiveCalls.get(queueItem.user_id) || 0;
+      if (currentCount <= 1) {
+        userActiveCalls.delete(queueItem.user_id);
+      } else {
+        userActiveCalls.set(queueItem.user_id, currentCount - 1);
+      }
       activeCalls--;
 
       return false;
@@ -1762,7 +1789,12 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
     console.error(`[Queue] Worker ${workerId} - Error processing call:`, error);
 
     // Release user and global tracking in case of error
-    const currentCount = userActiveCalls.get(queueItem.user_id) || 0; if (currentCount <= 1) { userActiveCalls.delete(queueItem.user_id); } else { userActiveCalls.set(queueItem.user_id, currentCount - 1); }
+    const currentCount = userActiveCalls.get(queueItem.user_id) || 0;
+    if (currentCount <= 1) {
+      userActiveCalls.delete(queueItem.user_id);
+    } else {
+      userActiveCalls.set(queueItem.user_id, currentCount - 1);
+    }
 
     // Update queue item with error
     try {
@@ -3158,7 +3190,15 @@ fastify.register(async (fastifyInstance) => {
               );
 
               // Setup ElevenLabs AFTER receiving customParameters
-              setupElevenLabs();
+              // Setup ElevenLabs AFTER receiving customParameters
+              // Verificar que no se haya configurado ya para esta llamada
+              if (!elevenLabsConnections.has(callSid) || 
+                  elevenLabsConnections.get(callSid)?.readyState !== WebSocket.OPEN) {
+                console.log(`[ElevenLabs] Setting up new connection for callSid: ${callSid}`);
+                setupElevenLabs();
+              } else {
+                console.log(`[ElevenLabs] Connection already exists for callSid: ${callSid}, skipping setup`);
+              }
               break;
 
             case "media":
@@ -3371,7 +3411,14 @@ async function cleanupStuckCalls() {
 
           // Remove from global tracking
           globalActiveCalls.delete(call.call_sid);
-          if (call.user_id) { const currentCount = userActiveCalls.get(call.user_id) || 0; if (currentCount <= 1) { userActiveCalls.delete(call.user_id); } else { userActiveCalls.set(call.user_id, currentCount - 1); } }
+          if (call.user_id) {
+            const currentCount = userActiveCalls.get(call.user_id) || 0;
+            if (currentCount <= 1) {
+              userActiveCalls.delete(call.user_id);
+            } else {
+              userActiveCalls.set(call.user_id, currentCount - 1);
+            }
+          }
           activeCalls--;
 
           // Update associated queue item if exists
@@ -3433,7 +3480,14 @@ async function cleanupStuckCalls() {
 
               // Remove from global tracking
               globalActiveCalls.delete(call.call_sid);
-              if (call.user_id) { const currentCount = userActiveCalls.get(call.user_id) || 0; if (currentCount <= 1) { userActiveCalls.delete(call.user_id); } else { userActiveCalls.set(call.user_id, currentCount - 1); } }
+              if (call.user_id) {
+                const currentCount = userActiveCalls.get(call.user_id) || 0;
+                if (currentCount <= 1) {
+                  userActiveCalls.delete(call.user_id);
+                } else {
+                  userActiveCalls.set(call.user_id, currentCount - 1);
+                }
+              }
               activeCalls--;
             } catch (hangupError) {
               console.error(
@@ -3494,7 +3548,14 @@ async function cleanupStuckCalls() {
 
         // Remove from global tracking
         globalActiveCalls.delete(call.call_sid);
-        if (call.user_id) { const currentCount = userActiveCalls.get(call.user_id) || 0; if (currentCount <= 1) { userActiveCalls.delete(call.user_id); } else { userActiveCalls.set(call.user_id, currentCount - 1); } }
+        if (call.user_id) {
+          const currentCount = userActiveCalls.get(call.user_id) || 0;
+          if (currentCount <= 1) {
+            userActiveCalls.delete(call.user_id);
+          } else {
+            userActiveCalls.set(call.user_id, currentCount - 1);
+          }
+        }
         activeCalls--;
       }
     }
