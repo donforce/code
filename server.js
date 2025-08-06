@@ -2454,8 +2454,8 @@ fastify.register(async (fastifyInstance) => {
                         message.audio?.chunk ||
                         message.audio_event?.audio_base_64;
                       // �� LOG PARA VERIFICAR CAMPO isFinalChunk DE ELEVENLABS
-                      if (message.audio?.isFinalChunk !== undefined) {
-                        console.log(`[ElevenLabs Audio] isFinalChunk detected: ${message.audio.isFinalChunk}`);
+                      if (typeof message.isFinalChunk !== "undefined") {
+                        console.log(`[ElevenLabs Audio] isFinalChunk detected: ${message.isFinalChunk}`);
                       }
 
                       // Verificar si este audio ya fue enviado
