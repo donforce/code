@@ -4071,6 +4071,10 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
           )}${turn.text?.length > 100 ? "..." : ""}`
         );
       });
+      console.log(
+        "[ELEVENLABS] Audio transcript: ",
+        JSON.stringify(transcript, null, 2)
+      );
     }
 
     if (analysis?.transcript_summary) {
