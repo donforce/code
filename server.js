@@ -2408,6 +2408,12 @@ fastify.register(async (fastifyInstance) => {
                 const message = JSON.parse(data);
 
                 // Only log critical events, skip ping messages
+                // 🆕 LOG PARA VERIFICAR CAMPO isFinalChunk EN TODOS LOS MENSAJES
+                if (typeof message.isFinalChunk !== "undefined") {
+                  console.log(
+                    `[ElevenLabs] isFinalChunk detected: ${message.isFinalChunk}`
+                  );
+                }
                 if (message.type !== "ping") {
                   console.log(`[ElevenLabs] Event: ${message.type}`);
                 }
@@ -2453,10 +2459,6 @@ fastify.register(async (fastifyInstance) => {
                       const audioPayload =
                         message.audio?.chunk ||
                         message.audio_event?.audio_base_64;
-                      // �� LOG PARA VERIFICAR CAMPO isFinalChunk DE ELEVENLABS
-                      if (typeof message.isFinalChunk !== "undefined") {
-                        console.log(`[ElevenLabs Audio] isFinalChunk detected: ${message.isFinalChunk}`);
-                      }
 
                       // Verificar si este audio ya fue enviado
                       if (!isDuplicateAudioChunk(audioPayload)) {
@@ -3223,7 +3225,6 @@ fastify.register(async (fastifyInstance) => {
                 // Corregir: no convertir base64 a base64 nuevamente
                 // El audio ya viene en base64 desde Twilio
                 const audioChunk = msg.media.payload;
-                // 🆕 LOG PARA VERIFICAR CAMPO isFinalChunk
 
                 // Validar que el audio no esté vacío
                 if (!audioChunk || audioChunk.length < 10) {
