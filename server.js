@@ -3311,9 +3311,7 @@ fastify.register(async (fastifyInstance) => {
                   console.log("[Audio] Skipping duplicate audio chunk");
                 }
               } else {
-                console.log(
-                  "[Audio] ElevenLabs WebSocket not ready, skipping audio chunk"
-                );
+                // console.log("[Audio] ElevenLabs WebSocket not ready, skipping audio chunk");
               }
               break;
 
