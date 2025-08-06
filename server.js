@@ -2412,6 +2412,8 @@ fastify.register(async (fastifyInstance) => {
                   console.log(`[ElevenLabs] Event: ${message.type}`);
                 }
 
+                console.log(`[ElevenLabs] Message: ${message}`);
+
                 switch (message.type) {
                   case "conversation_initiation_metadata":
                     // Save conversation_id to database
@@ -2499,7 +2501,10 @@ fastify.register(async (fastifyInstance) => {
                     break;
 
                   case "message_response":
-                    console.log(`[ElevenLabs] Full message_response:`, JSON.stringify(message, null, 2));
+                    console.log(
+                      `[ElevenLabs] Full message_response:`,
+                      JSON.stringify(message, null, 2)
+                    );
                     interrupted = false;
                     break;
 
