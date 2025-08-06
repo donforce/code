@@ -2412,7 +2412,10 @@ fastify.register(async (fastifyInstance) => {
                   console.log(`[ElevenLabs] Event: ${message.type}`);
                 }
 
-                console.log(`[ElevenLabs] Message: ${message}`);
+                console.log(
+                  `[ElevenLabs] Message1:`,
+                  JSON.stringify(message, null, 2)
+                );
 
                 switch (message.type) {
                   case "conversation_initiation_metadata":
