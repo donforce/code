@@ -2453,6 +2453,10 @@ fastify.register(async (fastifyInstance) => {
                       const audioPayload =
                         message.audio?.chunk ||
                         message.audio_event?.audio_base_64;
+                      // �� LOG PARA VERIFICAR CAMPO isFinalChunk DE ELEVENLABS
+                      if (message.audio?.isFinalChunk !== undefined) {
+                        console.log(`[ElevenLabs Audio] isFinalChunk detected: ${message.audio.isFinalChunk}`);
+                      }
 
                       // Verificar si este audio ya fue enviado
                       if (!isDuplicateAudioChunk(audioPayload)) {
@@ -3220,9 +3224,6 @@ fastify.register(async (fastifyInstance) => {
                 // El audio ya viene en base64 desde Twilio
                 const audioChunk = msg.media.payload;
                 // 🆕 LOG PARA VERIFICAR CAMPO isFinalChunk
-                if (msg.media.isFinalChunk !== undefined) {
-                  console.log(`[Audio] isFinalChunk detected: ${msg.media.isFinalChunk}`);
-                }
 
                 // Validar que el audio no esté vacío
                 if (!audioChunk || audioChunk.length < 10) {
