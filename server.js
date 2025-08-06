@@ -2145,37 +2145,13 @@ fastify.register(async (fastifyInstance) => {
 
       // 🆕 FUNCIÓN PARA GENERAR HASH DE AUDIO
       const generateAudioHash = (audioChunk) => {
-        // Validar que el chunk no esté vacío o sea muy pequeño
-        if (!audioChunk || audioChunk.length < 10) {
-          return null;
-        }
-
-        // Crear un hash más robusto usando múltiples puntos de muestreo
+        // Crear un hash simple del chunk de audio para detectar duplicados
         let hash = 0;
-        const chunkLength = audioChunk.length;
-
-        // Muestrear puntos estratégicos: inicio, medio, final y puntos intermedios
-        const samplePoints = [
-          0, // Inicio
-          Math.floor(chunkLength * 0.25), // 25%
-          Math.floor(chunkLength * 0.5), // 50%
-          Math.floor(chunkLength * 0.75), // 75%
-          chunkLength - 1, // Final
-        ];
-
-        // Crear hash basado en puntos de muestreo
-        for (const point of samplePoints) {
-          if (point < chunkLength) {
-            const char = audioChunk.charCodeAt(point);
-            hash = (hash << 7) - hash + char;
-            hash = hash & hash; // Convertir a 32-bit integer
-          }
+        for (let i = 0; i < Math.min(audioChunk.length, 100); i++) {
+          const char = audioChunk.charCodeAt(i);
+          hash = (hash << 5) - hash + char;
+          hash = hash & hash; // Convertir a 32-bit integer
         }
-
-        // Agregar información de longitud para detectar chunks truncados
-        hash = (hash << 5) - hash + chunkLength;
-        hash = hash & hash;
-
         return hash.toString();
       };
 
@@ -2210,38 +2186,6 @@ fastify.register(async (fastifyInstance) => {
         ) {
           console.log(`[Audio] Temporal duplicate detected, skipping`);
           return true;
-          // 🆕 DETECCIÓN DE CHUNKS CORRUPTOS AL FINAL
-          const chunkLength = audioChunk.length;
-          if (chunkLength > 50) {
-            // Verificar si los últimos caracteres son repetitivos (galimatías)
-            const lastSection = audioChunk.slice(
-              -Math.min(30, Math.floor(chunkLength * 0.3))
-            );
-            const uniqueChars = new Set(lastSection).size;
-            const repetitionRatio = uniqueChars / lastSection.length;
-
-            // Si hay muy poca variación en los últimos caracteres, probablemente es corrupto
-            if (repetitionRatio < 0.3) {
-              console.log(
-                `[Audio] Corrupted chunk detected at end (repetition ratio: ${repetitionRatio.toFixed(
-                  2
-                )})`
-              );
-              return true;
-            }
-
-            // Verificar patrones de repetición específicos
-            const repeatedPatterns = lastSection.match(/(.{2,})\1{2,}/g);
-            if (repeatedPatterns && repeatedPatterns.length > 0) {
-              console.log(
-                `[Audio] Repetitive pattern detected at end: ${repeatedPatterns[0].substring(
-                  0,
-                  20
-                )}...`
-              );
-              return true;
-            }
-          }
         }
 
         // Actualizar tracking
@@ -3275,6 +3219,10 @@ fastify.register(async (fastifyInstance) => {
                 // Corregir: no convertir base64 a base64 nuevamente
                 // El audio ya viene en base64 desde Twilio
                 const audioChunk = msg.media.payload;
+                // 🆕 LOG PARA VERIFICAR CAMPO isFinalChunk
+                if (msg.media.isFinalChunk !== undefined) {
+                  console.log(`[Audio] isFinalChunk detected: ${msg.media.isFinalChunk}`);
+                }
 
                 // Validar que el audio no esté vacío
                 if (!audioChunk || audioChunk.length < 10) {
