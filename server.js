@@ -2408,10 +2408,6 @@ fastify.register(async (fastifyInstance) => {
                 const message = JSON.parse(data);
 
                 // Only log critical events, skip ping messages
-                // 🆕 LOG PARA VERIFICAR CAMPO isFinalChunk EN TODOS LOS MENSAJES
-                if (typeof message.isFinalChunk !== "undefined") {
-                  console.log(`[ElevenLabs] Full message with isFinalChunk:`, JSON.stringify(message, null, 2));
-                }
                 if (message.type !== "ping") {
                   console.log(`[ElevenLabs] Event: ${message.type}`);
                 }
