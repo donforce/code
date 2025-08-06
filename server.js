@@ -438,21 +438,21 @@ async function processAllPendingQueues() {
     console.log("[Queue] ⏸️ Already processing queue, skipping");
     return;
   }
-  
-  isProcessingQueue = true;
-  
-  try {
-  try {
-    // Check if we can process more calls
-    if (globalActiveCalls.size >= QUEUE_CONFIG.maxConcurrentCalls) {
-      return;
-    }
 
-    // Get all pending queue items with optimized query
-    const { data: pendingQueues, error } = await supabase
-      .from("call_queue")
-      .select(
-        `
+  isProcessingQueue = true;
+
+  try {
+    try {
+      // Check if we can process more calls
+      if (globalActiveCalls.size >= QUEUE_CONFIG.maxConcurrentCalls) {
+        return;
+      }
+
+      // Get all pending queue items with optimized query
+      const { data: pendingQueues, error } = await supabase
+        .from("call_queue")
+        .select(
+          `
         id,
         user_id,
         lead_id,
@@ -465,174 +465,177 @@ async function processAllPendingQueues() {
           email
         )
       `
-      )
-      .eq("status", "pending")
-      .order("queue_position", { ascending: true })
-      .limit(QUEUE_CONFIG.maxConcurrentCalls * 3);
+        )
+        .eq("status", "pending")
+        .order("queue_position", { ascending: true })
+        .limit(QUEUE_CONFIG.maxConcurrentCalls * 3);
 
-    if (error) {
-      console.error("[Queue] ❌ Error fetching pending queues:", error);
-      return;
-    }
-
-    if (!pendingQueues || pendingQueues.length === 0) {
-      return;
-    }
-
-    // Filter out items already being processed
-    const availableItems = pendingQueues.filter(
-      (item) => !processingQueueItems.has(item.id)
-    );
-
-    if (availableItems.length === 0) {
-      return;
-    }
-
-    // Get user data in single query for all users
-    const userIds = [...new Set(availableItems.map((item) => item.user_id))];
-
-    const { data: usersData, error: usersError } = await supabase
-      .from("users")
-      .select(
-        "id, available_minutes, email, first_name, last_name, assistant_name"
-      )
-      .in("id", userIds);
-
-    if (usersError) {
-      console.error("[Queue] ❌ Error fetching users data:", usersError);
-      return;
-    }
-
-    // Create optimized user lookup map
-    const usersMap = new Map(usersData?.map((user) => [user.id, user]) || []);
-
-    // Group items by user and validate minutes
-    const userQueues = new Map();
-
-    for (const item of availableItems) {
-      const user = usersMap.get(item.user_id);
-
-      if (!user || user.available_minutes < 60) {
-        continue; // Skip users with less than 60 minutes
+      if (error) {
+        console.error("[Queue] ❌ Error fetching pending queues:", error);
+        return;
       }
 
-      if (!userQueues.has(item.user_id)) {
-        userQueues.set(item.user_id, []);
-      }
-      userQueues.get(item.user_id).push(item);
-    }
-
-    // Calculate available slots
-    const availableSlots =
-      QUEUE_CONFIG.maxConcurrentCalls - globalActiveCalls.size;
-
-    if (availableSlots <= 0) {
-      return;
-    }
-
-    // Sort users by priority: users with active calls get priority, then by queue length
-    const userPriority = [];
-
-    for (const [userId, items] of userQueues) {
-      const hasActiveCalls = (userActiveCalls.get(userId) || 0) > 0;
-      const queueLength = items.length;
-      const user = usersMap.get(userId);
-
-      userPriority.push({
-        userId,
-        items,
-        hasActiveCalls,
-        queueLength,
-        availableMinutes: user.available_minutes,
-        priority: hasActiveCalls ? 1 : 2,
-      });
-    }
-
-    // Sort by priority (active users first), then by queue length (longer queues first)
-    userPriority.sort((a, b) => {
-      if (a.hasActiveCalls !== b.hasActiveCalls) {
-        return a.hasActiveCalls ? -1 : 1;
-      }
-      return b.queueLength - a.queueLength;
-    });
-
-    // Distribute slots among users (mixed rotation - Option B)
-    const itemsToProcess = [];
-    const userSlotCount = new Map(); // Track how many slots each user is using
-
-    for (const userData of userPriority) {
-      if (itemsToProcess.length >= availableSlots) {
-        break; // No more slots available
+      if (!pendingQueues || pendingQueues.length === 0) {
+        return;
       }
 
-      // Calculate how many slots this user can use
-      const currentUserSlots = userSlotCount.get(userData.userId) || 0;
-      const userActiveCallCount = userActiveCalls.get(userData.userId) || 0;
-
-      // User can use up to maxCallsPerUser, but needs 60 minutes per additional call
-      const maxSlotsForUser = Math.min(
-        QUEUE_CONFIG.maxCallsPerUser - userActiveCallCount - currentUserSlots,
-        Math.floor(userData.availableMinutes / 60), // 60 minutes per call
-        availableSlots - itemsToProcess.length // Available slots remaining
+      // Filter out items already being processed
+      const availableItems = pendingQueues.filter(
+        (item) => !processingQueueItems.has(item.id)
       );
 
-      if (maxSlotsForUser <= 0) {
-        continue;
+      if (availableItems.length === 0) {
+        return;
       }
 
-      // Take items for this user
-      const userItems = userData.items.slice(0, maxSlotsForUser);
+      // Get user data in single query for all users
+      const userIds = [...new Set(availableItems.map((item) => item.user_id))];
 
-      for (const item of userItems) {
-        itemsToProcess.push(item);
-        userSlotCount.set(
-          userData.userId,
-          (userSlotCount.get(userData.userId) || 0) + 1
+      const { data: usersData, error: usersError } = await supabase
+        .from("users")
+        .select(
+          "id, available_minutes, email, first_name, last_name, assistant_name"
+        )
+        .in("id", userIds);
+
+      if (usersError) {
+        console.error("[Queue] ❌ Error fetching users data:", usersError);
+        return;
+      }
+
+      // Create optimized user lookup map
+      const usersMap = new Map(usersData?.map((user) => [user.id, user]) || []);
+
+      // Group items by user and validate minutes
+      const userQueues = new Map();
+
+      for (const item of availableItems) {
+        const user = usersMap.get(item.user_id);
+
+        if (!user || user.available_minutes < 60) {
+          continue; // Skip users with less than 60 minutes
+        }
+
+        if (!userQueues.has(item.user_id)) {
+          userQueues.set(item.user_id, []);
+        }
+        userQueues.get(item.user_id).push(item);
+      }
+
+      // Calculate available slots
+      const availableSlots =
+        QUEUE_CONFIG.maxConcurrentCalls - globalActiveCalls.size;
+
+      if (availableSlots <= 0) {
+        return;
+      }
+
+      // Sort users by priority: users with active calls get priority, then by queue length
+      const userPriority = [];
+
+      for (const [userId, items] of userQueues) {
+        const hasActiveCalls = (userActiveCalls.get(userId) || 0) > 0;
+        const queueLength = items.length;
+        const user = usersMap.get(userId);
+
+        userPriority.push({
+          userId,
+          items,
+          hasActiveCalls,
+          queueLength,
+          availableMinutes: user.available_minutes,
+          priority: hasActiveCalls ? 1 : 2,
+        });
+      }
+
+      // Sort by priority (active users first), then by queue length (longer queues first)
+      userPriority.sort((a, b) => {
+        if (a.hasActiveCalls !== b.hasActiveCalls) {
+          return a.hasActiveCalls ? -1 : 1;
+        }
+        return b.queueLength - a.queueLength;
+      });
+
+      // Distribute slots among users (mixed rotation - Option B)
+      const itemsToProcess = [];
+      const userSlotCount = new Map(); // Track how many slots each user is using
+
+      for (const userData of userPriority) {
+        if (itemsToProcess.length >= availableSlots) {
+          break; // No more slots available
+        }
+
+        // Calculate how many slots this user can use
+        const currentUserSlots = userSlotCount.get(userData.userId) || 0;
+        const userActiveCallCount = userActiveCalls.get(userData.userId) || 0;
+
+        // User can use up to maxCallsPerUser, but needs 60 minutes per additional call
+        const maxSlotsForUser = Math.min(
+          QUEUE_CONFIG.maxCallsPerUser - userActiveCallCount - currentUserSlots,
+          Math.floor(userData.availableMinutes / 60), // 60 minutes per call
+          availableSlots - itemsToProcess.length // Available slots remaining
         );
 
-        if (itemsToProcess.length >= availableSlots) {
-          break;
+        if (maxSlotsForUser <= 0) {
+          continue;
+        }
+
+        // Take items for this user
+        const userItems = userData.items.slice(0, maxSlotsForUser);
+
+        for (const item of userItems) {
+          itemsToProcess.push(item);
+          userSlotCount.set(
+            userData.userId,
+            (userSlotCount.get(userData.userId) || 0) + 1
+          );
+
+          if (itemsToProcess.length >= availableSlots) {
+            break;
+          }
         }
       }
+
+      if (itemsToProcess.length === 0) {
+        return;
+      }
+
+      // Log the distribution
+      const userDistribution = {};
+      for (const [userId, slotCount] of userSlotCount) {
+        const user = usersMap.get(userId);
+        userDistribution[user.email] = {
+          slots: slotCount,
+          queueLength: userQueues.get(userId).length,
+          availableMinutes: user.available_minutes,
+        };
+      }
+
+      console.log(
+        `[Queue] Processing ${itemsToProcess.length} items with mixed rotation:`,
+        userDistribution
+      );
+
+      // Process items concurrently
+      itemsToProcess.forEach(async (item) => {
+        // Mark item as being processed to prevent duplicates
+        processingQueueItems.add(item.id);
+
+        processQueueItemWithRetry(item)
+          .catch((error) => {
+            console.error(
+              `[Queue] ❌ Error processing item ${item.id}:`,
+              error
+            );
+          })
+          .finally(() => {
+            // Remove from processing set when done
+            processingQueueItems.delete(item.id);
+          });
+      });
+    } catch (error) {
+      console.error("[Queue] ❌ Error in queue processing:", error);
     }
-
-    if (itemsToProcess.length === 0) {
-      return;
-    }
-
-    // Log the distribution
-    const userDistribution = {};
-    for (const [userId, slotCount] of userSlotCount) {
-      const user = usersMap.get(userId);
-      userDistribution[user.email] = {
-        slots: slotCount,
-        queueLength: userQueues.get(userId).length,
-        availableMinutes: user.available_minutes,
-      };
-    }
-
-    console.log(
-      `[Queue] Processing ${itemsToProcess.length} items with mixed rotation:`,
-      userDistribution
-    );
-
-    // Process items concurrently
-    itemsToProcess.forEach(async (item) => {
-      // Mark item as being processed to prevent duplicates
-      processingQueueItems.add(item.id);
-
-      processQueueItemWithRetry(item)
-        .catch((error) => {
-          console.error(`[Queue] ❌ Error processing item ${item.id}:`, error);
-        })
-        .finally(() => {
-          // Remove from processing set when done
-          processingQueueItems.delete(item.id);
-        });
-    });
-  } catch (error) {
-    console.error("[Queue] ❌ Error in queue processing:", error);
-  }
   } finally {
     // Liberar el mutex
     isProcessingQueue = false;
@@ -2142,13 +2145,37 @@ fastify.register(async (fastifyInstance) => {
 
       // 🆕 FUNCIÓN PARA GENERAR HASH DE AUDIO
       const generateAudioHash = (audioChunk) => {
-        // Crear un hash simple del chunk de audio para detectar duplicados
-        let hash = 0;
-        for (let i = 0; i < Math.min(audioChunk.length, 100); i++) {
-          const char = audioChunk.charCodeAt(i);
-          hash = (hash << 5) - hash + char;
-          hash = hash & hash; // Convertir a 32-bit integer
+        // Validar que el chunk no esté vacío o sea muy pequeño
+        if (!audioChunk || audioChunk.length < 10) {
+          return null;
         }
+
+        // Crear un hash más robusto usando múltiples puntos de muestreo
+        let hash = 0;
+        const chunkLength = audioChunk.length;
+
+        // Muestrear puntos estratégicos: inicio, medio, final y puntos intermedios
+        const samplePoints = [
+          0, // Inicio
+          Math.floor(chunkLength * 0.25), // 25%
+          Math.floor(chunkLength * 0.5), // 50%
+          Math.floor(chunkLength * 0.75), // 75%
+          chunkLength - 1, // Final
+        ];
+
+        // Crear hash basado en puntos de muestreo
+        for (const point of samplePoints) {
+          if (point < chunkLength) {
+            const char = audioChunk.charCodeAt(point);
+            hash = (hash << 7) - hash + char;
+            hash = hash & hash; // Convertir a 32-bit integer
+          }
+        }
+
+        // Agregar información de longitud para detectar chunks truncados
+        hash = (hash << 5) - hash + chunkLength;
+        hash = hash & hash;
+
         return hash.toString();
       };
 
@@ -2183,6 +2210,38 @@ fastify.register(async (fastifyInstance) => {
         ) {
           console.log(`[Audio] Temporal duplicate detected, skipping`);
           return true;
+          // 🆕 DETECCIÓN DE CHUNKS CORRUPTOS AL FINAL
+          const chunkLength = audioChunk.length;
+          if (chunkLength > 50) {
+            // Verificar si los últimos caracteres son repetitivos (galimatías)
+            const lastSection = audioChunk.slice(
+              -Math.min(30, Math.floor(chunkLength * 0.3))
+            );
+            const uniqueChars = new Set(lastSection).size;
+            const repetitionRatio = uniqueChars / lastSection.length;
+
+            // Si hay muy poca variación en los últimos caracteres, probablemente es corrupto
+            if (repetitionRatio < 0.3) {
+              console.log(
+                `[Audio] Corrupted chunk detected at end (repetition ratio: ${repetitionRatio.toFixed(
+                  2
+                )})`
+              );
+              return true;
+            }
+
+            // Verificar patrones de repetición específicos
+            const repeatedPatterns = lastSection.match(/(.{2,})\1{2,}/g);
+            if (repeatedPatterns && repeatedPatterns.length > 0) {
+              console.log(
+                `[Audio] Repetitive pattern detected at end: ${repeatedPatterns[0].substring(
+                  0,
+                  20
+                )}...`
+              );
+              return true;
+            }
+          }
         }
 
         // Actualizar tracking
@@ -3192,12 +3251,19 @@ fastify.register(async (fastifyInstance) => {
               // Setup ElevenLabs AFTER receiving customParameters
               // Setup ElevenLabs AFTER receiving customParameters
               // Verificar que no se haya configurado ya para esta llamada
-              if (!elevenLabsConnections.has(callSid) || 
-                  elevenLabsConnections.get(callSid)?.readyState !== WebSocket.OPEN) {
-                console.log(`[ElevenLabs] Setting up new connection for callSid: ${callSid}`);
+              if (
+                !elevenLabsConnections.has(callSid) ||
+                elevenLabsConnections.get(callSid)?.readyState !==
+                  WebSocket.OPEN
+              ) {
+                console.log(
+                  `[ElevenLabs] Setting up new connection for callSid: ${callSid}`
+                );
                 setupElevenLabs();
               } else {
-                console.log(`[ElevenLabs] Connection already exists for callSid: ${callSid}, skipping setup`);
+                console.log(
+                  `[ElevenLabs] Connection already exists for callSid: ${callSid}, skipping setup`
+                );
               }
               break;
 
