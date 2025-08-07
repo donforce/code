@@ -2532,6 +2532,9 @@ fastify.register(async (fastifyInstance) => {
 
                 switch (message.type) {
                   case "conversation_initiation_metadata":
+                    console.log(
+                      "🚀 [INIT] Conversation initiation metadata received"
+                    );
                     // Save conversation_id to database
                     if (
                       callSid &&
@@ -2611,6 +2614,7 @@ fastify.register(async (fastifyInstance) => {
                     break;
 
                   case "audio_chunk":
+                    console.log("🔊 [AUDIO] Audio chunk received");
                     if (!interrupted) {
                       wsClient.send(message.audio);
                     }
@@ -3420,7 +3424,7 @@ fastify.register(async (fastifyInstance) => {
                   // Limpiar estado completo durante interrupciones
                   clearAudioState();
                 } else {
-                  console.log("[Audio] Skipping duplicate audio chunk");
+                  // console.log("[Audio] Skipping duplicate audio chunk");
                 }
               } else {
                 // console.log("[Audio] ElevenLabs WebSocket not ready, skipping audio chunk");
