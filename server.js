@@ -4149,39 +4149,66 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       console.error("❌ Error processing calendar event:", calendarError);
     }
 
-    // 🌐 TRANSLATE SUMMARY TO SPANISH
+    // 🔍 ANALYZE TRANSCRIPT AND GENERATE INSIGHTS
     try {
       const originalSummary = webhookData.data.analysis?.transcript_summary;
-      if (originalSummary) {
-        console.log("🌐 [TRANSLATION] Translating summary to Spanish...");
-        const translatedSummary = await translateSummaryToSpanish(
-          originalSummary
-        );
 
-        if (translatedSummary) {
-          // Update call with translated summary
-          const { error: translationError } = await supabase
+      // Check if we have transcript data to analyze
+      if (transcript && transcript.length > 0) {
+        console.log(
+          "🔍 [ANALYSIS] Analyzing transcript and generating insights"
+        );
+        const { summary, commercialSuggestion } =
+          await analyzeTranscriptAndGenerateInsights(
+            transcript,
+            originalSummary
+          );
+
+        if (summary || commercialSuggestion) {
+          // Update call with analysis results
+          const updateData = {
+            updated_at: new Date().toISOString(),
+          };
+
+          if (summary) {
+            updateData.transcript_summary_es = summary;
+          }
+
+          if (commercialSuggestion) {
+            updateData.commercial_suggestion = commercialSuggestion;
+          }
+
+          const { error: analysisError } = await supabase
             .from("calls")
-            .update({
-              transcript_summary_es: translatedSummary,
-              updated_at: new Date().toISOString(),
-            })
+            .update(updateData)
             .eq("conversation_id", conversation_id);
 
-          if (translationError) {
+          if (analysisError) {
             console.error(
-              "❌ [TRANSLATION] Error saving translated summary:",
-              translationError
+              "❌ [ANALYSIS] Error saving analysis results:",
+              analysisError
             );
           } else {
-            console.log(
-              "✅ [TRANSLATION] Translated summary saved successfully"
-            );
+            console.log("✅ [ANALYSIS] Analysis results saved successfully");
+            if (summary) {
+              console.log(
+                "📝 [ANALYSIS] Summary saved:",
+                summary.substring(0, 100) + "..."
+              );
+            }
+            if (commercialSuggestion) {
+              console.log(
+                "💡 [ANALYSIS] Commercial suggestion saved:",
+                commercialSuggestion.substring(0, 100) + "..."
+              );
+            }
           }
         }
+      } else {
+        console.log("⚠️ [ANALYSIS] No transcript available for analysis");
       }
-    } catch (translationError) {
-      console.error("❌ Error translating summary:", translationError);
+    } catch (analysisError) {
+      console.error("❌ Error analyzing transcript:", analysisError);
     }
 
     reply.send({ success: true, message: "Webhook processed successfully" });
@@ -4717,7 +4744,6 @@ async function checkForScheduledCall(webhookData, call) {
         "agendado para",
         "confirmed the time",
         "confirmó la hora",
-        "confirmed for",
         "confirmó para",
         "set up a call",
         "programó una cita",
@@ -5466,14 +5492,19 @@ const resumeTwilioCall = async (callSid, delayMs = 1000) => {
   }, delayMs);
 };
 
-// Function to translate transcript summary to Spanish using OpenAI
-async function translateSummaryToSpanish(summary) {
+// Function to analyze transcript and generate Spanish summary and commercial suggestion
+async function analyzeTranscriptAndGenerateInsights(
+  transcript,
+  originalSummary
+) {
   try {
-    console.log("🌐 [TRANSLATION] Starting translation of summary to Spanish");
+    console.log(
+      "🔍 [ANALYSIS] Starting transcript analysis and insight generation"
+    );
 
-    if (!summary || summary.trim() === "") {
-      console.log("❌ [TRANSLATION] No summary to translate");
-      return null;
+    if (!transcript || transcript.length === 0) {
+      console.log("❌ [ANALYSIS] No transcript to analyze");
+      return { summary: null, commercialSuggestion: null };
     }
 
     const { OpenAI } = await import("openai");
@@ -5481,43 +5512,103 @@ async function translateSummaryToSpanish(summary) {
       apiKey: OPENAI_API_KEY,
     });
 
+    // Prepare the full transcript text
+    const fullTranscript = transcript
+      .map((turn) => `${turn.speaker}: ${turn.text}`)
+      .join("\n");
+
+    console.log(
+      "📝 [ANALYSIS] Full transcript length:",
+      fullTranscript.length,
+      "characters"
+    );
+
     const response = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
+      model: "gpt-4",
       messages: [
         {
           role: "system",
-          content:
-            "Eres un traductor profesional. Traduce el siguiente resumen de conversación telefónica al español de manera natural y profesional, manteniendo el contexto y la información importante.",
+          content: `Eres un analista experto en conversaciones comerciales y ventas. Tu tarea es:
+
+1. ANALIZAR la transcripción completa de la llamada
+2. GENERAR un resumen ejecutivo en español que incluya:
+   - Objetivo principal de la llamada
+   - Puntos clave discutidos
+   - Resultado de la conversación
+   - Información importante recopilada
+   - Estado del prospecto/cliente
+
+3. SUGERIR el próximo paso comercial más apropiado basado en:
+   - El contexto de la conversación
+   - El nivel de interés mostrado
+   - Las objeciones o preocupaciones expresadas
+   - Las oportunidades identificadas
+   - El tipo de negocio o servicio
+
+El resumen debe ser profesional, conciso (máximo 300 palabras) y en español.
+La sugerencia comercial debe ser específica, accionable y en español (máximo 150 palabras).
+
+Formato de respuesta:
+RESUMEN:
+[resumen ejecutivo en español]
+
+SUGERENCIA COMERCIAL:
+[sugerencia específica del próximo paso]`,
         },
         {
           role: "user",
-          content: `Traduce este resumen al español: "${summary}"`,
+          content: `Analiza esta transcripción de llamada y genera el resumen y sugerencia comercial:
+
+TRANSCRIPCIÓN COMPLETA:
+${fullTranscript}
+
+RESUMEN ORIGINAL (para contexto):
+${originalSummary || "No disponible"}
+
+Por favor proporciona el análisis en el formato especificado.`,
         },
       ],
-      max_tokens: 500,
+      max_tokens: 800,
       temperature: 0.3,
     });
 
-    const translatedSummary = response.choices[0]?.message?.content?.trim();
+    const analysisResult = response.choices[0]?.message?.content?.trim();
 
-    if (translatedSummary) {
-      console.log("✅ [TRANSLATION] Summary translated successfully");
+    if (analysisResult) {
+      console.log("✅ [ANALYSIS] Analysis completed successfully");
+
+      // Parse the response to extract summary and commercial suggestion
+      const summaryMatch = analysisResult.match(
+        /RESUMEN:\s*([\s\S]*?)(?=SUGERENCIA COMERCIAL:|$)/i
+      );
+      const suggestionMatch = analysisResult.match(
+        /SUGERENCIA COMERCIAL:\s*([\s\S]*?)$/i
+      );
+
+      const summary = summaryMatch ? summaryMatch[1].trim() : null;
+      const commercialSuggestion = suggestionMatch
+        ? suggestionMatch[1].trim()
+        : null;
+
       console.log(
-        "📝 [TRANSLATION] Original:",
-        summary.substring(0, 100) + "..."
+        "📝 [ANALYSIS] Summary length:",
+        summary?.length || 0,
+        "characters"
       );
       console.log(
-        "📝 [TRANSLATION] Translated:",
-        translatedSummary.substring(0, 100) + "..."
+        "💡 [ANALYSIS] Commercial suggestion length:",
+        commercialSuggestion?.length || 0,
+        "characters"
       );
-      return translatedSummary;
+
+      return { summary, commercialSuggestion };
     } else {
-      console.log("❌ [TRANSLATION] No translation received from OpenAI");
-      return null;
+      console.log("❌ [ANALYSIS] No analysis result received from OpenAI");
+      return { summary: null, commercialSuggestion: null };
     }
   } catch (error) {
-    console.error("❌ [TRANSLATION] Error translating summary:", error);
-    return null;
+    console.error("❌ [ANALYSIS] Error analyzing transcript:", error);
+    return { summary: null, commercialSuggestion: null };
   }
 }
 
