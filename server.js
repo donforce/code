@@ -369,6 +369,118 @@ async function handleTwilioError(
   return translatedError;
 }
 
+// Function to determine detailed call result based on available data
+function determineDetailedCallResult(callData) {
+  try {
+    const {
+      result,
+      call_successful,
+      connection_status,
+      end_reason,
+      calendar_event_id,
+      duration,
+      turn_count,
+      transcript_summary,
+      commercial_suggestion,
+    } = callData;
+
+    // Check if call was connected and had conversation
+    const wasConnected = connection_status === "connected" || duration > 10;
+    const hadConversation = turn_count > 0 && transcript_summary;
+    const wasSuccessful = call_successful === "success";
+    const hasAppointment = !!calendar_event_id;
+
+    // Determine detailed result
+    if (hasAppointment) {
+      return "Cita Agendada";
+    }
+
+    if (wasConnected && hadConversation && wasSuccessful) {
+      // Check if there's commercial suggestion to determine interest level
+      if (commercial_suggestion) {
+        const suggestion = commercial_suggestion.toLowerCase();
+        if (
+          suggestion.includes("seguimiento") ||
+          suggestion.includes("propuesta") ||
+          suggestion.includes("interesado")
+        ) {
+          return "Cliente Interesado";
+        } else if (
+          suggestion.includes("reintentar") ||
+          suggestion.includes("objeciones")
+        ) {
+          return "Cliente con Objeciones";
+        } else {
+          return "Conversación Exitosa";
+        }
+      }
+      return "Conversación Exitosa";
+    }
+
+    if (wasConnected && hadConversation && !wasSuccessful) {
+      return "Cliente No Interesado";
+    }
+
+    if (wasConnected && !hadConversation) {
+      return "Cliente Conectó pero No Habló";
+    }
+
+    // Check specific end reasons
+    if (end_reason) {
+      if (end_reason.includes("voicemail")) {
+        return "Buzón de Voz";
+      }
+      if (
+        end_reason.includes("no_answer") ||
+        end_reason.includes("not_answered")
+      ) {
+        return "No Contestó";
+      }
+      if (end_reason.includes("busy")) {
+        return "Línea Ocupada";
+      }
+      if (end_reason.includes("invalid_phone")) {
+        return "Teléfono Inválido";
+      }
+      if (end_reason.includes("timeout")) {
+        return "Sin Respuesta (Timeout)";
+      }
+      if (end_reason.includes("ended_early")) {
+        return "Llamada Cortada";
+      }
+    }
+
+    // Fallback based on basic result
+    switch (result) {
+      case "success":
+        return "Éxito";
+      case "failed":
+        return "Falló";
+      case "voicemail":
+        return "Buzón de Voz";
+      case "not_answered":
+        return "No Contestó";
+      case "invalid_phone":
+        return "Teléfono Inválido";
+      case "timeout":
+        return "Sin Respuesta";
+      case "conversation_ended":
+        return "Conversación Terminada";
+      case "conversation_failed":
+        return "Conversación Falló";
+      case "no_response":
+        return "Sin Respuesta";
+      case "ended_early":
+        return "Llamada Cortada";
+      default:
+        return "Desconocido";
+    }
+  } catch (error) {
+    console.error("❌ Error determining detailed call result:", error);
+    return "Error";
+  }
+}
+
 // Optimized signature verification - minimal logging
 function verifyElevenLabsSignature(rawBody, signature) {
   try {
@@ -4209,6 +4321,46 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       }
     } catch (analysisError) {
       console.error("❌ Error analyzing transcript:", analysisError);
+    }
+
+    // 🎯 CALCULATE AND SAVE DETAILED RESULT
+    try {
+      console.log("🎯 [DETAILED RESULT] Calculating detailed call result");
+
+      // Get updated call data to calculate detailed result
+      const { data: updatedCall, error: fetchError } = await supabase
+        .from("calls")
+        .select("*")
+        .eq("conversation_id", conversation_id)
+        .single();
+
+      if (fetchError || !updatedCall) {
+        console.error("❌ Error fetching updated call data:", fetchError);
+      } else {
+        // Calculate detailed result
+        const detailedResult = determineDetailedCallResult(updatedCall);
+
+        console.log("🎯 [DETAILED RESULT] Calculated result:", detailedResult);
+
+        // Update call with detailed result
+        const { error: resultError } = await supabase
+          .from("calls")
+          .update({
+            detailed_result: detailedResult,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("conversation_id", conversation_id);
+
+        if (resultError) {
+          console.error("❌ Error updating detailed result:", resultError);
+        } else {
+          console.log(
+            "✅ [DETAILED RESULT] Detailed result saved successfully"
+          );
+        }
+      }
+    } catch (resultError) {
+      console.error("❌ Error calculating detailed result:", resultError);
     }
 
     reply.send({ success: true, message: "Webhook processed successfully" });
