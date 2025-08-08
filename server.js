@@ -3252,6 +3252,19 @@ fastify.register(async (fastifyInstance) => {
                     }
                     break;
 
+                  case "agent_tool_response":
+                    console.log(
+                      `🔧 [TOOL] Agent tool response received - Tool: ${message.tool_name}`
+                    );
+                    if (message.tool_name === "voicemail_detection") {
+                      const voicemailDetected =
+                        message.tool_response?.voicemail_detected;
+                      console.log(
+                        `📞 [VOICEMAIL] Detection result: ${voicemailDetected}`
+                      );
+                    }
+                    break;
+
                   default:
                     // Only log unknown message types, not ping
                     if (message.type !== "ping") {
