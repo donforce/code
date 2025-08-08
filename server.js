@@ -2425,9 +2425,9 @@ fastify.register(async (fastifyInstance) => {
             );
           });
 
-          console.log(
-            `[Audio] Sent ${audioBuffer.length} buffered chunks to ElevenLabs`
-          );
+          // console.log(
+          //   `[Audio] Sent ${audioBuffer.length} buffered chunks to ElevenLabs`
+          // );
 
           // Limpiar buffer
           audioBuffer = [];
@@ -2525,10 +2525,10 @@ fastify.register(async (fastifyInstance) => {
                   console.log(`[ElevenLabs] Event: ${message.type}`);
                 }
 
-                console.log(
-                  `[ElevenLabs] Message:`,
-                  JSON.stringify(message, null, 2)
-                );
+                // console.log(
+                //   `[ElevenLabs] Message:`,
+                //   JSON.stringify(message, null, 2)
+                // );
 
                 switch (message.type) {
                   case "conversation_initiation_metadata":
@@ -2765,6 +2765,8 @@ fastify.register(async (fastifyInstance) => {
                         "not available",
                         "not answering",
                         "answering machine",
+                        "grabe su mensaje",
+                        "tecla gato",
                       ].some((phrase) => {
                         const normalizedPhrase = phrase
                           .toLowerCase()
@@ -2774,18 +2776,12 @@ fastify.register(async (fastifyInstance) => {
                       });
 
                       // Enhanced numeric sequence detection - OPTIMIZED
-                      const hasNumericSequence = (() => {
-                        // Combinar todas las validaciones en una sola función para mejor rendimiento
-                        if (/^\d{7,}$/.test(normalized)) return true;
-                        if (/\b\d{7,}\b/.test(transcript)) return true;
-                        if (/\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(transcript))
-                          return true;
-                        if (/\d{4}[-.\s]?\d{3}[-.\s]?\d{3}/.test(transcript))
-                          return true;
-                        if (/\d{3}[-.\s]?\d{4}[-.\s]?\d{4}/.test(transcript))
-                          return true;
-                        return false;
-                      })();
+                      const normalizedDigits = transcript.replace(/\D/g, "");
+                      const hasNumericSequence =
+                        normalizedDigits.length >= 7 ||
+                        /\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(transcript) ||
+                        /\d{4}[-.\s]?\d{3}[-.\s]?\d{3}/.test(transcript) ||
+                        /\d{3}[-.\s]?\d{4}[-.\s]?\d{4}/.test(transcript);
 
                       // Detect when system is saying the phone number being called
                       const phoneNumberPattern =
@@ -3216,18 +3212,40 @@ fastify.register(async (fastifyInstance) => {
                     }
                     break;
 
-                  case "agent_tool_response":
+                  case "agent_tool_response": {
+                    const tool = message.agent_tool_response || message; // soporta formato anidado o plano
+                    const toolName =
+                      tool.tool_name || message.tool_name || "unknown";
+                    const toolType =
+                      tool.tool_type || message.tool_type || "unknown";
+                    const isError = tool.is_error === true;
+                    const toolCallId =
+                      tool.tool_call_id || message.tool_call_id;
+
                     console.log(
-                      `🔧 [TOOL] Agent tool response received - Tool: ${message.tool_name}`
+                      `🔧 [TOOL] Agent tool response - Tool: ${toolName} | Type: ${toolType} | Error: ${isError} | CallId: ${
+                        toolCallId || "n/a"
+                      }`
                     );
-                    if (message.tool_name === "voicemail_detection") {
-                      const voicemailDetected =
-                        message.tool_response?.voicemail_detected;
+
+                    const payload = tool.tool_response || message.tool_response;
+                    if (payload !== undefined) {
+                      console.log("🔧 [TOOL] Payload:", payload);
+                      if (toolName === "voicemail_detection") {
+                        console.log(
+                          `📞 [VOICEMAIL] Detection result: ${payload?.voicemail_detected}`
+                        );
+                      }
+                    }
+
+                    // Solo log, no altera el flujo de la llamada
+                    if (toolName === "end_call") {
                       console.log(
-                        `📞 [VOICEMAIL] Detection result: ${voicemailDetected}`
+                        "🔚 [TOOL] end_call solicitado por el agente"
                       );
                     }
                     break;
+                  }
 
                   default:
                     // Only log unknown message types, not ping
