@@ -2747,79 +2747,24 @@ fastify.register(async (fastifyInstance) => {
                         // Spanish phrases - más variaciones
                         "deje su mensaje",
                         "deja tu mensaje",
-                        "deje un mensaje",
-                        "deja un mensaje",
                         "después del tono",
                         "despues del tono",
-                        "después de la señal",
-                        "despues de la señal",
-                        "mensaje de voz",
                         "buzón de voz",
                         "buzon de voz",
-                        "el número que usted marcó",
-                        "el numero que usted marco",
-                        "el número que marcó",
-                        "el numero que marco",
                         "no está disponible",
                         "no esta disponible",
-                        "intente más tarde",
-                        "intente mas tarde",
-                        "pulse cualquier tecla",
-                        "presione cualquier tecla",
-                        "ha sido desconectado",
-                        "a sido desconectado",
-                        "está desconectado",
-                        "esta desconectado",
                         "no contesta",
                         "no responde",
-                        "no disponible",
-                        "fuera de servicio",
-                        "temporalmente no disponible",
-                        "temporalmente indisponible",
-                        "deje su recado",
-                        "deja tu recado",
-                        "grabadora",
                         "contestador",
-                        "contestador automático",
-                        "contestador automatico",
-                        "presiona la tecla numeral",
-                        "si sabes la extensión",
-                        "si conoces la extensión",
-                        "si conoce la extensión",
-                        "si sabe la extensión",
-                        "si conoces la extension",
-                        "si conoce la extension",
-                        "si sabe la extension",
+                        "grabadora",
 
-                        // English phrases
+                        // English phrases - solo las más comunes
                         "leave a message",
-                        "leave your message",
                         "after the tone",
-                        "after the beep",
-                        "voice message",
                         "voicemail",
-                        "voice mail",
-                        "the number you dialed",
-                        "the number you called",
-                        "is not available",
-                        "try again later",
-                        "has been disconnected",
-                        "please leave a message",
-                        "at the tone",
-                        "answering machine",
-                        "answering service",
-                        "out of service",
-                        "temporarily unavailable",
-                        "not answering",
-                        "not responding",
                         "not available",
-                        "disconnected",
-                        "unavailable",
-                        "if you know the extension",
-                        "if you know the extension number",
-                        "if you have the extension",
-                        "if you know the extension please",
-                        "if you know the extension number please",
+                        "not answering",
+                        "answering machine",
                       ].some((phrase) => {
                         const normalizedPhrase = phrase
                           .toLowerCase()
@@ -2828,13 +2773,19 @@ fastify.register(async (fastifyInstance) => {
                         return normalizedTranscript.includes(normalizedPhrase);
                       });
 
-                      // Enhanced numeric sequence detection
-                      const hasNumericSequence =
-                        /^\d{7,}$/.test(normalized) ||
-                        /\b\d{7,}\b/.test(transcript) ||
-                        /\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(transcript) ||
-                        /\d{4}[-.\s]?\d{3}[-.\s]?\d{3}/.test(transcript) ||
-                        /\d{3}[-.\s]?\d{4}[-.\s]?\d{4}/.test(transcript);
+                      // Enhanced numeric sequence detection - OPTIMIZED
+                      const hasNumericSequence = (() => {
+                        // Combinar todas las validaciones en una sola función para mejor rendimiento
+                        if (/^\d{7,}$/.test(normalized)) return true;
+                        if (/\b\d{7,}\b/.test(transcript)) return true;
+                        if (/\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(transcript))
+                          return true;
+                        if (/\d{4}[-.\s]?\d{3}[-.\s]?\d{3}/.test(transcript))
+                          return true;
+                        if (/\d{3}[-.\s]?\d{4}[-.\s]?\d{4}/.test(transcript))
+                          return true;
+                        return false;
+                      })();
 
                       // Detect when system is saying the phone number being called
                       const phoneNumberPattern =
@@ -2842,11 +2793,24 @@ fastify.register(async (fastifyInstance) => {
                         "";
                       const hasPhoneNumberSequence =
                         phoneNumberPattern &&
-                        phoneNumberPattern.split("").some(
-                          (digit) =>
-                            transcript.includes(digit) &&
-                            transcript.split(digit).length > 2 // Appears multiple times
-                        );
+                        phoneNumberPattern.length > 0 &&
+                        (() => {
+                          // Buscar secuencias de al menos 4 dígitos consecutivos del número
+                          for (
+                            let i = 0;
+                            i <= phoneNumberPattern.length - 4;
+                            i++
+                          ) {
+                            const sequence = phoneNumberPattern.substring(
+                              i,
+                              i + 4
+                            );
+                            if (transcript.includes(sequence)) {
+                              return true;
+                            }
+                          }
+                          return false;
+                        })();
 
                       // Check for consecutive number sequences that might be the phone number
                       const consecutiveNumbers = transcript.match(/\d+/g) || [];
@@ -2854,7 +2818,7 @@ fastify.register(async (fastifyInstance) => {
                         phoneNumberPattern &&
                         consecutiveNumbers.some(
                           (num) =>
-                            num.length >= 3 && phoneNumberPattern.includes(num)
+                            num.length >= 4 && phoneNumberPattern.includes(num)
                         );
 
                       if (
@@ -2920,7 +2884,7 @@ fastify.register(async (fastifyInstance) => {
                           ws.close();
                         }
                       }
-                    }, 1000); // Delay de 1 segundo para evitar falsos positivos
+                    }, 100); // Delay de 1 segundo para evitar falsos positivos
                     break;
 
                   case "conversation_summary":
@@ -3327,9 +3291,9 @@ fastify.register(async (fastifyInstance) => {
               callSid = msg.start.callSid;
               customParameters = msg.start.customParameters;
 
-              console.log(
-                `🔊 [WebSocket] Received user_voice_id: "${customParameters?.user_voice_id}"`
-              );
+              // console.log(
+              //   `🔊 [WebSocket] Received user_voice_id: "${customParameters?.user_voice_id}"`
+              // );
 
               // Setup ElevenLabs AFTER receiving customParameters
               // Setup ElevenLabs AFTER receiving customParameters
@@ -3339,14 +3303,12 @@ fastify.register(async (fastifyInstance) => {
                 elevenLabsConnections.get(callSid)?.readyState !==
                   WebSocket.OPEN
               ) {
-                console.log(
-                  `[ElevenLabs] Setting up new connection for callSid: ${callSid}`
-                );
+                // console.log(
+                //   `[ElevenLabs] Setting up new connection for callSid: ${callSid}`
+                // );
                 setupElevenLabs();
               } else {
-                console.log(
-                  `[ElevenLabs] Connection already exists for callSid: ${callSid}, skipping setup`
-                );
+                // console.log( `[ElevenLabs] Connection already exists for callSid: ${callSid}, skipping setup` );
               }
               break;
 
@@ -3361,7 +3323,7 @@ fastify.register(async (fastifyInstance) => {
 
                 // Validar que el audio no esté vacío
                 if (!audioChunk || audioChunk.length < 10) {
-                  console.log("[Audio] Skipping empty or invalid audio chunk");
+                  //console.log("[Audio] Skipping empty or invalid audio chunk");
                   break;
                 }
 
@@ -3379,9 +3341,7 @@ fastify.register(async (fastifyInstance) => {
                     lastProcessedSequence > 0 &&
                     currentSequence - lastProcessedSequence > 50
                   ) {
-                    console.log(
-                      `[Audio] Skipping out-of-order chunk: current=${currentSequence}, last=${lastProcessedSequence}`
-                    );
+                    // console.log( `[Audio] Skipping out-of-order chunk: current=${currentSequence}, last=${lastProcessedSequence}`);
                     break;
                   }
                   lastProcessedSequence = currentSequence;
@@ -3406,7 +3366,7 @@ fastify.register(async (fastifyInstance) => {
                       if (audioBuffer.length > 0) {
                         sendAudioBuffer();
                       }
-                    }, 150); // 150ms timeout para mayor estabilidad (aumentado de 100ms)
+                    }, 100); // 100ms timeout para mayor estabilidad (aumentado de 100ms)
                   }
 
                   // Log ocasional para debugging
@@ -4182,15 +4142,15 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     const { conversation_id, analysis, transcript, metadata } =
       webhookData.data;
 
-    console.log("📞 [ELEVENLABS] Processing conversation:", conversation_id);
+    // console.log("📞 [ELEVENLABS] Processing conversation:", conversation_id);
 
     // Log essential audio/transcript data
     if (transcript && transcript.length > 0) {
-      console.log(
-        "🎵 [ELEVENLABS] Audio transcript available:",
-        transcript.length,
-        "turns"
-      );
+      // console.log(
+      //   "🎵 [ELEVENLABS] Audio transcript available:",
+      //   transcript.length,
+      //   "turns"
+      // );
       // Log first few turns for debugging
       transcript.slice(0, 3).forEach((turn, index) => {
         console.log(
@@ -4200,18 +4160,18 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
           )}${turn.text?.length > 100 ? "..." : ""}`
         );
       });
-      console.log(
-        "[ELEVENLABS] Audio transcript: ",
-        JSON.stringify(transcript, null, 2)
-      );
+      // console.log(
+      //   "[ELEVENLABS] Audio transcript: ",
+      //   JSON.stringify(transcript, null, 2)
+      // );
     }
 
     if (analysis?.transcript_summary) {
-      console.log(
-        "📝 [ELEVENLABS] Summary:",
-        analysis.transcript_summary.substring(0, 200) +
-          (analysis.transcript_summary.length > 200 ? "..." : "")
-      );
+      // console.log(
+      //   "📝 [ELEVENLABS] Summary:",
+      //   analysis.transcript_summary.substring(0, 200) +
+      //     (analysis.transcript_summary.length > 200 ? "..." : "")
+      // );
     }
 
     // Find the call by conversation_id
@@ -4222,7 +4182,7 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       .single();
 
     if (callError || !call) {
-      console.error("❌ Call not found for conversation:", conversation_id);
+      // console.error("❌ Call not found for conversation:", conversation_id);
       return reply.code(404).send({ error: "Call not found" });
     }
 
@@ -4262,16 +4222,16 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       return reply.code(500).send({ error: "Failed to update call" });
     }
 
-    console.log("✅ [ELEVENLABS] Call updated successfully");
+    // console.log("✅ [ELEVENLABS] Call updated successfully");
 
     // 🔍 CHECK FOR SCHEDULED CALL IN SUMMARY
     try {
       const scheduledCallInfo = await checkForScheduledCall(webhookData, call);
 
       if (scheduledCallInfo) {
-        console.log(
-          "📅 [CALENDAR] Scheduled call detected, creating calendar event"
-        );
+        // console.log(
+        //   "📅 [CALENDAR] Scheduled call detected, creating calendar event"
+        // );
         await createCalendarEvent(scheduledCallInfo, call);
       }
     } catch (calendarError) {
@@ -4334,15 +4294,15 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
           }
         }
       } else {
-        console.log("⚠️ [ANALYSIS] No transcript available for analysis");
+        // console.log("⚠️ [ANALYSIS] No transcript available for analysis");
       }
     } catch (analysisError) {
-      console.error("❌ Error analyzing transcript:", analysisError);
+      // console.error("❌ Error analyzing transcript:", analysisError);
     }
 
     // 🎯 CALCULATE AND SAVE DETAILED RESULT
     try {
-      console.log("🎯 [DETAILED RESULT] Calculating detailed call result");
+      // console.log("🎯 [DETAILED RESULT] Calculating detailed call result");
 
       // Get updated call data to calculate detailed result
       const { data: updatedCall, error: fetchError } = await supabase
@@ -4357,7 +4317,7 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
         // Calculate detailed result
         const detailedResult = determineDetailedCallResult(updatedCall);
 
-        console.log("🎯 [DETAILED RESULT] Calculated result:", detailedResult);
+        // console.log("🎯 [DETAILED RESULT] Calculated result:", detailedResult);
 
         // Update call with detailed result
         const { error: resultError } = await supabase
@@ -4369,11 +4329,11 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
           .eq("conversation_id", conversation_id);
 
         if (resultError) {
-          console.error("❌ Error updating detailed result:", resultError);
+          // console.error("❌ Error updating detailed result:", resultError);
         } else {
-          console.log(
-            "✅ [DETAILED RESULT] Detailed result saved successfully"
-          );
+          // console.log(
+          //   "✅ [DETAILED RESULT] Detailed result saved successfully"
+          // );
         }
       }
     } catch (resultError) {
@@ -4382,7 +4342,7 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
 
     reply.send({ success: true, message: "Webhook processed successfully" });
   } catch (error) {
-    console.error("❌ Error processing webhook:", error);
+    // console.error("❌ Error processing webhook:", error);
     reply.code(500).send({ error: "Internal server error" });
   }
 });
@@ -4868,40 +4828,40 @@ async function checkForScheduledCall(webhookData, call) {
     console.log(
       "🔍 [CALENDAR] ===== INICIO DE BÚSQUEDA DE LLAMADA PROGRAMADA ====="
     );
-    console.log("📞 [CALENDAR] Call SID:", call.call_sid);
-    console.log("👤 [CALENDAR] User ID:", call.user_id);
-    console.log("📋 [CALENDAR] Lead ID:", call.lead_id);
-    console.log("📊 [CALENDAR] Call Status:", call.status);
-    console.log(
-      "✅ [CALENDAR] Call Successful:",
-      webhookData.data.analysis?.call_successful
-    );
+    // console.log("📞 [CALENDAR] Call SID:", call.call_sid);
+    // console.log("👤 [CALENDAR] User ID:", call.user_id);
+    // console.log("📋 [CALENDAR] Lead ID:", call.lead_id);
+    // console.log("📊 [CALENDAR] Call Status:", call.status);
+    // console.log(
+    //   "✅ [CALENDAR] Call Successful:",
+    //   webhookData.data.analysis?.call_successful
+    // );
 
     // Get the transcript summary from ElevenLabs
     const summary = webhookData.data.analysis?.transcript_summary || "";
-    console.log("📄 [CALENDAR] Summary length:", summary.length);
-    console.log(
-      "📄 [CALENDAR] Summary preview:",
-      summary.substring(0, 200) + (summary.length > 200 ? "..." : "")
-    );
+    // console.log("📄 [CALENDAR] Summary length:", summary.length);
+    // console.log(
+    //   "📄 [CALENDAR] Summary preview:",
+    //   summary.substring(0, 200) + (summary.length > 200 ? "..." : "")
+    // );
 
     if (!summary || summary.trim() === "") {
-      console.log(
-        "❌ [CALENDAR] No summary available - skipping calendar check"
-      );
+      // console.log(
+      //   "❌ [CALENDAR] No summary available - skipping calendar check"
+      // );
       return null;
     }
 
     // Check if call was successful (this indicates successful scheduling)
     const isCallSuccessful =
       webhookData.data.analysis?.call_successful === "success";
-    console.log("🎯 [CALENDAR] Call successful indicator:", isCallSuccessful);
+    // console.log("🎯 [CALENDAR] Call successful indicator:", isCallSuccessful);
 
     // If call is successful, proceed directly to extract date/time from summary
     if (isCallSuccessful) {
-      console.log(
-        "✅ [CALENDAR] Call marked as successful - proceeding with date/time extraction"
-      );
+      // console.log(
+      //   "✅ [CALENDAR] Call marked as successful - proceeding with date/time extraction"
+      // );
     } else {
       // Only check for scheduling keywords if call is not marked as successful
       const schedulingKeywords = [
@@ -4952,7 +4912,7 @@ async function checkForScheduledCall(webhookData, call) {
         "planificó una llamada para",
       ];
 
-      console.log("🔍 [CALENDAR] Checking for scheduling keywords...");
+      // console.log("🔍 [CALENDAR] Checking for scheduling keywords...");
       const foundKeywords = [];
 
       schedulingKeywords.forEach((keyword) => {
@@ -4961,28 +4921,28 @@ async function checkForScheduledCall(webhookData, call) {
         }
       });
 
-      console.log("🎯 [CALENDAR] Found keywords:", foundKeywords);
+      // console.log("🎯 [CALENDAR] Found keywords:", foundKeywords);
 
       if (foundKeywords.length === 0) {
-        console.log(
-          "❌ [CALENDAR] No scheduling keywords found and call not marked as successful - skipping calendar check"
-        );
+        // console.log(
+        //   "❌ [CALENDAR] No scheduling keywords found and call not marked as successful - skipping calendar check"
+        // );
         return null;
       }
 
-      console.log(
-        "✅ [CALENDAR] Scheduling keywords detected - proceeding with date/time extraction"
-      );
+      // console.log(
+      //   "✅ [CALENDAR] Scheduling keywords detected - proceeding with date/time extraction"
+      // );
     }
 
     // Extract date and time using direct text parsing
     const dateTimeInfo = await extractDateTimeFromSummary(summary);
 
     if (dateTimeInfo) {
-      console.log(
-        "✅ [CALENDAR] Date/time extracted successfully:",
-        dateTimeInfo
-      );
+      //  console.log(
+      //   "✅ [CALENDAR] Date/time extracted successfully:",
+      //   dateTimeInfo
+      // );
 
       // Get lead information
       const { data: lead, error: leadError } = await supabase
@@ -4996,11 +4956,11 @@ async function checkForScheduledCall(webhookData, call) {
         return null;
       }
 
-      console.log("✅ [CALENDAR] Lead information retrieved:", {
-        name: lead.name,
-        phone: lead.phone,
-        email: lead.email,
-      });
+      // console.log("✅ [CALENDAR] Lead information retrieved:", {
+      //   name: lead.name,
+      //   phone: lead.phone,
+      //   email: lead.email,
+      // });
 
       const result = {
         ...dateTimeInfo,
@@ -5009,31 +4969,31 @@ async function checkForScheduledCall(webhookData, call) {
         summary: summary,
       };
 
-      console.log("🎉 [CALENDAR] ===== FINAL RESULT =====");
-      console.log("📅 [CALENDAR] Date:", result.date);
-      console.log("⏰ [CALENDAR] Time:", result.time);
-      console.log("🌍 [CALENDAR] Timezone:", result.timezone);
-      console.log("👤 [CALENDAR] Lead:", result.lead.name);
-      console.log("📞 [CALENDAR] Phone:", result.lead.phone);
-      console.log("📧 [CALENDAR] Email:", result.lead.email);
-      console.log(
-        "🔍 [CALENDAR] ===== FIN DE BÚSQUEDA DE LLAMADA PROGRAMADA ====="
-      );
+      //  console.log("🎉 [CALENDAR] ===== FINAL RESULT =====");
+      // console.log("📅 [CALENDAR] Date:", result.date);
+      // console.log("⏰ [CALENDAR] Time:", result.time);
+      // console.log("🌍 [CALENDAR] Timezone:", result.timezone);
+      // console.log("👤 [CALENDAR] Lead:", result.lead.name);
+      // console.log("📞 [CALENDAR] Phone:", result.lead.phone);
+      // console.log("📧 [CALENDAR] Email:", result.lead.email);
+      // console.log(
+      //   "🔍 [CALENDAR] ===== FIN DE BÚSQUEDA DE LLAMADA PROGRAMADA ====="
+      // );
 
       return result;
     } else {
-      console.log("❌ [CALENDAR] Could not extract date/time from summary");
-      console.log(
-        "🔍 [CALENDAR] ===== FIN DE BÚSQUEDA DE LLAMADA PROGRAMADA ====="
-      );
+      // console.log("❌ [CALENDAR] Could not extract date/time from summary");
+      // console.log(
+      //   "🔍 [CALENDAR] ===== FIN DE BÚSQUEDA DE LLAMADA PROGRAMADA ====="
+      // );
     }
 
     return null;
   } catch (error) {
-    console.error("❌ [CALENDAR] Error checking for scheduled call:", error);
-    console.log(
-      "🔍 [CALENDAR] ===== FIN DE BÚSQUEDA DE LLAMADA PROGRAMADA (ERROR) ====="
-    );
+    // console.error("❌ [CALENDAR] Error checking for scheduled call:", error);
+    // console.log(
+    //   "🔍 [CALENDAR] ===== FIN DE BÚSQUEDA DE LLAMADA PROGRAMADA (ERROR) ====="
+    // );
     return null;
   }
 }
@@ -5041,21 +5001,21 @@ async function checkForScheduledCall(webhookData, call) {
 // Function to extract date and time from summary using direct text parsing
 async function extractDateTimeFromSummary(summary) {
   try {
-    console.log(
-      "🔍 [CALENDAR][EXTRACT] ===== INICIO DE EXTRACCIÓN DE FECHA/HORA ====="
-    );
-    console.log("📄 [CALENDAR][EXTRACT] Summary to analyze:", summary);
+    // console.log(
+    //   "🔍 [CALENDAR][EXTRACT] ===== INICIO DE EXTRACCIÓN DE FECHA/HORA ====="
+    // );
+    // console.log("📄 [CALENDAR][EXTRACT] Summary to analyze:", summary);
 
     if (!summary || summary.trim() === "") {
-      console.log("❌ [CALENDAR][EXTRACT] No summary available");
+      // console.log("❌ [CALENDAR][EXTRACT] No summary available");
       return null;
     }
 
     const text = summary.toLowerCase();
-    console.log(
-      "📝 [CALENDAR][EXTRACT] Normalized text (first 300 chars):",
-      text.substring(0, 300)
-    );
+    // console.log(
+    //   "📝 [CALENDAR][EXTRACT] Normalized text (first 300 chars):",
+    //   text.substring(0, 300)
+    // );
 
     // Patterns for date extraction
     const datePatterns = [
@@ -5608,13 +5568,13 @@ async function createCalendarEvent(scheduledCallInfo, call) {
       },
     };
 
-    console.log("📅 [CALENDAR] Creating event:", {
-      title: event.summary,
-      start: event.start.dateTime,
-      end: event.end.dateTime,
-      timezone: userTimeZone,
-      attendees: event.attendees.length,
-    });
+    // console.log("📅 [CALENDAR] Creating event:", {
+    //   title: event.summary,
+    //   start: event.start.dateTime,
+    //   end: event.end.dateTime,
+    //   timezone: userTimeZone,
+    //   attendees: event.attendees.length,
+    // });
 
     const calendarResponse = await calendar.events.insert({
       calendarId: "primary",
@@ -5622,12 +5582,12 @@ async function createCalendarEvent(scheduledCallInfo, call) {
       sendUpdates: "all",
     });
 
-    console.log("✅ [CALENDAR] Event created successfully:", {
-      eventId: calendarResponse.data.id,
-      htmlLink: calendarResponse.data.htmlLink,
-      start: calendarResponse.data.start,
-      end: calendarResponse.data.end,
-    });
+    // console.log("✅ [CALENDAR] Event created successfully:", {
+    //   eventId: calendarResponse.data.id,
+    //   htmlLink: calendarResponse.data.htmlLink,
+    //   start: calendarResponse.data.start,
+    //   end: calendarResponse.data.end,
+    // });
 
     // Update call with calendar event info
     await supabase
@@ -5639,9 +5599,9 @@ async function createCalendarEvent(scheduledCallInfo, call) {
       })
       .eq("conversation_id", call.conversation_id);
 
-    console.log("✅ [CALENDAR] Call updated with calendar event info");
+    // console.log("✅ [CALENDAR] Call updated with calendar event info");
   } catch (error) {
-    console.error("❌ [CALENDAR] Error creating calendar event:", error);
+    // console.error("❌ [CALENDAR] Error creating calendar event:", error);
   }
 }
 
@@ -6828,24 +6788,24 @@ fastify.post("/twilio-recording-status", async (request, reply) => {
         .send({ error: "CallSid and RecordingSid required" });
     }
 
-    console.log("🎙️ [TWILIO RECORDING] Processing recording:", {
-      CallSid,
-      RecordingSid,
-      RecordingUrl,
-      RecordingDuration,
-      RecordingStatus,
-      RecordingChannels,
-      RecordingSource,
-      AccountSid,
-    });
+    // console.log("🎙️ [TWILIO RECORDING] Processing recording:", {
+    //   CallSid,
+    //   RecordingSid,
+    //   RecordingUrl,
+    //   RecordingDuration,
+    //   RecordingStatus,
+    //   RecordingChannels,
+    //   RecordingSource,
+    //   AccountSid,
+    // });
 
     // Verificar si la grabación viene de una subcuenta
     let isFromSubaccount = false;
     if (AccountSid && AccountSid !== TWILIO_ACCOUNT_SID) {
       isFromSubaccount = true;
-      console.log(
-        `🎙️ [TWILIO RECORDING] Recording from subaccount: ${AccountSid}`
-      );
+      // console.log(
+      //   `🎙️ [TWILIO RECORDING] Recording from subaccount: ${AccountSid}`
+      // );
     }
 
     // Update call with recording information
