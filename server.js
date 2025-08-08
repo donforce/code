@@ -3562,7 +3562,7 @@ async function cleanupStuckCalls() {
           const now = new Date();
           const durationMinutes = (now - callStartTime) / (1000 * 60);
 
-          if (durationMinutes > 5) {
+          if (durationMinutes > 8) {
             console.log(
               `[CLEANUP] Call ${
                 call.call_sid
@@ -3717,7 +3717,7 @@ async function cleanupStuckCalls() {
 
 // Your existing twilio-status endpoint with enhanced logging and error handling
 fastify.post("/twilio-status", async (request, reply) => {
-  console.log("📞 [TWILIO STATUS] Status update received");
+  //console.log("📞 [TWILIO STATUS] Status update received");
 
   const callSid = request.body.CallSid;
   const callDuration = parseInt(request.body.CallDuration || "0", 10);
@@ -3726,13 +3726,13 @@ fastify.post("/twilio-status", async (request, reply) => {
   const callErrorMessage = request.body.ErrorMessage;
   const accountSid = request.body.AccountSid; // Para identificar subcuentas
 
-  console.log(
-    `📱 [TWILIO STATUS] Call ${callSid}: ${callStatus} (${callDuration}s)`
-  );
+  //console.log(
+  //  `📱 [TWILIO STATUS] Call ${callSid}: ${callStatus} (${callDuration}s)`
+  //);
 
   // Log si la llamada viene de una subcuenta
   if (accountSid && accountSid !== TWILIO_ACCOUNT_SID) {
-    console.log(`📱 [TWILIO STATUS] Call from subaccount: ${accountSid}`);
+    //console.log(`📱 [TWILIO STATUS] Call from subaccount: ${accountSid}`);
   }
 
   try {
@@ -3747,10 +3747,10 @@ fastify.post("/twilio-status", async (request, reply) => {
       .single();
 
     if (checkError) {
-      console.error(
-        "[TWILIO STATUS] Error checking existing call:",
-        checkError
-      );
+      //console.error(
+      //  "[TWILIO STATUS] Error checking existing call:",
+      //  checkError
+      //);
       // Return 200 OK even if call not found to avoid Twilio errors
       return reply.code(200).send();
     }
@@ -3993,7 +3993,7 @@ fastify.post("/twilio-status", async (request, reply) => {
         // Get current user data
         const { data: userData, error: userError } = await supabase
           .from("users")
-          .select("available_minutes")
+          .select("available_minutes, available_call_credits") // añadir credits
           .eq("id", existingCall.user_id)
           .single();
 
@@ -4002,33 +4002,61 @@ fastify.post("/twilio-status", async (request, reply) => {
         } else if (userData) {
           // available_minutes stores the value in seconds
           const totalAvailableSeconds = userData.available_minutes || 0;
+          const availableCredits = userData.available_call_credits || 0;
 
-          // Calculate remaining seconds after deduction
+          // Créditos necesarios (ceil(segundos/60))
+          const creditsNeededTotal = Math.ceil(callDuration / 60);
+
+          // Si prefieres cobrar 1 crédito al iniciar en otro servicio, usa:
+          // const additionalCreditsNeeded = Math.max(creditsNeededTotal - 1, 0);
+          // Si todo se cobra al finalizar aquí:
+          const additionalCreditsNeeded = creditsNeededTotal;
+
+          const creditsToDeduct = Math.min(
+            availableCredits,
+            additionalCreditsNeeded
+          );
+          const remainingAdditionalCredits = Math.max(
+            additionalCreditsNeeded - creditsToDeduct,
+            0
+          );
+
+          // Lo no cubierto por créditos se descuenta en segundos (1 crédito = 60s)
+          const secondsShortfall = remainingAdditionalCredits * 60;
+
           const remainingSeconds = Math.max(
             0,
-            totalAvailableSeconds - callDuration
+            totalAvailableSeconds - secondsShortfall
+          );
+          const remainingCredits = Math.max(
+            0,
+            availableCredits - creditsToDeduct
           );
 
-          console.log(
-            `[TWILIO STATUS] User ${existingCall.user_id} time deduction:`,
-            {
-              before: {
-                seconds: totalAvailableSeconds,
-                minutes: Math.floor(totalAvailableSeconds / 60),
-              },
-              callDuration,
-              after: {
-                seconds: remainingSeconds,
-                minutes: Math.floor(remainingSeconds / 60),
-              },
-            }
-          );
+          console.log("[TWILIO STATUS] Post-call deduction (credits-first):", {
+            callDuration,
+            creditsNeededTotal,
+            additionalCreditsNeeded,
+            creditsToDeduct,
+            secondsShortfall,
+            before: {
+              seconds: totalAvailableSeconds,
+              minutes: Math.floor(totalAvailableSeconds / 60),
+              credits: availableCredits,
+            },
+            after: {
+              seconds: remainingSeconds,
+              minutes: Math.floor(remainingSeconds / 60),
+              credits: remainingCredits,
+            },
+          });
 
-          // Update user's available time (stored in seconds)
+          // Actualizar saldos
           const { error: updateError } = await supabase
             .from("users")
             .update({
               available_minutes: remainingSeconds,
+              available_call_credits: remainingCredits,
               updated_at: new Date().toISOString(),
             })
             .eq("id", existingCall.user_id);
@@ -5921,11 +5949,12 @@ async function handleCheckoutSessionCompleted(session, stripe) {
     // Find the subscription plan by product name
     let planId = null;
     let minutesPerMonth = 250; // Default fallback
+    let planCredits = 0; // NUEVO: créditos por mes
 
     if (product.name) {
       const { data: plan, error: planError } = await supabase
         .from("subscription_plans")
-        .select("id, minutes_per_month")
+        .select("id, minutes_per_month, monthly_call_credits") // cambiar credits_per_month -> monthly_call_credits
         .eq("name", product.name)
         .eq("is_active", true)
         .single();
@@ -5937,7 +5966,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
         // Try to find plan by stripe_price_id as fallback
         const { data: planByPriceId } = await supabase
           .from("subscription_plans")
-          .select("id, minutes_per_month")
+          .select("id, minutes_per_month, monthly_call_credits") // cambiar credits_per_month -> monthly_call_credits
           .eq("stripe_price_id", price.id)
           .eq("is_active", true)
           .single();
@@ -5964,6 +5993,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
       } else {
         planId = plan.id;
         minutesPerMonth = plan.minutes_per_month;
+        planCredits = plan.monthly_call_credits || 0; // cambiar plan.credits_per_month -> monthly_call_credits
         console.log("✅ [STRIPE] Plan found by name:", plan.id);
       }
     } else {
@@ -5978,6 +6008,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
     console.log("📦 [STRIPE] Final plan details:", {
       planId: planId,
       minutesPerMonth: minutesPerMonth,
+      planCredits: planCredits, // nuevo
       productName: product.name,
     });
 
@@ -6118,7 +6149,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
     // Get current user minutes
     const { data: currentUser, error: userError } = await supabase
       .from("users")
-      .select("available_minutes")
+      .select("available_minutes, available_call_credits") // añadir credits
       .eq("id", user.id)
       .single();
 
@@ -6147,6 +6178,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
       .from("users")
       .update({
         available_minutes: newTotalSeconds,
+        available_call_credits: planCredits || 0, // nuevo
         updated_at: new Date().toISOString(),
       })
       .eq("id", user.id);
@@ -6164,6 +6196,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
       previousSeconds: currentSeconds,
       addedMinutes: minutesPerMonth,
       newTotalSeconds: newTotalSeconds,
+      newTotalCredits: planCredits || 0, // nuevo
     });
 
     // Sync referral data
@@ -6721,6 +6754,7 @@ async function syncReferralData(userId, subscriptionData) {
         referred_plan: planName,
         referred_status: userSubscription.status || "active",
         referred_minutes: userSubscription.minutes_per_month || 5,
+        referred_credits: userSubscription.credits_per_month || 0,
         updated_at: new Date().toISOString(),
       })
       .eq("referred_id", userId);
