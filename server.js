@@ -3831,6 +3831,11 @@ fastify.post("/twilio-status", async (request, reply) => {
     if (callStatus === "completed") {
       try {
         const twilioRecord = await twilioClient.calls(callSid).fetch();
+        console.log(
+          "🔎 [TWILIO] Call record (json):",
+          JSON.stringify(twilioRecord, null, 2)
+        );
+
         // Twilio devuelve price con signo (usualmente negativo), guarda valor absoluto
         const priceStr = twilioRecord.price;
         const fetchedPriceUnit =
