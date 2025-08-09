@@ -3831,6 +3831,7 @@ fastify.post("/twilio-status", async (request, reply) => {
     if (callStatus === "completed") {
       try {
         const twilioRecord = await twilioClient.calls(callSid).fetch();
+        const callUri = twilioRecord.uri || null;
         console.log(
           "🔎 [TWILIO] Call record (json):",
           JSON.stringify(twilioRecord, null, 2)
@@ -3850,10 +3851,12 @@ fastify.post("/twilio-status", async (request, reply) => {
         const enrichUpdate = { updated_at: new Date().toISOString() };
         if (fetchedToNumber) enrichUpdate.to_number = fetchedToNumber;
         if (toCountryFromWebhook)
-          enrichUpdate.to_country = toCountryFromWebhook; // Twilio API no siempre trae país
+          enrichUpdate.to_country = toCountryFromWebhook;
         if (callPrice != null && !Number.isNaN(callPrice))
           enrichUpdate.call_price = callPrice;
-        if (fetchedPriceUnit) enrichUpdate.call_price_unit = fetchedPriceUnit;
+        // if (fetchedPriceUnit) enrichUpdate.call_price_unit = fetchedPriceUnit;
+        // 👉 NUEVO: guardar la URI de la llamada
+        if (callUri) enrichUpdate.call_uri = callUri;
 
         await supabase
           .from("calls")
