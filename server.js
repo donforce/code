@@ -4001,55 +4001,45 @@ fastify.post("/twilio-status", async (request, reply) => {
           console.error("[TWILIO STATUS] Error fetching user data:", userError);
         } else if (userData) {
           // available_minutes stores the value in seconds
+          // available_minutes stores the value in seconds
           const totalAvailableSeconds = userData.available_minutes || 0;
           const availableCredits = userData.available_call_credits || 0;
 
-          // Créditos necesarios (ceil(segundos/60))
+          // Créditos necesarios por la llamada (ceil(segundos/60)) – se cobran SIEMPRE
           const creditsNeededTotal = Math.ceil(callDuration / 60);
-
-          // Si prefieres cobrar 1 crédito al iniciar en otro servicio, usa:
-          // const additionalCreditsNeeded = Math.max(creditsNeededTotal - 1, 0);
-          // Si todo se cobra al finalizar aquí:
-          const additionalCreditsNeeded = creditsNeededTotal;
-
           const creditsToDeduct = Math.min(
             availableCredits,
-            additionalCreditsNeeded
-          );
-          const remainingAdditionalCredits = Math.max(
-            additionalCreditsNeeded - creditsToDeduct,
-            0
+            creditsNeededTotal
           );
 
-          // Lo no cubierto por créditos se descuenta en segundos (1 crédito = 60s)
-          const secondsShortfall = remainingAdditionalCredits * 60;
-
+          // Segundos: SIEMPRE restar la duración completa de la llamada (como antes)
           const remainingSeconds = Math.max(
             0,
-            totalAvailableSeconds - secondsShortfall
+            totalAvailableSeconds - callDuration
           );
           const remainingCredits = Math.max(
             0,
             availableCredits - creditsToDeduct
           );
 
-          console.log("[TWILIO STATUS] Post-call deduction (credits-first):", {
-            callDuration,
-            creditsNeededTotal,
-            additionalCreditsNeeded,
-            creditsToDeduct,
-            secondsShortfall,
-            before: {
-              seconds: totalAvailableSeconds,
-              minutes: Math.floor(totalAvailableSeconds / 60),
-              credits: availableCredits,
-            },
-            after: {
-              seconds: remainingSeconds,
-              minutes: Math.floor(remainingSeconds / 60),
-              credits: remainingCredits,
-            },
-          });
+          console.log(
+            "[TWILIO STATUS] Post-call deduction (both: seconds + credits):",
+            {
+              callDuration,
+              creditsNeededTotal,
+              creditsToDeduct,
+              before: {
+                seconds: totalAvailableSeconds,
+                minutes: Math.floor(totalAvailableSeconds / 60),
+                credits: availableCredits,
+              },
+              after: {
+                seconds: remainingSeconds,
+                minutes: Math.floor(remainingSeconds / 60),
+                credits: remainingCredits,
+              },
+            }
+          );
 
           // Actualizar saldos
           const { error: updateError } = await supabase
