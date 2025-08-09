@@ -3726,6 +3726,13 @@ fastify.post("/twilio-status", async (request, reply) => {
   const callErrorMessage = request.body.ErrorMessage;
   const accountSid = request.body.AccountSid; // Para identificar subcuentas
 
+  // Datos opcionales del webhook (si Twilio los envía)
+  const toNumberFromWebhook = request.body.To || request.body.Called || null;
+  const toCountryFromWebhook =
+    request.body.CalledCountry || request.body.ToCountry || null;
+  const priceFromWebhook = request.body.CallPrice || request.body.Price || null;
+  const priceUnitFromWebhook = request.body.PriceUnit || null;
+
   //console.log(
   //  `📱 [TWILIO STATUS] Call ${callSid}: ${callStatus} (${callDuration}s)`
   //);
@@ -3808,6 +3815,9 @@ fastify.post("/twilio-status", async (request, reply) => {
       connection_failure_reason: connectionFailureReason,
       updated_at: new Date().toISOString(),
     };
+    // Guardar info de destino del webhook si está disponible
+    if (toNumberFromWebhook) updateData.to_number = toNumberFromWebhook;
+    if (toCountryFromWebhook) updateData.to_country = toCountryFromWebhook;
 
     // Add error information if available
     if (callErrorCode || callErrorMessage) {
@@ -3816,6 +3826,45 @@ fastify.post("/twilio-status", async (request, reply) => {
     }
 
     await supabase.from("calls").update(updateData).eq("call_sid", callSid);
+
+    // Enriquecer con costo y destino desde Twilio al completar
+    if (callStatus === "completed") {
+      try {
+        const twilioRecord = await twilioClient.calls(callSid).fetch();
+        // Twilio devuelve price con signo (usualmente negativo), guarda valor absoluto
+        const priceStr = twilioRecord.price;
+        const fetchedPriceUnit =
+          twilioRecord.priceUnit || priceUnitFromWebhook || null;
+        const fetchedToNumber = twilioRecord.to || toNumberFromWebhook || null;
+        const callPrice = priceStr
+          ? Math.abs(parseFloat(priceStr))
+          : priceFromWebhook
+          ? Math.abs(parseFloat(priceFromWebhook))
+          : null;
+
+        const enrichUpdate = { updated_at: new Date().toISOString() };
+        if (fetchedToNumber) enrichUpdate.to_number = fetchedToNumber;
+        if (toCountryFromWebhook)
+          enrichUpdate.to_country = toCountryFromWebhook; // Twilio API no siempre trae país
+        if (callPrice != null && !Number.isNaN(callPrice))
+          enrichUpdate.call_price = callPrice;
+        if (fetchedPriceUnit) enrichUpdate.call_price_unit = fetchedPriceUnit;
+
+        await supabase
+          .from("calls")
+          .update(enrichUpdate)
+          .eq("call_sid", callSid);
+        console.log(
+          "💲 [TWILIO STATUS] Saved call pricing info:",
+          enrichUpdate
+        );
+      } catch (err) {
+        console.warn(
+          "⚠️ [TWILIO STATUS] Error fetching Twilio call record for pricing:",
+          err?.message || err
+        );
+      }
+    }
 
     // Handle error cases and mark leads accordingly
     if (existingCall && existingCall.lead_id) {
