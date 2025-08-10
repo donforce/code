@@ -3995,9 +3995,41 @@ fastify.post("/twilio-status", async (request, reply) => {
     await supabase.from("calls").update(updateData).eq("call_sid", callSid);
 
     // Enriquecer con costo y destino desde Twilio al completar
+    // Enriquecer con costo y destino desde Twilio al completar
     if (callStatus === "completed") {
       try {
-        const twilioRecord = await twilioClient.calls(callSid).fetch();
+        // Get user data to determine which Twilio client to use
+        let twilioClientToUse = twilioClient; // Default to main account
+
+        if (existingCall && existingCall.user_id) {
+          const { data: userData, error: userError } = await supabase
+            .from("users")
+            .select("twilio_subaccount_sid, twilio_auth_token")
+            .eq("id", existingCall.user_id)
+            .single();
+
+          if (
+            !userError &&
+            userData &&
+            userData.twilio_subaccount_sid &&
+            userData.twilio_auth_token
+          ) {
+            // Use subaccount client
+            twilioClientToUse = new Twilio(
+              userData.twilio_subaccount_sid,
+              userData.twilio_auth_token
+            );
+            console.log(
+              `🔍 [TWILIO STATUS] Using subaccount client for call ${callSid}: ${userData.twilio_subaccount_sid}`
+            );
+          } else {
+            console.log(
+              `🔍 [TWILIO STATUS] Using main account client for call ${callSid}`
+            );
+          }
+        }
+
+        const twilioRecord = await twilioClientToUse.calls(callSid).fetch();
         const callUri = twilioRecord.uri || null;
         console.log(
           "🔎 [TWILIO] Call record (json):",
@@ -4037,6 +4069,50 @@ fastify.post("/twilio-status", async (request, reply) => {
         console.warn(
           "⚠️ [TWILIO STATUS] Error fetching Twilio call record for pricing:",
           err?.message || err
+        );
+
+        // Fallback: try to save at least the call_uri if we can construct it
+        try {
+          const fallbackCallUri = `/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Calls/${callSid}.json`;
+          console.log(
+            "🔄 [TWILIO STATUS] Using fallback call_uri:",
+            fallbackCallUri
+          );
+
+          await supabase
+            .from("calls")
+            .update({
+              call_uri: fallbackCallUri,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("call_sid", callSid);
+        } catch (fallbackErr) {
+          console.error(
+            "❌ [TWILIO STATUS] Fallback call_uri save also failed:",
+            fallbackErr?.message || fallbackErr
+          );
+        }
+      }
+    } else {
+      // For non-completed calls, still try to save call_uri if we can construct it
+      try {
+        const fallbackCallUri = `/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Calls/${callSid}.json`;
+        console.log(
+          "🔄 [TWILIO STATUS] Saving call_uri for non-completed call:",
+          fallbackCallUri
+        );
+
+        await supabase
+          .from("calls")
+          .update({
+            call_uri: fallbackCallUri,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("call_sid", callSid);
+      } catch (fallbackErr) {
+        console.warn(
+          "⚠️ [TWILIO STATUS] Could not save fallback call_uri:",
+          fallbackErr?.message || fallbackErr
         );
       }
     }
