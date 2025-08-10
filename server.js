@@ -5984,47 +5984,41 @@ async function analyzeTranscriptAndGenerateInsights(
       messages: [
         {
           role: "system",
-          content: `Eres un analista experto en conversaciones comerciales y ventas. Tu tarea es:
-
-1. ANALIZAR la transcripción completa de la llamada
-2. GENERAR un resumen ejecutivo en español que incluya:
-   - Objetivo principal de la llamada
-   - Puntos clave discutidos
-   - Resultado de la conversación
-   - Información importante recopilada
-   - Estado del prospecto/cliente
-
-3. SUGERIR el próximo paso comercial más apropiado basado en:
-   - El contexto de la conversación
-   - El nivel de interés mostrado
-   - Las objeciones o preocupaciones expresadas
-   - Las oportunidades identificadas
-   - El tipo de negocio o servicio
-
-El resumen debe ser profesional, conciso (máximo 300 palabras) y en español.
-La sugerencia comercial debe ser específica, accionable y en español (máximo 150 palabras).
-
-Formato de respuesta:
-RESUMEN:
-[resumen ejecutivo en español]
-
-SUGERENCIA COMERCIAL:
-[sugerencia específica del próximo paso]`,
+          content: `Eres un asistente que genera resúmenes simples y directos de llamadas comerciales.
+        
+        INSTRUCCIONES:
+        1. Lee la transcripción completa
+        2. Genera un resumen CONCISO en español (máximo 100 palabras)
+        3. Sugiere el próximo paso comercial (máximo 50 palabras)
+        
+        REGLAS:
+        - Sé directo y simple, no técnico
+        - Si es buzón de voz: "Angela llamó a [nombre], sin embargo llegó a buzón de voz"
+        - Si no contestó: "Angela llamó a [nombre], pero no contestó"
+        - Si hubo conversación: describe brevemente qué pasó
+        - No uses frases como "El objetivo principal no se puede determinar"
+        - No menciones "herramientas", "transcripciones" o términos técnicos
+        
+        Formato:
+        RESUMEN:
+        [resumen simple y directo]
+        
+        SUGERENCIA:
+        [próximo paso específico]`,
         },
+
         {
           role: "user",
-          content: `Analiza esta transcripción de llamada y genera el resumen y sugerencia comercial:
-
-TRANSCRIPCIÓN COMPLETA:
-${fullTranscript}
-
-RESUMEN ORIGINAL (para contexto):
-${originalSummary || "No disponible"}
-
-Por favor proporciona el análisis en el formato especificado.`,
+          content: `Genera un resumen simple de esta llamada:
+        
+        TRANSCRIPCIÓN:
+        ${fullTranscript}
+        
+        RESUMEN ORIGINAL:
+        ${originalSummary || "No disponible"}`,
         },
       ],
-      max_tokens: 800,
+      max_tokens: 400,
       temperature: 0.3,
     });
 
@@ -6035,10 +6029,10 @@ Por favor proporciona el análisis en el formato especificado.`,
 
       // Parse the response to extract summary and commercial suggestion
       const summaryMatch = analysisResult.match(
-        /RESUMEN:\s*([\s\S]*?)(?=SUGERENCIA COMERCIAL:|$)/i
+        /RESUMEN:\s*([\s\S]*?)(?=SUGERENCIA:|$)/i
       );
       const suggestionMatch = analysisResult.match(
-        /SUGERENCIA COMERCIAL:\s*([\s\S]*?)$/i
+        /SUGERENCIA:\s*([\s\S]*?)$/i
       );
 
       const summary = summaryMatch ? summaryMatch[1].trim() : null;
