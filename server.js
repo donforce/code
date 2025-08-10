@@ -5984,24 +5984,27 @@ async function analyzeTranscriptAndGenerateInsights(
       messages: [
         {
           role: "system",
-          content: `Eres un asistente que genera resúmenes simples y directos de llamadas comerciales.
+          content: `Eres un asistente que analiza el RESULTADO de llamadas comerciales.
         
         INSTRUCCIONES:
         1. Lee la transcripción completa
-        2. Genera un resumen CONCISO en español (máximo 100 palabras)
-        3. Sugiere el próximo paso comercial (máximo 50 palabras)
+        2. Analiza qué PASÓ en la llamada (el resultado)
+        3. Genera un resumen CONCISO del resultado (máximo 100 palabras)
+        4. Sugiere el próximo paso (máximo 50 palabras)
         
         REGLAS:
-        - Sé directo y simple, no técnico
+        - Enfócate en el RESULTADO, no en el objetivo
         - Si es buzón de voz: "Angela llamó a [nombre], sin embargo llegó a buzón de voz"
         - Si no contestó: "Angela llamó a [nombre], pero no contestó"
-        - Si hubo conversación: describe brevemente qué pasó
-        - No uses frases como "El objetivo principal no se puede determinar"
-        - No menciones "herramientas", "transcripciones" o términos técnicos
+        - Si se agendó cita: "Angela llamó a [nombre] y logró agendar una cita"
+        - Si el cliente no está interesado: "Angela llamó a [nombre], pero no está interesado"
+        - Si el cliente está interesado: "Angela llamó a [nombre] y mostró interés"
+        - Si hubo conversación: describe brevemente qué pasó y el resultado
+        - No menciones "objetivo", "herramientas" o términos técnicos
         
         Formato:
         RESUMEN:
-        [resumen simple y directo]
+        [resultado simple y directo de la llamada]
         
         SUGERENCIA:
         [próximo paso específico]`,
@@ -6009,7 +6012,7 @@ async function analyzeTranscriptAndGenerateInsights(
 
         {
           role: "user",
-          content: `Genera un resumen simple de esta llamada:
+          content: `Analiza el resultado de esta llamada:
         
         TRANSCRIPCIÓN:
         ${fullTranscript}
