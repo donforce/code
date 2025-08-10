@@ -384,9 +384,38 @@ function determineDetailedCallResult(callData) {
       commercial_suggestion,
     } = callData;
 
+    const textIncludesAny = (text, phrases) => {
+      if (!text) return false;
+      const t = String(text).toLowerCase();
+      return phrases.some((p) => t.includes(p));
+    };
+
+    const explicitNoInterest = () => {
+      const phrases = [
+        "no está interesado",
+        "no estoy interesado",
+        "no estoy interesada",
+        "no le interesa",
+        "no me interesa",
+        "no interesa",
+        "no quiero",
+        "no quiere",
+        "no estoy interesado en",
+        "no estoy interesada en",
+        "no desea",
+        "no le interesa la oferta",
+        "not interested",
+        "no interest",
+      ];
+      return (
+        textIncludesAny(transcript_summary, phrases) ||
+        textIncludesAny(commercial_suggestion, phrases)
+      );
+    };
+
     // Check if call was connected and had conversation
     const wasConnected = connection_status === "connected" || duration > 10;
-    const hadConversation = turn_count > 0 && transcript_summary;
+    const hadConversation = turn_count > 0 && !!transcript_summary;
     const wasSuccessful = call_successful === "success";
     const hasAppointment = !!calendar_event_id;
 
@@ -395,30 +424,38 @@ function determineDetailedCallResult(callData) {
       return "Cita Agendada";
     }
 
-    if (wasConnected && hadConversation && wasSuccessful) {
-      // Check if there's commercial suggestion to determine interest level
-      if (commercial_suggestion) {
-        const suggestion = commercial_suggestion.toLowerCase();
-        if (
-          suggestion.includes("seguimiento") ||
-          suggestion.includes("propuesta") ||
-          suggestion.includes("interesado")
-        ) {
-          return "Cliente Interesado";
-        } else if (
-          suggestion.includes("reintentar") ||
-          suggestion.includes("objeciones")
-        ) {
-          return "Cliente con Objeciones";
-        } else {
-          return "Conversación Exitosa";
-        }
+    if (wasConnected && hadConversation) {
+      // Only mark no-interest when explicit in transcript or suggestion
+      if (explicitNoInterest()) {
+        return "Cliente No Interesado";
       }
-      return "Conversación Exitosa";
-    }
 
-    if (wasConnected && hadConversation && !wasSuccessful) {
-      return "Cliente No Interesado";
+      if (wasSuccessful) {
+        // Use commercial suggestion to determine interest level
+        if (commercial_suggestion) {
+          const suggestion = commercial_suggestion.toLowerCase();
+          if (
+            suggestion.includes("seguimiento") ||
+            suggestion.includes("propuesta") ||
+            suggestion.includes("interesado") ||
+            suggestion.includes("interes")
+          ) {
+            return "Cliente Interesado";
+          } else if (
+            suggestion.includes("reintentar") ||
+            suggestion.includes("objeciones") ||
+            suggestion.includes("follow up")
+          ) {
+            return "Cliente con Objeciones";
+          } else {
+            return "Conversación Exitosa";
+          }
+        }
+        return "Conversación Exitosa";
+      }
+
+      // Hubo conversación pero no fue exitosa y sin negativa explícita
+      return "Cliente con Objeciones";
     }
 
     if (wasConnected && !hadConversation) {
@@ -426,27 +463,152 @@ function determineDetailedCallResult(callData) {
     }
 
     // Check specific end reasons
+    // Check specific end reasons with comprehensive voicemail detection
     if (end_reason) {
-      if (end_reason.includes("voicemail")) {
+      // Comprehensive voicemail detection
+      if (
+        end_reason.includes("voicemail") ||
+        end_reason === "voicemail_detected_by_silence" ||
+        end_reason === "voicemail_detected_by_transcript" ||
+        end_reason === "elevenlabs_voicemail_detected" ||
+        end_reason.toLowerCase().includes("grabación") ||
+        end_reason.toLowerCase().includes("recording") ||
+        end_reason.toLowerCase().includes("tecla") ||
+        end_reason.toLowerCase().includes("key") ||
+        end_reason.toLowerCase().includes("detener") ||
+        end_reason.toLowerCase().includes("stop")
+      ) {
         return "Buzón de Voz";
       }
+
+      // Enhanced no-answer detection
       if (
         end_reason.includes("no_answer") ||
-        end_reason.includes("not_answered")
+        end_reason.includes("not_answered") ||
+        end_reason === "elevenlabs_call_not_answered"
       ) {
         return "No Contestó";
       }
+
       if (end_reason.includes("busy")) {
         return "Línea Ocupada";
       }
+
       if (end_reason.includes("invalid_phone")) {
         return "Teléfono Inválido";
       }
-      if (end_reason.includes("timeout")) {
+
+      if (
+        end_reason.includes("timeout") ||
+        end_reason === "elevenlabs_timeout_no_response"
+      ) {
         return "Sin Respuesta (Timeout)";
       }
-      if (end_reason.includes("ended_early")) {
+
+      if (
+        end_reason.includes("ended_early") ||
+        end_reason === "elevenlabs_call_ended_early"
+      ) {
         return "Llamada Cortada";
+      }
+
+      // Handle conversation failures
+      if (
+        end_reason === "elevenlabs_conversation_failed" ||
+        end_reason === "elevenlabs_no_user_response"
+      ) {
+        return "Conversación Falló";
+      }
+
+      if (end_reason === "elevenlabs_conversation_ended") {
+        return "Conversación Terminada";
+      }
+    }
+
+    // Intelligent result detection based on transcript and call data
+    if (transcript_summary || commercial_suggestion) {
+      const transcriptText = (transcript_summary || "").toLowerCase();
+      const suggestionText = (commercial_suggestion || "").toLowerCase();
+
+      // Check for voicemail indicators in transcript
+      const voicemailIndicators = [
+        "buzón de voz",
+        "voicemail",
+        "grabación",
+        "recording",
+        "tecla",
+        "key",
+        "detener",
+        "stop",
+        "mensaje",
+        "message",
+        "deje su mensaje",
+        "leave a message",
+        "grabe su mensaje",
+      ];
+
+      if (
+        voicemailIndicators.some(
+          (indicator) =>
+            transcriptText.includes(indicator) ||
+            suggestionText.includes(indicator)
+        )
+      ) {
+        return "Buzón de Voz";
+      }
+
+      // Check for appointment scheduling
+      if (
+        transcriptText.includes("cita") ||
+        transcriptText.includes("appointment") ||
+        transcriptText.includes("agendar") ||
+        transcriptText.includes("schedule") ||
+        calendar_event_id
+      ) {
+        return "Cita Agendada";
+      }
+
+      // Check for explicit disinterest
+      const disinterestPhrases = [
+        "no está interesado",
+        "no estoy interesado",
+        "no le interesa",
+        "no me interesa",
+        "no quiero",
+        "no quiere",
+        "not interested",
+      ];
+
+      if (
+        disinterestPhrases.some(
+          (phrase) =>
+            transcriptText.includes(phrase) || suggestionText.includes(phrase)
+        )
+      ) {
+        return "Cliente No Interesado";
+      }
+
+      // Check for successful conversation indicators
+      const successIndicators = [
+        "interesado",
+        "interested",
+        "me interesa",
+        "quiero",
+        "want",
+        "propuesta",
+        "proposal",
+        "seguimiento",
+        "follow up",
+      ];
+
+      if (
+        successIndicators.some(
+          (indicator) =>
+            transcriptText.includes(indicator) ||
+            suggestionText.includes(indicator)
+        )
+      ) {
+        return "Cliente Interesado";
       }
     }
 
@@ -571,6 +733,8 @@ async function processAllPendingQueues() {
         queue_position,
         status,
         created_at,
+        priority,
+        scheduled_at,
         lead:leads (
           name,
           phone,
@@ -579,6 +743,9 @@ async function processAllPendingQueues() {
       `
         )
         .eq("status", "pending")
+        .or(`scheduled_at.lte.${new Date().toISOString()},scheduled_at.is.null`)
+        .order("priority", { ascending: true })
+        .order("scheduled_at", { ascending: true, nullsFirst: true })
         .order("queue_position", { ascending: true })
         .limit(QUEUE_CONFIG.maxConcurrentCalls * 3);
 
@@ -4410,15 +4577,82 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
         // Calculate detailed result
         const detailedResult = determineDetailedCallResult(updatedCall);
 
+        // Force correct result based on transcript analysis
+        let finalDetailedResult = detailedResult;
+
+        // If we have transcript but result is "Desconocido", try to infer from transcript
+        if (finalDetailedResult === "Desconocido" && transcript_summary) {
+          const transcriptLower = transcript_summary.toLowerCase();
+
+          // Check for voicemail patterns
+          if (
+            transcriptLower.includes("tecla para detener") ||
+            transcriptLower.includes("grabación") ||
+            transcriptLower.includes("buzón de voz") ||
+            transcriptLower.includes("voicemail")
+          ) {
+            finalDetailedResult = "Buzón de Voz";
+            console.log(
+              "🔍 [ELEVENLABS] Forced result to 'Buzón de Voz' based on transcript"
+            );
+          }
+
+          // Check for no-answer patterns
+          else if (
+            transcriptLower.includes("no contestó") ||
+            transcriptLower.includes("no answer") ||
+            transcriptLower.includes("sin respuesta")
+          ) {
+            finalDetailedResult = "No Contestó";
+            console.log(
+              "🔍 [ELEVENLABS] Forced result to 'No Contestó' based on transcript"
+            );
+          }
+
+          // Check for short calls (likely voicemail)
+          else if (duration < 30 && turn_count < 2) {
+            finalDetailedResult = "Buzón de Voz";
+            console.log(
+              "🔍 [ELEVENLABS] Forced result to 'Buzón de Voz' based on short duration"
+            );
+          }
+        }
+
         // console.log("🎯 [DETAILED RESULT] Calculated result:", detailedResult);
 
-        // Update call with detailed result
+        // Optionally enforce recall suggestion for certain outcomes
+        let suggestionUpdate = null;
+        const needsRecall = [
+          "Buzón de Voz",
+          "No Contestó",
+          "Llamada Cortada",
+          "Cliente Conectó pero No Habló",
+        ].includes(detailedResult);
+        if (needsRecall) {
+          const current = (
+            updatedCall.commercial_suggestion || ""
+          ).toLowerCase();
+          const hasRecall =
+            current.includes("volver a llamar") ||
+            current.includes("reintentar") ||
+            current.includes("follow up") ||
+            current.includes("seguimiento");
+          if (!hasRecall) {
+            suggestionUpdate = "Volver a llamar al cliente más tarde.";
+          }
+        }
+
+        const updatePayload = {
+          detailed_result: finalDetailedResult,
+          updated_at: new Date().toISOString(),
+        };
+        if (suggestionUpdate) {
+          updatePayload.commercial_suggestion = suggestionUpdate;
+        }
+
         const { error: resultError } = await supabase
           .from("calls")
-          .update({
-            detailed_result: detailedResult,
-            updated_at: new Date().toISOString(),
-          })
+          .update(updatePayload)
           .eq("conversation_id", conversation_id);
 
         if (resultError) {
