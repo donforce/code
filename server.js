@@ -406,6 +406,14 @@ function determineDetailedCallResult(callData) {
         "no le interesa la oferta",
         "not interested",
         "no interest",
+        "no está interesado en comprar",
+        "no estoy interesado en comprar",
+        "no le interesa comprar",
+        "no me interesa comprar",
+        "no está interesado en comprar en este momento",
+        "no estoy interesado en comprar en este momento",
+        "cerrar su registro",
+        "cerrar registro",
       ];
       return (
         textIncludesAny(transcript_summary, phrases) ||
@@ -424,46 +432,7 @@ function determineDetailedCallResult(callData) {
       return "Cita Agendada";
     }
 
-    if (wasConnected && hadConversation) {
-      // Only mark no-interest when explicit in transcript or suggestion
-      if (explicitNoInterest()) {
-        return "Cliente No Interesado";
-      }
-
-      if (wasSuccessful) {
-        // Use commercial suggestion to determine interest level
-        if (commercial_suggestion) {
-          const suggestion = commercial_suggestion.toLowerCase();
-          if (
-            suggestion.includes("seguimiento") ||
-            suggestion.includes("propuesta") ||
-            suggestion.includes("interesado") ||
-            suggestion.includes("interes")
-          ) {
-            return "Cliente Interesado";
-          } else if (
-            suggestion.includes("reintentar") ||
-            suggestion.includes("objeciones") ||
-            suggestion.includes("follow up")
-          ) {
-            return "Cliente con Objeciones";
-          } else {
-            return "Conversación Exitosa";
-          }
-        }
-        return "Conversación Exitosa";
-      }
-
-      // Hubo conversación pero no fue exitosa y sin negativa explícita
-      return "Cliente con Objeciones";
-    }
-
-    if (wasConnected && !hadConversation) {
-      return "Cliente Conectó pero No Habló";
-    }
-
-    // Check specific end reasons
-    // Check specific end reasons with comprehensive voicemail detection
+    // 1. Check specific end reasons FIRST
     if (end_reason) {
       // Comprehensive voicemail detection
       if (
@@ -525,7 +494,7 @@ function determineDetailedCallResult(callData) {
       }
     }
 
-    // Intelligent result detection based on transcript and call data
+    // 2. Check transcript for voicemail indicators
     if (transcript_summary || commercial_suggestion) {
       const transcriptText = (transcript_summary || "").toLowerCase();
       const suggestionText = (commercial_suggestion || "").toLowerCase();
@@ -612,34 +581,50 @@ function determineDetailedCallResult(callData) {
       }
     }
 
-    // Fallback based on basic result
-    switch (result) {
-      case "success":
-        return "Éxito";
-      case "failed":
-        return "Falló";
-      case "voicemail":
-        return "Buzón de Voz";
-      case "not_answered":
-        return "No Contestó";
-      case "invalid_phone":
-        return "Teléfono Inválido";
-      case "timeout":
-        return "Sin Respuesta";
-      case "conversation_ended":
-        return "Conversación Terminada";
-      case "conversation_failed":
-        return "Conversación Falló";
-      case "no_response":
-        return "Sin Respuesta";
-      case "ended_early":
-        return "Llamada Cortada";
-      default:
-        return "Desconocido";
+    // 3. THEN check conversation logic
+    if (wasConnected && hadConversation) {
+      // Only mark no-interest when explicit in transcript or suggestion
+      if (explicitNoInterest()) {
+        return "Cliente No Interesado";
+      }
+
+      if (wasSuccessful) {
+        // Use commercial suggestion to determine interest level
+        if (commercial_suggestion) {
+          const suggestion = commercial_suggestion.toLowerCase();
+          if (
+            suggestion.includes("seguimiento") ||
+            suggestion.includes("propuesta") ||
+            suggestion.includes("interesado") ||
+            suggestion.includes("interes")
+          ) {
+            return "Cliente Interesado";
+          } else if (
+            suggestion.includes("reintentar") ||
+            suggestion.includes("objeciones") ||
+            suggestion.includes("follow up")
+          ) {
+            return "Cliente con Objeciones";
+          } else {
+            return "Conversación Exitosa";
+          }
+        }
+        return "Conversación Exitosa";
+      }
+
+      // Hubo conversación pero no fue exitosa y sin negativa explícita
+      return "Cliente con Objeciones";
     }
+
+    if (wasConnected && !hadConversation) {
+      return "Cliente Conectó pero No Habló";
+    }
+
+    // Default fallback
+    return "Desconocido";
   } catch (error) {
-    console.error("❌ Error determining detailed call result:", error);
-    return "Error";
+    console.error("Error in determineDetailedCallResult:", error);
+    return "Desconocido";
   }
 }
 
@@ -4459,58 +4444,71 @@ fastify.post("/queue/cleanup", async (request, reply) => {
 });
 
 // Add webhook endpoint for ElevenLabs
+// ElevenLabs webhook endpoint
 fastify.post("/webhook/elevenlabs", async (request, reply) => {
   try {
-    console.log("🔔 [ELEVENLABS] Webhook received");
+    console.log("🎤 [ELEVENLABS] Webhook received");
+
+    const rawBody = request.rawBody;
+    const signature = request.headers["x-elevenlabs-signature"];
+
+    // Verify signature
+    if (!verifyElevenLabsSignature(rawBody, signature)) {
+      console.error("❌ [ELEVENLABS] Invalid signature");
+      return reply.code(401).send({ error: "Invalid signature" });
+    }
 
     const webhookData = request.body;
+    console.log(
+      "📋 [ELEVENLABS] Webhook data:",
+      JSON.stringify(webhookData, null, 2)
+    );
 
-    // Check for ElevenLabs specific structure
-    if (
-      !webhookData ||
-      !webhookData.data ||
-      !webhookData.data.conversation_id
-    ) {
-      console.error("❌ Invalid webhook data structure");
-      return reply.code(400).send({ error: "Invalid webhook data" });
-    }
+    const {
+      event_type,
+      conversation_id,
+      transcript,
+      transcript_summary,
+      end_reason,
+      connection_status,
+      duration,
+      turn_count,
+      call_successful,
+      calendar_event_id,
+    } = webhookData;
 
-    const { conversation_id, analysis, transcript, metadata } =
-      webhookData.data;
-
-    // console.log("📞 [ELEVENLABS] Processing conversation:", conversation_id);
-
-    // Log essential audio/transcript data
-    if (transcript && transcript.length > 0) {
-      // console.log(
-      //   "🎵 [ELEVENLABS] Audio transcript available:",
-      //   transcript.length,
-      //   "turns"
-      // );
-      // Log first few turns for debugging
-      transcript.slice(0, 3).forEach((turn, index) => {
+    // Handle different event types
+    switch (event_type) {
+      case "conversation_initiation_metadata":
         console.log(
-          `   Turn ${index + 1}: ${turn.speaker} - ${turn.text?.substring(
-            0,
-            100
-          )}${turn.text?.length > 100 ? "..." : ""}`
+          "🚀 [ELEVENLABS] Conversation initiation metadata received"
         );
-      });
-      // console.log(
-      //   "[ELEVENLABS] Audio transcript: ",
-      //   JSON.stringify(transcript, null, 2)
-      // );
+        break;
+
+      case "audio_chunk":
+        console.log("�� [ELEVENLABS] Audio chunk received");
+        break;
+
+      case "agent_tool_response":
+        console.log("�� [ELEVENLABS] Agent tool response received");
+        break;
+
+      case "conversation_ended":
+        console.log("🏁 [ELEVENLABS] Conversation ended");
+        break;
+
+      default:
+        console.log(`ℹ️ [ELEVENLABS] Unhandled event type: ${event_type}`);
     }
 
-    if (analysis?.transcript_summary) {
-      // console.log(
-      //   "📝 [ELEVENLABS] Summary:",
-      //   analysis.transcript_summary.substring(0, 200) +
-      //     (analysis.transcript_summary.length > 200 ? "..." : "")
-      // );
+    // Only process conversation_ended events
+    if (event_type !== "conversation_ended") {
+      return reply.send({ success: true, message: "Event processed" });
     }
 
-    // Find the call by conversation_id
+    console.log("🎯 [ELEVENLABS] Processing conversation ended event");
+
+    // Get call data
     const { data: call, error: callError } = await supabase
       .from("calls")
       .select("*")
@@ -4518,35 +4516,28 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       .single();
 
     if (callError || !call) {
-      // console.error("❌ Call not found for conversation:", conversation_id);
+      console.error("❌ [ELEVENLABS] Call not found:", callError);
       return reply.code(404).send({ error: "Call not found" });
     }
 
-    // Update call with webhook data
+    console.log("📞 [ELEVENLABS] Call data:", {
+      id: call.id,
+      conversation_id: call.conversation_id,
+      status: call.status,
+      duration: call.duration,
+    });
+
+    // Update call with final data
     const updateData = {
+      status: "completed",
+      end_reason: end_reason || call.end_reason,
+      connection_status: connection_status || call.connection_status,
+      duration: duration || call.duration,
+      turn_count: turn_count || call.turn_count,
+      call_successful: call_successful || call.call_successful,
+      calendar_event_id: calendar_event_id || call.calendar_event_id,
       updated_at: new Date().toISOString(),
     };
-
-    if (analysis) {
-      if (analysis.call_successful !== undefined) {
-        updateData.call_successful = analysis.call_successful;
-      }
-      if (analysis.transcript_summary) {
-        updateData.transcript_summary = analysis.transcript_summary;
-      }
-      if (analysis.data_collection_results) {
-        updateData.data_collection_results = analysis.data_collection_results;
-      }
-    }
-
-    if (metadata) {
-      if (metadata.call_duration_secs) {
-        updateData.conversation_duration = metadata.call_duration_secs;
-      }
-      if (transcript && transcript.length > 0) {
-        updateData.turn_count = transcript.length;
-      }
-    }
 
     const { error: updateError } = await supabase
       .from("calls")
@@ -4554,58 +4545,54 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       .eq("conversation_id", conversation_id);
 
     if (updateError) {
-      console.error("❌ Error updating call:", updateError);
+      console.error("❌ [ELEVENLABS] Error updating call:", updateError);
       return reply.code(500).send({ error: "Failed to update call" });
     }
 
-    // console.log("✅ [ELEVENLABS] Call updated successfully");
+    console.log("✅ [ELEVENLABS] Call updated successfully");
 
-    // 🔍 CHECK FOR SCHEDULED CALL IN SUMMARY
+    // �� ANALYZE TRANSCRIPT AND GENERATE INSIGHTS
     try {
-      const scheduledCallInfo = await checkForScheduledCall(webhookData, call);
-
-      if (scheduledCallInfo) {
-        // console.log(
-        //   "📅 [CALENDAR] Scheduled call detected, creating calendar event"
-        // );
-        await createCalendarEvent(scheduledCallInfo, call);
-      }
-    } catch (calendarError) {
-      console.error("❌ Error processing calendar event:", calendarError);
-    }
-
-    // 🔍 ANALYZE TRANSCRIPT AND GENERATE INSIGHTS
-    try {
-      const originalSummary = webhookData.data.analysis?.transcript_summary;
-
       // Check if we have transcript data to analyze
       if (transcript && transcript.length > 0) {
         console.log(
           "🔍 [ANALYSIS] Analyzing transcript and generating insights"
         );
-        const { summary, commercialSuggestion } =
+        const { summary, commercialSuggestion, detailedResult } =
           await analyzeTranscriptAndGenerateInsights(
             transcript,
-            originalSummary
+            transcript_summary,
+            {
+              end_reason,
+              connection_status,
+              duration,
+              turn_count,
+              call_successful,
+              calendar_event_id,
+            }
           );
 
-        if (summary || commercialSuggestion) {
+        if (summary || commercialSuggestion || detailedResult) {
           // Update call with analysis results
-          const updateData = {
+          const analysisUpdateData = {
             updated_at: new Date().toISOString(),
           };
 
           if (summary) {
-            updateData.transcript_summary_es = summary;
+            analysisUpdateData.transcript_summary_es = summary;
           }
 
           if (commercialSuggestion) {
-            updateData.commercial_suggestion = commercialSuggestion;
+            analysisUpdateData.commercial_suggestion = commercialSuggestion;
+          }
+
+          if (detailedResult) {
+            analysisUpdateData.detailed_result = detailedResult;
           }
 
           const { error: analysisError } = await supabase
             .from("calls")
-            .update(updateData)
+            .update(analysisUpdateData)
             .eq("conversation_id", conversation_id);
 
           if (analysisError) {
@@ -4617,7 +4604,7 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
             console.log("✅ [ANALYSIS] Analysis results saved successfully");
             if (summary) {
               console.log(
-                "📝 [ANALYSIS] Summary saved:",
+                "�� [ANALYSIS] Summary saved:",
                 summary.substring(0, 100) + "..."
               );
             }
@@ -4627,19 +4614,23 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
                 commercialSuggestion.substring(0, 100) + "..."
               );
             }
+            if (detailedResult) {
+              console.log(
+                "🎯 [ANALYSIS] Detailed result saved:",
+                detailedResult
+              );
+            }
           }
         }
       } else {
-        // console.log("⚠️ [ANALYSIS] No transcript available for analysis");
+        console.log("⚠️ [ANALYSIS] No transcript available for analysis");
       }
     } catch (analysisError) {
-      // console.error("❌ Error analyzing transcript:", analysisError);
+      console.error("❌ [ANALYSIS] Error analyzing transcript:", analysisError);
     }
 
-    // 🎯 CALCULATE AND SAVE DETAILED RESULT
+    // �� CALCULATE AND SAVE DETAILED RESULT (FALLBACK)
     try {
-      // console.log("🎯 [DETAILED RESULT] Calculating detailed call result");
-
       // Get updated call data to calculate detailed result
       const { data: updatedCall, error: fetchError } = await supabase
         .from("calls")
@@ -4648,53 +4639,43 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
         .single();
 
       if (fetchError || !updatedCall) {
-        console.error("❌ Error fetching updated call data:", fetchError);
+        console.error(
+          "❌ [DETAILED RESULT] Error fetching updated call data:",
+          fetchError
+        );
       } else {
-        // Calculate detailed result
-        const detailedResult = determineDetailedCallResult(updatedCall);
+        // Use AI-determined result if available, otherwise fallback to rule-based
+        let finalDetailedResult =
+          updatedCall.detailed_result ||
+          determineDetailedCallResult(updatedCall);
 
-        // Force correct result based on transcript analysis
-        let finalDetailedResult = detailedResult;
+        // Validate the AI result
+        const validResults = [
+          "Buzón de Voz",
+          "No Contestó",
+          "Cliente No Interesado",
+          "Cliente Interesado",
+          "Cliente con Objeciones",
+          "Cita Agendada",
+          "Conversación Exitosa",
+          "Línea Ocupada",
+          "Teléfono Inválido",
+          "Llamada Cortada",
+          "Conversación Falló",
+        ];
 
-        // If we have transcript but result is "Desconocido", try to infer from transcript
-        if (finalDetailedResult === "Desconocido" && transcript_summary) {
-          const transcriptLower = transcript_summary.toLowerCase();
-
-          // Check for voicemail patterns
-          if (
-            transcriptLower.includes("tecla para detener") ||
-            transcriptLower.includes("grabación") ||
-            transcriptLower.includes("buzón de voz") ||
-            transcriptLower.includes("voicemail")
-          ) {
-            finalDetailedResult = "Buzón de Voz";
-            console.log(
-              "🔍 [ELEVENLABS] Forced result to 'Buzón de Voz' based on transcript"
-            );
-          }
-
-          // Check for no-answer patterns
-          else if (
-            transcriptLower.includes("no contestó") ||
-            transcriptLower.includes("no answer") ||
-            transcriptLower.includes("sin respuesta")
-          ) {
-            finalDetailedResult = "No Contestó";
-            console.log(
-              "🔍 [ELEVENLABS] Forced result to 'No Contestó' based on transcript"
-            );
-          }
-
-          // Check for short calls (likely voicemail)
-          else if (duration < 30 && turn_count < 2) {
-            finalDetailedResult = "Buzón de Voz";
-            console.log(
-              "🔍 [ELEVENLABS] Forced result to 'Buzón de Voz' based on short duration"
-            );
-          }
+        if (!validResults.includes(finalDetailedResult)) {
+          console.warn(
+            `[AI RESULT] Invalid AI result: ${finalDetailedResult}, using rule-based fallback`
+          );
+          finalDetailedResult = determineDetailedCallResult(updatedCall);
         }
 
-        // console.log("🎯 [DETAILED RESULT] Calculated result:", detailedResult);
+        console.log(
+          `[AI RESULT] Final result: ${finalDetailedResult} (${
+            updatedCall.detailed_result ? "AI" : "Rule-based"
+          })`
+        );
 
         // Optionally enforce recall suggestion for certain outcomes
         let suggestionUpdate = null;
@@ -4703,7 +4684,8 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
           "No Contestó",
           "Llamada Cortada",
           "Cliente Conectó pero No Habló",
-        ].includes(detailedResult);
+        ].includes(finalDetailedResult);
+
         if (needsRecall) {
           const current = (
             updatedCall.commercial_suggestion || ""
@@ -4718,35 +4700,84 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
           }
         }
 
-        const updatePayload = {
-          detailed_result: finalDetailedResult,
-          updated_at: new Date().toISOString(),
-        };
-        if (suggestionUpdate) {
-          updatePayload.commercial_suggestion = suggestionUpdate;
-        }
+        // Only update if we need to change something
+        if (
+          finalDetailedResult !== updatedCall.detailed_result ||
+          suggestionUpdate
+        ) {
+          const updatePayload = {
+            detailed_result: finalDetailedResult,
+            updated_at: new Date().toISOString(),
+          };
 
-        const { error: resultError } = await supabase
-          .from("calls")
-          .update(updatePayload)
-          .eq("conversation_id", conversation_id);
+          if (suggestionUpdate) {
+            updatePayload.commercial_suggestion = suggestionUpdate;
+          }
 
-        if (resultError) {
-          // console.error("❌ Error updating detailed result:", resultError);
+          const { error: resultError } = await supabase
+            .from("calls")
+            .update(updatePayload)
+            .eq("conversation_id", conversation_id);
+
+          if (resultError) {
+            console.error(
+              "❌ [DETAILED RESULT] Error updating detailed result:",
+              resultError
+            );
+          } else {
+            console.log(
+              "✅ [DETAILED RESULT] Detailed result saved successfully"
+            );
+            if (suggestionUpdate) {
+              console.log(
+                "💡 [DETAILED RESULT] Recall suggestion added:",
+                suggestionUpdate
+              );
+            }
+          }
         } else {
-          // console.log(
-          //   "✅ [DETAILED RESULT] Detailed result saved successfully"
-          // );
+          console.log(
+            "✅ [DETAILED RESULT] No changes needed, result already correct"
+          );
         }
       }
     } catch (resultError) {
-      console.error("❌ Error calculating detailed result:", resultError);
+      console.error(
+        "❌ [DETAILED RESULT] Error in detailed result calculation:",
+        resultError
+      );
     }
 
-    reply.send({ success: true, message: "Webhook processed successfully" });
+    // 📊 Update call metrics
+    try {
+      const { data: callData } = await supabase
+        .from("calls")
+        .select("*")
+        .eq("conversation_id", conversation_id)
+        .single();
+
+      if (callData) {
+        console.log("📊 [METRICS] Call completed:", {
+          conversation_id: callData.conversation_id,
+          duration: callData.duration,
+          turn_count: callData.turn_count,
+          detailed_result: callData.detailed_result,
+          commercial_suggestion:
+            callData.commercial_suggestion?.substring(0, 50) + "...",
+        });
+      }
+    } catch (metricsError) {
+      console.error("❌ [METRICS] Error logging call metrics:", metricsError);
+    }
+
+    return reply.send({
+      success: true,
+      message: "Webhook processed successfully",
+      conversation_id: conversation_id,
+    });
   } catch (error) {
-    // console.error("❌ Error processing webhook:", error);
-    reply.code(500).send({ error: "Internal server error" });
+    console.error("❌ [ELEVENLABS] Error processing webhook:", error);
+    return reply.code(500).send({ error: "Internal server error" });
   }
 });
 
@@ -6027,7 +6058,8 @@ const resumeTwilioCall = async (callSid, delayMs = 1000) => {
 // Function to analyze transcript and generate Spanish summary and commercial suggestion
 async function analyzeTranscriptAndGenerateInsights(
   transcript,
-  originalSummary
+  originalSummary,
+  callData = null // Agregar parámetro opcional para datos de la llamada
 ) {
   try {
     console.log(
@@ -6036,7 +6068,11 @@ async function analyzeTranscriptAndGenerateInsights(
 
     if (!transcript || transcript.length === 0) {
       console.log("❌ [ANALYSIS] No transcript to analyze");
-      return { summary: null, commercialSuggestion: null };
+      return {
+        summary: null,
+        commercialSuggestion: null,
+        detailedResult: null,
+      };
     }
 
     const { OpenAI } = await import("openai");
@@ -6067,6 +6103,7 @@ async function analyzeTranscriptAndGenerateInsights(
         2. Analiza qué PASÓ en la llamada (el resultado)
         3. Genera un resumen CONCISO del resultado (máximo 100 palabras)
         4. Sugiere el próximo paso (máximo 50 palabras)
+        5. Determina el resultado detallado de la llamada
         
         REGLAS:
         - Enfócate en el RESULTADO, no en el objetivo
@@ -6078,12 +6115,28 @@ async function analyzeTranscriptAndGenerateInsights(
         - Si hubo conversación: describe brevemente qué pasó y el resultado
         - No menciones "objetivo", "herramientas" o términos técnicos
         
+        RESULTADOS POSIBLES:
+        - "Buzón de Voz" - Cuando llega a buzón de voz
+        - "No Contestó" - Cuando no hay respuesta
+        - "Cliente No Interesado" - Cuando el cliente expresa claramente que no está interesado
+        - "Cliente Interesado" - Cuando el cliente muestra interés
+        - "Cliente con Objeciones" - Cuando hay conversación pero el cliente tiene objeciones
+        - "Cita Agendada" - Cuando se agenda una cita
+        - "Conversación Exitosa" - Cuando la conversación fue exitosa
+        - "Línea Ocupada" - Cuando la línea está ocupada
+        - "Teléfono Inválido" - Cuando el teléfono es inválido
+        - "Llamada Cortada" - Cuando la llamada se corta
+        - "Conversación Falló" - Cuando la conversación falla
+        
         Formato:
         RESUMEN:
         [resultado simple y directo de la llamada]
         
         SUGERENCIA:
-        [próximo paso específico]`,
+        [próximo paso específico]
+        
+        RESULTADO:
+        [uno de los resultados posibles listados arriba]`,
         },
 
         {
@@ -6094,10 +6147,24 @@ async function analyzeTranscriptAndGenerateInsights(
         ${fullTranscript}
         
         RESUMEN ORIGINAL:
-        ${originalSummary || "No disponible"}`,
+        ${originalSummary || "No disponible"}
+        
+        DATOS ADICIONALES:
+        ${
+          callData
+            ? `
+        Razón de fin: ${callData.end_reason || "No disponible"}
+        Estado de conexión: ${callData.connection_status || "No disponible"}
+        Duración: ${callData.duration || 0} segundos
+        Turnos de conversación: ${callData.turn_count || 0}
+        Llamada exitosa: ${callData.call_successful || "No disponible"}
+        Cita agendada: ${callData.calendar_event_id ? "Sí" : "No"}
+        `
+            : "No disponibles"
+        }`,
         },
       ],
-      max_tokens: 400,
+      max_tokens: 500,
       temperature: 0.3,
     });
 
@@ -6106,21 +6173,23 @@ async function analyzeTranscriptAndGenerateInsights(
     if (analysisResult) {
       console.log("✅ [ANALYSIS] Analysis completed successfully");
 
-      // Parse the response to extract summary and commercial suggestion
+      // Parse the response to extract summary, commercial suggestion, and detailed result
       const summaryMatch = analysisResult.match(
-        /RESUMEN:\s*([\s\S]*?)(?=SUGERENCIA:|$)/i
+        /RESUMEN:\s*([\s\S]*?)(?=SUGERENCIA:|RESULTADO:|$)/i
       );
       const suggestionMatch = analysisResult.match(
-        /SUGERENCIA:\s*([\s\S]*?)$/i
+        /SUGERENCIA:\s*([\s\S]*?)(?=RESULTADO:|$)/i
       );
+      const resultMatch = analysisResult.match(/RESULTADO:\s*([\s\S]*?)$/i);
 
       const summary = summaryMatch ? summaryMatch[1].trim() : null;
       const commercialSuggestion = suggestionMatch
         ? suggestionMatch[1].trim()
         : null;
+      const detailedResult = resultMatch ? resultMatch[1].trim() : null;
 
       console.log(
-        "📝 [ANALYSIS] Summary length:",
+        "�� [ANALYSIS] Summary length:",
         summary?.length || 0,
         "characters"
       );
@@ -6129,15 +6198,20 @@ async function analyzeTranscriptAndGenerateInsights(
         commercialSuggestion?.length || 0,
         "characters"
       );
+      console.log("🎯 [ANALYSIS] Detailed result:", detailedResult);
 
-      return { summary, commercialSuggestion };
+      return { summary, commercialSuggestion, detailedResult };
     } else {
       console.log("❌ [ANALYSIS] No analysis result received from OpenAI");
-      return { summary: null, commercialSuggestion: null };
+      return {
+        summary: null,
+        commercialSuggestion: null,
+        detailedResult: null,
+      };
     }
   } catch (error) {
     console.error("❌ [ANALYSIS] Error analyzing transcript:", error);
-    return { summary: null, commercialSuggestion: null };
+    return { summary: null, commercialSuggestion: null, detailedResult: null };
   }
 }
 
