@@ -9014,7 +9014,7 @@ async function fetchCallPriceAsync(callSid, callUri) {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       console.log(
-        ` [TWILIO PRICE] Intento ${attempt}/${MAX_RETRIES} para CallSid: ${callSid}`
+        `�� [TWILIO PRICE] Intento ${attempt}/${MAX_RETRIES} para CallSid: ${callSid}`
       );
 
       // Extraer AccountSid de la URI
@@ -9131,7 +9131,7 @@ async function fetchCallPriceAsync(callSid, callUri) {
         // Calcular precio por minuto
         const pricePerMinute = callPrice / minutesRounded;
 
-        console.log(` [TWILIO PRICE] Cálculos para CallSid ${callSid}:`, {
+        console.log(`�� [TWILIO PRICE] Cálculos para CallSid ${callSid}:`, {
           precio_total: callPrice,
           duracion_segundos: durationSeconds,
           minutos_redondeados: minutesRounded,
@@ -9189,7 +9189,7 @@ async function fetchCallPriceAsync(callSid, callUri) {
               id: baseTariff.id,
               country_code: baseTariff.country_code,
               price_per_minute: baseTariff.price_per_minute,
-              estimated_credits: baseTariff.estimated_credits,
+              price_per_credit: baseTariff.price_per_credit,
             }
           );
         } else {
@@ -9210,7 +9210,7 @@ async function fetchCallPriceAsync(callSid, callUri) {
               id: selectedTariff.id,
               country_code: selectedTariff.country_code,
               price_per_minute: selectedTariff.price_per_minute,
-              estimated_credits: selectedTariff.estimated_credits,
+              price_per_credit: selectedTariff.price_per_credit,
               diferencia_con_real: Math.abs(
                 selectedTariff.price_per_minute - pricePerMinute
               ),
@@ -9218,14 +9218,14 @@ async function fetchCallPriceAsync(callSid, callUri) {
           );
         }
 
-        // �� MODIFICACIÓN: Usar directamente los créditos de la BD sin multiplicar por minutos
-        const totalCredits = selectedTariff.estimated_credits;
+        // �� MODIFICACIÓN: Usar price_per_credit en lugar de estimated_credits
+        const totalCredits = selectedTariff.price_per_credit;
         console.log(
           `🎯 [TWILIO PRICE] Créditos calculados para CallSid ${callSid}:`,
           {
             tarifa_id: selectedTariff.id,
             tarifa_seleccionada: selectedTariff.country_code,
-            precio_credito_estimado: selectedTariff.estimated_credits,
+            precio_credito: selectedTariff.price_per_credit,
             minutos_redondeados: minutesRounded,
             creditos_totales: totalCredits,
           }
@@ -9300,9 +9300,7 @@ async function fetchCallPriceAsync(callSid, callUri) {
 
         if (attempt < MAX_RETRIES) {
           console.log(
-            `⏰ [TWILIO PRICE] Esperando ${
-              RETRY_DELAY / 1000
-            } segundos antes del siguiente intento...`
+            `⏰ [TWILIO PRICE] Esperando ${RETRY_DELAY}ms antes del siguiente intento...`
           );
           await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
         }
@@ -9310,21 +9308,19 @@ async function fetchCallPriceAsync(callSid, callUri) {
     } catch (error) {
       console.error(
         `❌ [TWILIO PRICE] Error en intento ${attempt}/${MAX_RETRIES} para CallSid ${callSid}:`,
-        error.message
+        error
       );
 
       if (attempt < MAX_RETRIES) {
         console.log(
-          `⏰ [TWILIO PRICE] Esperando ${
-            RETRY_DELAY / 1000
-          } segundos antes del siguiente intento...`
+          `⏰ [TWILIO PRICE] Esperando ${RETRY_DELAY}ms antes del siguiente intento...`
         );
         await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
       }
     }
   }
 
-  console.warn(
-    `⚠️ [TWILIO PRICE] No se pudo obtener precio después de ${MAX_RETRIES} intentos para CallSid: ${callSid}`
+  console.error(
+    `❌ [TWILIO PRICE] No se pudo obtener precio después de ${MAX_RETRIES} intentos para CallSid ${callSid}`
   );
 }
