@@ -7865,7 +7865,7 @@ async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
 
 // 🆕 Función asíncrona para obtener precio de llamada con reintentos
 async function fetchCallPriceAsync(callSid, callUri) {
-  const MAX_RETRIES = 10;
+  const MAX_RETRIES = 20;
   const RETRY_DELAY = 5000; // 5 segundos
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
