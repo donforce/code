@@ -835,7 +835,7 @@ async function processAllPendingQueues() {
       const { data: usersData, error: usersError } = await supabase
         .from("users")
         .select(
-          "id, available_minutes, email, first_name, last_name, assistant_name"
+          "id, available_call_credits, email, first_name, last_name, assistant_name"
         )
         .in("id", userIds);
 
@@ -847,14 +847,14 @@ async function processAllPendingQueues() {
       // Create optimized user lookup map
       const usersMap = new Map(usersData?.map((user) => [user.id, user]) || []);
 
-      // Group items by user and validate minutes
+      // Group items by user and validate credits
       const userQueues = new Map();
 
       for (const item of availableItems) {
         const user = usersMap.get(item.user_id);
 
-        if (!user || user.available_minutes < 60) {
-          continue; // Skip users with less than 60 minutes
+        if (!user || user.available_call_credits < 60) {
+          continue; // Skip users with less than 60 credits
         }
 
         if (!userQueues.has(item.user_id)) {
@@ -884,7 +884,7 @@ async function processAllPendingQueues() {
           items,
           hasActiveCalls,
           queueLength,
-          availableMinutes: user.available_minutes,
+          availableCredits: user.available_call_credits,
           priority: hasActiveCalls ? 1 : 2,
         });
       }
@@ -913,7 +913,7 @@ async function processAllPendingQueues() {
         // User can use up to maxCallsPerUser, but needs 60 minutes per additional call
         const maxSlotsForUser = Math.min(
           QUEUE_CONFIG.maxCallsPerUser - userActiveCallCount - currentUserSlots,
-          Math.floor(userData.availableMinutes / 60), // 60 minutes per call
+          Math.floor(userData.availableCredits / 60), // 60 minutes per call
           availableSlots - itemsToProcess.length // Available slots remaining
         );
 
@@ -948,7 +948,7 @@ async function processAllPendingQueues() {
         userDistribution[user.email] = {
           slots: slotCount,
           queueLength: userQueues.get(userId).length,
-          availableMinutes: user.available_minutes,
+          availableCredits: user.available_call_credits,
         };
       }
 
@@ -1598,26 +1598,29 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     totalCalls++;
     activeCalls++;
 
-    // Check available minutes before proceeding
+    // Check available credits before proceeding
     const { data: userData, error: userError } = await supabase
       .from("users")
       .select(
-        "available_minutes, email, first_name, last_name, assistant_name, twilio_phone_number, twilio_subaccount_sid, twilio_auth_token"
+        "available_call_credits, email, first_name, last_name, assistant_name, twilio_phone_number, twilio_subaccount_sid, twilio_auth_token"
       )
       .eq("id", queueItem.user_id)
       .single();
 
     if (userError) {
       console.error(
-        `[Queue] Worker ${workerId} - Error checking user minutes:`,
+        `[Queue] Worker ${workerId} - Error checking user credits:`,
         userError
       );
       throw userError;
     }
 
-    if (!userData || userData.available_minutes <= 0) {
+    if (!userData || userData.available_call_credits < 60) {
       // Cancel all pending calls for this user
-      await cancelPendingCalls(queueItem.user_id, "No hay minutos disponibles");
+      await cancelPendingCalls(
+        queueItem.user_id,
+        "No hay créditos suficientes (mínimo 60)"
+      );
 
       // Update current queue item status
       await supabase
@@ -1625,7 +1628,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
         .update({
           status: "cancelled",
           completed_at: new Date().toISOString(),
-          error_message: "No hay minutos disponibles",
+          error_message: "No hay créditos suficientes (mínimo 60)",
         })
         .eq("id", queueItem.id);
 
@@ -6473,30 +6476,64 @@ async function handleCheckoutSessionCompleted(session, stripe) {
 
     // Find the subscription plan by product name
     let planId = null;
-    let minutesPerMonth = 250; // Default fallback
-    let planCredits = 0; // NUEVO: créditos por mes
+    let minutesPerMonth = 2500; // Default fallback - cambiar a 2500
+    let planCredits = 2500; // Default fallback - cambiar a 2500
+
+    console.log(
+      "🔍 [STRIPE] Searching for plan with product name:",
+      product.name
+    );
+    console.log("🔍 [STRIPE] Available plans in DB:", [
+      "Profesional",
+      "Empresarial",
+    ]);
 
     if (product.name) {
+      console.log("🔍 [STRIPE] Product name exists, searching in DB...");
+
       const { data: plan, error: planError } = await supabase
         .from("subscription_plans")
-        .select("id, minutes_per_month, monthly_call_credits") // cambiar credits_per_month -> monthly_call_credits
+        .select("id, name, minutes_per_month, monthly_call_credits") // agregar name para logging
         .eq("name", product.name)
         .single();
+
+      console.log("🔍 [STRIPE] Plan search result:", {
+        found: !!plan,
+        planId: plan?.id,
+        planName: plan?.name,
+        planMinutes: plan?.minutes_per_month,
+        planCredits: plan?.monthly_call_credits,
+        error: planError?.message,
+        errorCode: planError?.code,
+      });
 
       if (planError) {
         console.warn("⚠️ [STRIPE] Plan not found by name:", product.name);
         console.warn("⚠️ [STRIPE] Plan error:", planError.message);
+        console.warn(
+          "⚠️ [STRIPE] Trying fallback with stripe_price_id:",
+          price.id
+        );
 
         // Try to find plan by stripe_price_id as fallback
         const { data: planByPriceId } = await supabase
           .from("subscription_plans")
-          .select("id, minutes_per_month, monthly_call_credits") // cambiar credits_per_month -> monthly_call_credits
+          .select("id, name, minutes_per_month, monthly_call_credits") // agregar name para logging
           .eq("stripe_price_id", price.id)
           .single();
 
+        console.log("🔍 [STRIPE] Fallback search result:", {
+          found: !!planByPriceId,
+          planId: planByPriceId?.id,
+          planName: planByPriceId?.name,
+          planMinutes: planByPriceId?.minutes_per_month,
+          planCredits: planByPriceId?.monthly_call_credits,
+        });
+
         if (planByPriceId) {
           planId = planByPriceId.id;
-          minutesPerMonth = planByPriceId.minutes_per_month;
+          minutesPerMonth = planByPriceId.minutes_per_month || 2500;
+          planCredits = planByPriceId.monthly_call_credits || minutesPerMonth;
           console.log(
             "✅ [STRIPE] Plan found by stripe_price_id:",
             planByPriceId.id
@@ -6507,26 +6544,34 @@ async function handleCheckoutSessionCompleted(session, stripe) {
             price.id
           );
           // Use default values
-          minutesPerMonth = parseInt(
-            product.metadata?.minutes_per_month ||
-              price.metadata?.minutes_per_month ||
-              "250"
-          );
+          minutesPerMonth =
+            parseInt(
+              product.metadata?.minutes_per_month ||
+                price.metadata?.minutes_per_month ||
+                "2500"
+            ) || 2500;
+          planCredits = minutesPerMonth; // Usar el mismo valor por defecto
         }
       } else {
         planId = plan.id;
-        minutesPerMonth = plan.minutes_per_month;
-        planCredits = plan.monthly_call_credits || 0; // cambiar plan.credits_per_month -> monthly_call_credits
+        minutesPerMonth = plan.minutes_per_month || 2500;
+        planCredits = plan.monthly_call_credits || minutesPerMonth; // cambiar plan.credits_per_month -> monthly_call_credits
         console.log("✅ [STRIPE] Plan found by name:", plan.id);
       }
     } else {
       console.warn("⚠️ [STRIPE] Product name is empty, using default values");
-      minutesPerMonth = parseInt(
-        product.metadata?.minutes_per_month ||
-          price.metadata?.minutes_per_month ||
-          "250"
-      );
+      minutesPerMonth =
+        parseInt(
+          product.metadata?.minutes_per_month ||
+            price.metadata?.minutes_per_month ||
+            "2500"
+        ) || 2500;
+      planCredits = minutesPerMonth; // Usar el mismo valor por defecto
     }
+
+    // Asegurar que los valores nunca sean null
+    minutesPerMonth = minutesPerMonth || 2500;
+    planCredits = planCredits || minutesPerMonth || 2500;
 
     console.log("📦 [STRIPE] Final plan details:", {
       planId: planId,
@@ -6625,7 +6670,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
           ),
           cancel_at_period_end: subscription.cancel_at_period_end,
           minutes_per_month: minutesPerMonth,
-          credits_per_month: planCredits || minutesPerMonth, // Agregar campo requerido
+          credits_per_month: planCredits, // Usar directamente planCredits
           product_name: product.name,
           updated_at: new Date().toISOString(),
         })
@@ -6652,7 +6697,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
           ),
           cancel_at_period_end: subscription.cancel_at_period_end,
           minutes_per_month: minutesPerMonth,
-          credits_per_month: planCredits || minutesPerMonth, // Agregar campo requerido
+          credits_per_month: planCredits, // Usar directamente planCredits que ya tiene valor por defecto
           product_name: product.name,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -6703,7 +6748,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
       .from("users")
       .update({
         available_minutes: newTotalSeconds,
-        available_call_credits: planCredits || 0, // nuevo
+        available_call_credits: planCredits, // Usar directamente planCredits
         updated_at: new Date().toISOString(),
       })
       .eq("id", user.id);
@@ -6866,7 +6911,7 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
     }
 
     const currentSeconds = currentUser.available_minutes || 0;
-    const minutesToAdd = userSubscription.minutes_per_month || 250; // Default fallback
+    const minutesToAdd = userSubscription.minutes_per_month || 2500; // Default fallback
     const secondsToAdd = minutesToAdd * 60; // Convert minutes to seconds
     const newTotalSeconds = secondsToAdd; // Clear existing and set to new amount
 
@@ -6883,6 +6928,7 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
       .from("users")
       .update({
         available_minutes: newTotalSeconds,
+        available_call_credits: planCredits, // Usar directamente planCredits
         updated_at: new Date().toISOString(),
       })
       .eq("id", userSubscription.user_id);
@@ -7503,662 +7549,6 @@ fastify.post("/api/admin/cleanup-recordings", async (request, reply) => {
     return reply.code(500).send({
       error: "Error interno del servidor",
       message: "Error inesperado al ejecutar limpieza",
-    });
-  }
-});
-
-// Endpoint para obtener estadísticas de grabaciones
-fastify.get("/api/admin/recording-stats", async (request, reply) => {
-  try {
-    console.log("📊 [ADMIN] Recording statistics requested");
-
-    // Verificar API key
-    const apiKey =
-      request.headers["x-api-key"] ||
-      request.headers.authorization?.replace("Bearer ", "");
-
-    if (!apiKey) {
-      return reply.code(401).send({
-        error: "API key requerida",
-        message: "Se requiere autenticación para esta operación",
-      });
-    }
-
-    // Obtener estadísticas
-    const { data: stats, error } = await supabase.rpc("get_recording_stats");
-
-    if (error) {
-      console.error("❌ [ADMIN] Error obteniendo estadísticas:", error);
-      return reply.code(500).send({
-        error: "Error obteniendo estadísticas",
-        message: error.message,
-      });
-    }
-
-    // Obtener grabaciones recientes para monitoreo
-    const { data: recentRecordings, error: recordingsError } = await supabase
-      .from("recording_monitor")
-      .select("*")
-      .limit(10);
-
-    if (recordingsError) {
-      console.error(
-        "❌ [ADMIN] Error obteniendo grabaciones recientes:",
-        recordingsError
-      );
-    }
-
-    return reply.send({
-      success: true,
-      data: {
-        statistics: stats,
-        recent_recordings: recentRecordings || [],
-      },
-    });
-  } catch (error) {
-    console.error("❌ [ADMIN] Error obteniendo estadísticas:", error);
-    return reply.code(500).send({
-      error: "Error interno del servidor",
-      message: "Error inesperado al obtener estadísticas",
-    });
-  }
-});
-
-// Función para descargar grabación de Twilio y guardarla en Supabase Storage
-async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
-  try {
-    console.log(
-      `🎙️ [RECORDING DOWNLOAD] Starting download for call ${callSid}`
-    );
-
-    // Primero, obtener información de la llamada para determinar qué credenciales usar
-    const { data: callData, error: callError } = await supabase
-      .from("calls")
-      .select(
-        `
-        user_id,
-        users!calls_user_id_fkey(
-          twilio_subaccount_sid,
-          twilio_auth_token
-        )
-      `
-      )
-      .eq("call_sid", callSid)
-      .single();
-
-    if (callError) {
-      console.error(
-        `❌ [RECORDING DOWNLOAD] Error getting call data for ${callSid}:`,
-        callError
-      );
-      throw new Error(`Failed to get call data: ${callError.message}`);
-    }
-
-    // Determinar qué cliente de Twilio usar
-    let twilioClientToUse = twilioClient; // Default
-    let accountSid = TWILIO_ACCOUNT_SID;
-    let authToken = TWILIO_AUTH_TOKEN;
-
-    if (
-      callData.users?.twilio_subaccount_sid &&
-      callData.users?.twilio_auth_token
-    ) {
-      // Usar las credenciales de la subcuenta del usuario
-      accountSid = callData.users.twilio_subaccount_sid;
-      authToken = callData.users.twilio_auth_token;
-      twilioClientToUse = new Twilio(accountSid, authToken);
-
-      console.log(
-        `🎙️ [RECORDING DOWNLOAD] Using user's subaccount for call ${callSid}:`,
-        {
-          userId: callData.user_id,
-          subaccountSid: accountSid,
-        }
-      );
-    } else {
-      console.log(
-        `🎙️ [RECORDING DOWNLOAD] Using main account for call ${callSid}`
-      );
-    }
-
-    // Usar el cliente correcto para obtener la grabación con autenticación
-    const recording = await twilioClientToUse.recordings(recordingSid).fetch();
-    const extension = recording.mediaFormat || "wav"; // fallback
-    const actualRecordingUrl = `https://api.twilio.com${recording.uri.replace(
-      ".json",
-      `.${extension}`
-    )}`;
-
-    const response = await fetch(actualRecordingUrl, {
-      headers: {
-        Authorization:
-          "Basic " +
-          Buffer.from(`${accountSid}:${authToken}`).toString("base64"),
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(
-        `Failed to download recording: ${response.status} ${response.statusText}`
-      );
-    }
-
-    const audioBuffer = await response.arrayBuffer();
-    const audioData = Buffer.from(audioBuffer);
-
-    console.log(
-      `🎙️ [RECORDING DOWNLOAD] Downloaded ${audioData.length} bytes for call ${callSid}`
-    );
-
-    // Generar nombre único para el archivo
-    const fileName = `recordings/${callSid}_${recordingSid}.${extension}`;
-
-    // Subir a Supabase Storage
-    const { data: uploadData, error: uploadError } = await supabase.storage
-      .from("call-recordings")
-      .upload(fileName, audioData, {
-        contentType: `audio/${extension}`,
-        upsert: false,
-      });
-
-    if (uploadError) {
-      throw new Error(
-        `Failed to upload to Supabase Storage: ${uploadError.message}`
-      );
-    }
-
-    console.log(
-      `🎙️ [RECORDING DOWNLOAD] Successfully uploaded to Supabase Storage: ${fileName}`
-    );
-
-    // Obtener URL pública del archivo
-    const { data: urlData } = supabase.storage
-      .from("call-recordings")
-      .getPublicUrl(fileName);
-
-    const publicUrl = urlData.publicUrl;
-
-    // Actualizar la base de datos con la URL del archivo descargado
-    const { error: updateError } = await supabase
-      .from("calls")
-      .update({
-        recording_storage_url: publicUrl,
-        recording_storage_path: fileName,
-        recording_downloaded_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("call_sid", callSid);
-
-    if (updateError) {
-      throw new Error(`Failed to update database: ${updateError.message}`);
-    }
-
-    console.log(
-      `✅ [RECORDING DOWNLOAD] Successfully stored recording for call ${callSid}: ${publicUrl}`
-    );
-    return publicUrl;
-  } catch (error) {
-    console.error(
-      `❌ [RECORDING DOWNLOAD] Error downloading/storing recording for call ${callSid}:`,
-      error
-    );
-    throw error;
-  }
-}
-
-// Función para inicializar el bucket de grabaciones en Supabase Storage
-async function initializeRecordingBucket() {
-  try {
-    console.log("🪣 [STORAGE] Initializing recording bucket...");
-
-    // Listar buckets existentes
-    const { data: buckets, error: listError } =
-      await supabase.storage.listBuckets();
-
-    if (listError) {
-      console.error("❌ [STORAGE] Error listing buckets:", listError);
-      return false;
-    }
-
-    // Verificar si el bucket ya existe
-    const bucketExists = buckets.some(
-      (bucket) => bucket.name === "call-recordings"
-    );
-
-    if (bucketExists) {
-      console.log("✅ [STORAGE] Recording bucket already exists");
-      return true;
-    }
-
-    // Crear el bucket si no existe
-    const { data: bucket, error: createError } =
-      await supabase.storage.createBucket("call-recordings", {
-        public: true,
-        allowedMimeTypes: ["audio/wav", "audio/mp3"],
-        fileSizeLimit: 52428800, // 50MB limit
-      });
-
-    if (createError) {
-      console.error("❌ [STORAGE] Error creating bucket:", createError);
-      return false;
-    }
-
-    console.log("✅ [STORAGE] Recording bucket created successfully");
-    return true;
-  } catch (error) {
-    console.error("❌ [STORAGE] Error initializing recording bucket:", error);
-    return false;
-  }
-}
-
-// Endpoint para obtener grabaciones de un usuario
-fastify.get("/api/recordings/:userId", async (request, reply) => {
-  try {
-    const { userId } = request.params;
-
-    if (!userId) {
-      return reply.code(400).send({
-        success: false,
-        error: "User ID is required",
-      });
-    }
-
-    console.log(`🎙️ [API] Fetching recordings for user ${userId}`);
-
-    // Obtener llamadas con grabaciones disponibles
-    const { data: calls, error } = await supabase
-      .from("calls")
-      .select(
-        `
-        id,
-        call_sid,
-        lead_id,
-        duration,
-        result,
-        created_at,
-        recording_storage_url,
-        recording_duration,
-        recording_downloaded_at,
-        lead:leads (
-          name,
-          phone,
-          email
-        )
-      `
-      )
-      .eq("user_id", userId)
-      .not("recording_storage_url", "is", null)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.error(
-        `❌ [API] Error fetching recordings for user ${userId}:`,
-        error
-      );
-      return reply.code(500).send({
-        success: false,
-        error: "Error fetching recordings",
-      });
-    }
-
-    console.log(
-      `✅ [API] Found ${calls?.length || 0} recordings for user ${userId}`
-    );
-
-    reply.send({
-      success: true,
-      recordings: calls || [],
-    });
-  } catch (error) {
-    console.error(`❌ [API] Error in recordings endpoint:`, error);
-    reply.code(500).send({
-      success: false,
-      error: "Internal server error",
-    });
-  }
-});
-
-// Endpoint para descargar manualmente una grabación (en caso de que falle la descarga automática)
-fastify.post("/api/recordings/download/:callSid", async (request, reply) => {
-  try {
-    const { callSid } = request.params;
-
-    if (!callSid) {
-      return reply.code(400).send({
-        success: false,
-        error: "Call SID is required",
-      });
-    }
-
-    console.log(`🎙️ [API] Manual download requested for call ${callSid}`);
-
-    // Obtener información de la llamada
-    const { data: call, error: callError } = await supabase
-      .from("calls")
-      .select("call_sid, recording_url, recording_sid, recording_storage_url")
-      .eq("call_sid", callSid)
-      .single();
-
-    if (callError || !call) {
-      return reply.code(404).send({
-        success: false,
-        error: "Call not found",
-      });
-    }
-
-    // Verificar si ya está descargada
-    if (call.recording_storage_url) {
-      return reply.send({
-        success: true,
-        message: "Recording already downloaded",
-        url: call.recording_storage_url,
-      });
-    }
-
-    // Verificar si tiene URL de Twilio
-    if (!call.recording_url) {
-      return reply.code(400).send({
-        success: false,
-        error: "No recording URL available",
-      });
-    }
-
-    // Descargar la grabación
-    const publicUrl = await downloadAndStoreRecording(
-      call.recording_url,
-      call.call_sid,
-      call.recording_sid
-    );
-
-    reply.send({
-      success: true,
-      message: "Recording downloaded successfully",
-      url: publicUrl,
-    });
-  } catch (error) {
-    console.error(`❌ [API] Error in manual download:`, error);
-    reply.code(500).send({
-      success: false,
-      error: "Error downloading recording",
-    });
-  }
-});
-
-// Endpoint para limpiar grabaciones antiguas manualmente
-
-// =============================================================================
-// TWILIO SUBACCOUNTS MANAGEMENT ENDPOINTS
-// =============================================================================
-
-// Endpoint para crear subcuenta de Twilio para un usuario
-fastify.post("/twilio/create-subaccount", async (request, reply) => {
-  try {
-    console.log("🔧 [TWILIO SUBACCOUNT] Creating new subaccount...");
-    console.log("📥 [TWILIO SUBACCOUNT] Request received:");
-    console.log("🌐 [TWILIO SUBACCOUNT] Request headers:", request.headers);
-    console.log(
-      "📋 [TWILIO SUBACCOUNT] Request body:",
-      JSON.stringify(request.body, null, 2)
-    );
-    console.log("⏰ [TWILIO SUBACCOUNT] Timestamp:", new Date().toISOString());
-
-    const { userId, userName, userEmail, adminUserId } = request.body;
-
-    console.log("🔍 [TWILIO SUBACCOUNT] Extracted fields:", {
-      hasUserId: !!userId,
-      hasUserName: !!userName,
-      hasUserEmail: !!userEmail,
-      hasAdminUserId: !!adminUserId,
-      userId,
-      userName,
-      userEmail,
-      adminUserId,
-    });
-
-    if (!userId || !userName || !adminUserId) {
-      console.error("❌ [TWILIO SUBACCOUNT] Missing required fields");
-      return reply.code(400).send({
-        error: "Missing required fields: userId, userName, adminUserId",
-      });
-    }
-
-    // Verificar que el usuario que hace la petición es admin
-    console.log("👤 [TWILIO SUBACCOUNT] Verifying admin user:", adminUserId);
-    const { data: adminUser, error: adminError } = await supabase
-      .from("users")
-      .select("is_admin")
-      .eq("id", adminUserId)
-      .single();
-
-    console.log("🔍 [TWILIO SUBACCOUNT] Admin verification result:", {
-      hasAdminUser: !!adminUser,
-      isAdmin: adminUser?.is_admin,
-      adminError: adminError?.message,
-    });
-
-    if (adminError || !adminUser?.is_admin) {
-      console.error("❌ [TWILIO SUBACCOUNT] Admin verification failed");
-      return reply.code(403).send({
-        error: "Unauthorized: Admin access required",
-      });
-    }
-
-    // Verificar que el usuario target existe
-    console.log("🎯 [TWILIO SUBACCOUNT] Verifying target user:", userId);
-    const { data: targetUser, error: userError } = await supabase
-      .from("users")
-      .select("id, first_name, last_name, email, twilio_subaccount_sid")
-      .eq("id", userId)
-      .single();
-
-    console.log("🔍 [TWILIO SUBACCOUNT] Target user verification result:", {
-      hasTargetUser: !!targetUser,
-      targetUserEmail: targetUser?.email,
-      hasExistingSubaccount: !!targetUser?.twilio_subaccount_sid,
-      userError: userError?.message,
-    });
-
-    if (userError || !targetUser) {
-      console.error("❌ [TWILIO SUBACCOUNT] Target user not found");
-      return reply.code(404).send({
-        error: "User not found",
-      });
-    }
-
-    // Verificar si ya tiene una subcuenta
-    if (targetUser.twilio_subaccount_sid) {
-      console.warn(
-        "⚠️ [TWILIO SUBACCOUNT] User already has subaccount:",
-        targetUser.twilio_subaccount_sid
-      );
-      return reply.code(400).send({
-        error: "User already has a Twilio subaccount",
-        subaccountSid: targetUser.twilio_subaccount_sid,
-      });
-    }
-
-    // Log de inicio de operación
-    const { data: logEntry } = await supabase
-      .from("twilio_operations_log")
-      .insert({
-        user_id: userId,
-        operation_type: "create_subaccount",
-        operation_status: "pending",
-        executed_by: adminUserId,
-        twilio_request: {
-          userName,
-          userEmail,
-          timestamp: new Date().toISOString(),
-        },
-      })
-      .select()
-      .single();
-
-    try {
-      // Crear subcuenta en Twilio
-      console.log("🔧 [TWILIO SUBACCOUNT] Starting Twilio API call...");
-      console.log("📋 [TWILIO SUBACCOUNT] Request data:", {
-        userId,
-        userName,
-        userEmail,
-        adminUserId,
-        targetUserId: targetUser.id,
-        targetUserEmail: targetUser.email,
-      });
-
-      const subaccountName = `${userName} - ${userEmail}`;
-      console.log("🏷️  [TWILIO SUBACCOUNT] Subaccount name:", subaccountName);
-
-      console.log(
-        "📞 [TWILIO SUBACCOUNT] Calling Twilio API to create subaccount..."
-      );
-      console.log("🔑 [TWILIO SUBACCOUNT] Twilio client config:", {
-        hasTwilioClient: !!twilioClient,
-        hasApiAccounts: !!twilioClient?.api?.accounts,
-        twilioAccountSid: process.env.TWILIO_ACCOUNT_SID
-          ? "Present"
-          : "Missing",
-        twilioAuthToken: process.env.TWILIO_AUTH_TOKEN ? "Present" : "Missing",
-      });
-
-      const subaccount = await twilioClient.api.accounts.create({
-        friendlyName: subaccountName,
-      });
-
-      console.log("✅ [TWILIO SUBACCOUNT] Twilio API response received:");
-      console.log("📊 [TWILIO SUBACCOUNT] Subaccount details:", {
-        sid: subaccount.sid,
-        friendlyName: subaccount.friendlyName,
-        status: subaccount.status,
-        authToken: subaccount.authToken ? "Present" : "Missing",
-        dateCreated: subaccount.dateCreated,
-        ownerAccountSid: subaccount.ownerAccountSid,
-      });
-
-      console.log("✅ [TWILIO SUBACCOUNT] Subaccount created:", {
-        sid: subaccount.sid,
-        friendlyName: subaccount.friendlyName,
-        status: subaccount.status,
-      });
-
-      // Guardar en base de datos
-      const { data: savedSubaccount, error: saveError } = await supabase
-        .from("twilio_subaccounts")
-        .insert({
-          user_id: userId,
-          subaccount_sid: subaccount.sid,
-          subaccount_name: subaccountName,
-          auth_token: subaccount.authToken,
-          status: subaccount.status,
-          created_by: adminUserId,
-          subaccount_metadata: {
-            twilio_status: subaccount.status,
-            date_created: subaccount.dateCreated,
-            date_updated: subaccount.dateUpdated,
-            owner_account_sid: subaccount.ownerAccountSid,
-          },
-        })
-        .select()
-        .single();
-
-      if (saveError) {
-        console.error(
-          "❌ [TWILIO SUBACCOUNT] Error saving to database:",
-          saveError
-        );
-        throw new Error("Failed to save subaccount to database");
-      }
-
-      // Actualizar tabla users
-      const { error: updateUserError } = await supabase
-        .from("users")
-        .update({
-          twilio_subaccount_sid: subaccount.sid,
-          twilio_auth_token: subaccount.authToken,
-          twilio_subaccount_status: "active",
-          twilio_subaccount_created_at: new Date().toISOString(),
-        })
-        .eq("id", userId);
-
-      if (updateUserError) {
-        console.error(
-          "❌ [TWILIO SUBACCOUNT] Error updating user:",
-          updateUserError
-        );
-        throw new Error("Failed to update user with subaccount info");
-      }
-
-      // Actualizar log como exitoso
-      await supabase
-        .from("twilio_operations_log")
-        .update({
-          operation_status: "success",
-          completed_at: new Date().toISOString(),
-          twilio_response: {
-            sid: subaccount.sid,
-            friendlyName: subaccount.friendlyName,
-            status: subaccount.status,
-            authToken: "***hidden***", // No guardar el token completo en logs
-            dateCreated: subaccount.dateCreated,
-          },
-        })
-        .eq("id", logEntry.id);
-
-      return reply.send({
-        success: true,
-        message: "Subaccount created successfully",
-        data: {
-          subaccountSid: subaccount.sid,
-          subaccountName: subaccountName,
-          status: subaccount.status,
-          userId: userId,
-          createdAt: new Date().toISOString(),
-        },
-      });
-    } catch (twilioError) {
-      console.error("❌ [TWILIO SUBACCOUNT] Twilio API error:", twilioError);
-      console.error("🔍 [TWILIO SUBACCOUNT] Error details:", {
-        message: twilioError.message,
-        code: twilioError.code,
-        status: twilioError.status,
-        moreInfo: twilioError.moreInfo,
-        details: twilioError.details,
-        stack: twilioError.stack?.substring(0, 500) + "...", // Primeras 500 chars del stack
-      });
-      console.error(
-        "📞 [TWILIO SUBACCOUNT] Full Twilio error object:",
-        JSON.stringify(twilioError, null, 2)
-      );
-
-      // Actualizar log como fallido
-      await supabase
-        .from("twilio_operations_log")
-        .update({
-          operation_status: "failed",
-          completed_at: new Date().toISOString(),
-          error_message: twilioError.message,
-          twilio_response: {
-            error: twilioError.message,
-            code: twilioError.code,
-            status: twilioError.status,
-            moreInfo: twilioError.moreInfo,
-            details: twilioError.details,
-          },
-        })
-        .eq("id", logEntry.id);
-
-      return reply.code(500).send({
-        error: "Failed to create Twilio subaccount",
-        details: twilioError.message,
-        code: twilioError.code,
-        moreInfo: twilioError.moreInfo,
-      });
-    }
-  } catch (error) {
-    console.error("❌ [TWILIO SUBACCOUNT] General error:", error);
-    return reply.code(500).send({
-      error: "Internal server error",
-      details: error.message,
     });
   }
 });
