@@ -1822,8 +1822,9 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     // Create agent_firstname from first_name and agent_name from full name
     const agentFirstName = userData[0]?.first_name || "Agente";
     const agentName =
-      `${userData[0]?.first_name || ""} ${userData[0]?.last_name || ""}`.trim() ||
-      "Agente";
+      `${userData[0]?.first_name || ""} ${
+        userData[0]?.last_name || ""
+      }`.trim() || "Agente";
 
     // 🔍 AGREGAR LOGS DETALLADOS PARA DEBUGGING
     console.log("🔍 [AGENT DATA] User data for agent construction:", {
@@ -1934,7 +1935,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
             `
             )
             .eq("user_id", queueItem.user_id)
-            
+
             .order("created_at", { ascending: false })
             .limit(1);
 
@@ -2246,25 +2247,25 @@ fastify.post("/outbound-call", async (request, reply) => {
       "first_name, last_name, assistant_name, twilio_phone_number, twilio_subaccount_sid, twilio_auth_token, automated_calls_consent, terms_accepted_at, privacy_accepted_at, is_active, available_minutes, is_admin"
     )
     .eq("id", user_id)
-    
+
     .order("created_at", { ascending: false })
     .limit(1);
 
-  if (userError || !userData) {
+  if (userError || !userData || userData.length === 0) {
     console.error("[API] Error fetching user data:", userError);
 
     // Verificar si la cuenta está activa
-    if (!userData.is_active) {
+    if (!userData[0]?.is_active) {
       console.error("[API] User account is disabled:", { userId: user_id });
       return reply.code(403).send({ error: "User account is disabled" });
     }
 
     // Verificar consentimiento legal básico (términos y privacidad)
-    if (!userData.terms_accepted_at || !userData.privacy_accepted_at) {
+    if (!userData[0]?.terms_accepted_at || !userData[0]?.privacy_accepted_at) {
       console.error("[API] User missing basic legal consent:", {
         userId,
-        terms: userData.terms_accepted_at,
-        privacy: userData.privacy_accepted_at,
+        terms: userData[0]?.terms_accepted_at,
+        privacy: userData[0]?.privacy_accepted_at,
       });
       return reply.code(403).send({
         error:
@@ -2273,10 +2274,10 @@ fastify.post("/outbound-call", async (request, reply) => {
     }
 
     // Verificar consentimiento para llamadas automatizadas
-    if (!userData.automated_calls_consent) {
+    if (!userData[0]?.automated_calls_consent) {
       console.error("[API] User missing automated calls consent:", {
         userId,
-        automated_calls_consent: userData.automated_calls_consent,
+        automated_calls_consent: userData[0]?.automated_calls_consent,
       });
       return reply.code(403).send({
         error:
@@ -2286,12 +2287,12 @@ fastify.post("/outbound-call", async (request, reply) => {
 
     // Verificar si tiene minutos disponibles (a menos que sea admin)
     if (
-      !userData.is_admin &&
-      (!userData.available_minutes || userData.available_minutes <= 0)
+      !userData[0]?.is_admin &&
+      (!userData[0]?.available_minutes || userData[0]?.available_minutes <= 0)
     ) {
       console.error("[API] User has no available minutes:", {
         userId,
-        available_minutes: userData.available_minutes,
+        available_minutes: userData[0]?.available_minutes,
       });
       return reply.code(403).send({ error: "No available minutes" });
     }
@@ -3990,7 +3991,7 @@ async function cleanupStuckCalls() {
           .from("calls")
           .select("status")
           .eq("queue_id", queueItem.id)
-          
+
           .order("created_at", { ascending: false })
           .limit(1);
 
@@ -4135,7 +4136,7 @@ fastify.post("/twilio-status", async (request, reply) => {
             .from("users")
             .select("twilio_subaccount_sid, twilio_auth_token")
             .eq("id", existingCall.user_id)
-            
+
             .order("created_at", { ascending: false })
             .limit(1);
 
@@ -4430,7 +4431,7 @@ fastify.post("/twilio-status", async (request, reply) => {
           .from("users")
           .select("available_minutes")
           .eq("id", existingCall.user_id)
-          
+
           .order("created_at", { ascending: false })
           .limit(1);
 
@@ -4438,7 +4439,7 @@ fastify.post("/twilio-status", async (request, reply) => {
           console.error("[TWILIO STATUS] Error fetching user data:", userError);
         } else if (userData) {
           // available_minutes stores the value in seconds
-          const totalAvailableSeconds = userData.available_minutes || 0;
+          const totalAvailableSeconds = userData[0]?.available_minutes || 0;
 
           // Segundos: SIEMPRE restar la duración completa de la llamada
           const remainingSeconds = Math.max(
@@ -4509,7 +4510,7 @@ fastify.post("/twilio-status", async (request, reply) => {
           .from("calls")
           .select("status")
           .eq("queue_id", queueItem.id)
-          
+
           .order("created_at", { ascending: false })
           .limit(1);
         if (!associatedCall || associatedCall.status !== "In Progress") {
@@ -4802,7 +4803,7 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
         .from("calls")
         .select("*")
         .eq("conversation_id", conversation_id)
-        
+
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -4922,7 +4923,7 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
         .from("calls")
         .select("*")
         .eq("conversation_id", conversation_id)
-        
+
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -5578,7 +5579,7 @@ async function checkForScheduledCall(webhookData, call) {
         .from("leads")
         .select("name, phone, email")
         .eq("id", call.lead_id)
-        
+
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -6593,7 +6594,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
         .from("subscription_plans")
         .select("id, name, minutes_per_month, credits_per_month") // agregar name para logging
         .eq("name", product.name)
-        
+
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -6620,7 +6621,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
           .from("subscription_plans")
           .select("id, name, minutes_per_month, credits_per_month") // agregar name para logging
           .eq("stripe_price_id", price.id)
-          
+
           .order("created_at", { ascending: false })
           .limit(1);
 
@@ -6690,7 +6691,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
         .from("users")
         .select("*")
         .eq("email", session.customer_email)
-        
+
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -6705,7 +6706,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
         .from("users")
         .select("*")
         .eq("stripe_customer_id", session.customer)
-        
+
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -6810,7 +6811,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
           updated_at: new Date().toISOString(),
         })
         .select()
-        
+
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -7170,7 +7171,7 @@ async function handleInvoicePaymentFailed(invoice, stripe) {
         .from("users")
         .select("available_minutes")
         .eq("id", userSubscription.user_id)
-        
+
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -7430,7 +7431,7 @@ async function syncReferralData(userId, subscriptionData) {
         .from("subscription_plans")
         .select("name")
         .eq("id", userSubscription.plan_id)
-        
+
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -7961,11 +7962,16 @@ async function fetchCallPriceAsync(callSid, callUri) {
           .from("calls")
           .select("to_country")
           .eq("call_sid", callSid)
-          
+
           .order("created_at", { ascending: false })
           .limit(1);
 
-        if (callError || !callRecord?.to_country) {
+        if (
+          callError ||
+          !callRecord ||
+          callRecord.length === 0 ||
+          !callRecord[0]?.to_country
+        ) {
           console.warn(
             `⚠️ [TWILIO PRICE] No se pudo obtener país para CallSid ${callSid}:`,
             callError
@@ -7973,7 +7979,7 @@ async function fetchCallPriceAsync(callSid, callUri) {
           return;
         }
 
-        const countryCode = callRecord.to_country;
+        const countryCode = callRecord[0].to_country;
         console.log(`🌍 [TWILIO PRICE] País de la llamada: ${countryCode}`);
 
         // Buscar tarifa en country_call_pricing
