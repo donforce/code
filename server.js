@@ -8049,7 +8049,7 @@ async function fetchCallPriceAsync(callSid, callUri) {
               id: baseTariff.id,
               country_code: baseTariff.country_code,
               price_per_minute: baseTariff.price_per_minute,
-              estimated_credits: baseTariff.estimated_credits,
+              estimated_credits: baseTariff.price_per_credit,
             }
           );
         } else {
@@ -8070,7 +8070,7 @@ async function fetchCallPriceAsync(callSid, callUri) {
               id: selectedTariff.id,
               country_code: selectedTariff.country_code,
               price_per_minute: selectedTariff.price_per_minute,
-              estimated_credits: selectedTariff.estimated_credits,
+              estimated_credits: selectedTariff.price_per_credit,
               diferencia_con_real: Math.abs(
                 selectedTariff.price_per_minute - pricePerMinute
               ),
@@ -8079,14 +8079,14 @@ async function fetchCallPriceAsync(callSid, callUri) {
         }
 
         // Calcular créditos totales
-        const totalCredits = selectedTariff.estimated_credits * minutesRounded;
+        const totalCredits = selectedTariff.price_per_credit * minutesRounded;
 
         console.log(
           `🎯 [TWILIO PRICE] Créditos calculados para CallSid ${callSid}:`,
           {
             tarifa_id: selectedTariff.id,
             tarifa_seleccionada: selectedTariff.country_code,
-            precio_credito_estimado: selectedTariff.estimated_credits,
+            precio_credito_estimado: selectedTariff.price_per_credit,
             minutos_redondeados: minutesRounded,
             creditos_totales: totalCredits,
           }
