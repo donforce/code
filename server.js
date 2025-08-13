@@ -1621,7 +1621,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       throw userError;
     }
 
-    if (!userData || userData.available_call_credits < 60) {
+    if (!userData || userData[0]?.available_call_credits < 60) {
       // Cancel all pending calls for this user
       await cancelPendingCalls(
         queueItem.user_id,
@@ -1823,19 +1823,19 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     );
 
     // Create agent_firstname from first_name and agent_name from full name
-    const agentFirstName = userData.first_name || "Agente";
+    const agentFirstName = userData[0]?.first_name || "Agente";
     const agentName =
-      `${userData.first_name || ""} ${userData.last_name || ""}`.trim() ||
+      `${userData[0]?.first_name || ""} ${userData[0]?.last_name || ""}`.trim() ||
       "Agente";
 
     // 🔍 AGREGAR LOGS DETALLADOS PARA DEBUGGING
     console.log("🔍 [AGENT DATA] User data for agent construction:", {
       userId: queueItem.user_id,
       userData: {
-        first_name: userData.first_name,
-        last_name: userData.last_name,
-        assistant_name: userData.assistant_name,
-        email: userData.email,
+        first_name: userData[0]?.first_name,
+        last_name: userData[0]?.last_name,
+        assistant_name: userData[0]?.assistant_name,
+        email: userData[0]?.email,
       },
       constructed: {
         agentFirstName: agentFirstName,
@@ -1887,15 +1887,15 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       let twilioClientToUse = twilioClient; // Default
 
       if (
-        userData.twilio_phone_number &&
-        userData.twilio_subaccount_sid &&
-        userData.twilio_auth_token
+        userData[0]?.twilio_phone_number &&
+        userData[0]?.twilio_subaccount_sid &&
+        userData[0]?.twilio_auth_token
       ) {
         // User has their own Twilio number, use it
-        fromPhoneNumber = userData.twilio_phone_number;
+        fromPhoneNumber = userData[0]?.twilio_phone_number;
         twilioClientToUse = new Twilio(
-          userData.twilio_subaccount_sid,
-          userData.twilio_auth_token
+          userData[0]?.twilio_subaccount_sid,
+          userData[0]?.twilio_auth_token
         );
 
         console.log(
@@ -1903,7 +1903,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
           {
             userId: queueItem.user_id,
             fromNumber: fromPhoneNumber,
-            subaccountSid: userData.twilio_subaccount_sid,
+            subaccountSid: userData[0]?.twilio_subaccount_sid,
           }
         );
       } else {
@@ -2030,7 +2030,7 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
         )}&agent_name=${encodeURIComponent(
           agentName
         )}&assistant_name=${encodeURIComponent(
-          userData.assistant_name
+          userData[0]?.assistant_name
         )}&calendar_availability=${availabilityParam}&calendar_timezone=${timezoneParam}${voiceParam}${customLlmParam}`,
         statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
         statusCallbackEvent: ["completed"],
@@ -2306,30 +2306,30 @@ fastify.post("/outbound-call", async (request, reply) => {
   let twilioClientToUse = twilioClient; // Default
 
   if (
-    userData.twilio_phone_number &&
-    userData.twilio_subaccount_sid &&
-    userData.twilio_auth_token
+    userData[0]?.twilio_phone_number &&
+    userData[0]?.twilio_subaccount_sid &&
+    userData[0]?.twilio_auth_token
   ) {
     // User has their own Twilio number, use it
-    fromPhoneNumber = userData.twilio_phone_number;
+    fromPhoneNumber = userData[0]?.twilio_phone_number;
     twilioClientToUse = new Twilio(
-      userData.twilio_subaccount_sid,
-      userData.twilio_auth_token
+      userData[0]?.twilio_subaccount_sid,
+      userData[0]?.twilio_auth_token
     );
 
     console.log("[API] Using user's Twilio number:", {
       userId: user_id,
       fromNumber: fromPhoneNumber,
-      subaccountSid: userData.twilio_subaccount_sid,
+      subaccountSid: userData[0]?.twilio_subaccount_sid,
     });
   } else {
     console.log("[API] Using default Twilio number:", fromPhoneNumber);
   }
 
   // Create agent_name from first_name and last_name
-  const agentFirstName = userData.first_name || "Agente";
+  const agentFirstName = userData[0]?.first_name || "Agente";
   const agentName =
-    `${userData.first_name || ""} ${userData.last_name || ""}`.trim() ||
+    `${userData[0]?.first_name || ""} ${userData[0]?.last_name || ""}`.trim() ||
     "Agente";
 
   const date = new Date();
@@ -2369,7 +2369,7 @@ fastify.post("/outbound-call", async (request, reply) => {
         agentFirstName
       )}&agent_name=${encodeURIComponent(
         agentName
-      )}&assistant_name=${encodeURIComponent(userData.assistant_name)}`,
+      )}&assistant_name=${encodeURIComponent(userData[0]?.assistant_name)}`,
       statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
       statusCallbackEvent: ["completed"],
       statusCallbackMethod: "POST",
@@ -3604,7 +3604,7 @@ fastify.register(async (fastifyInstance) => {
                 assistant_name: customParameters?.assistant_name,
                 client_name: customParameters?.client_name,
                 client_phone: customParameters?.client_phone,
-                client_email: customParameters?.client_email
+                client_email: customParameters?.client_email,
               });
               //   `🔊 [WebSocket] Received user_voice_id: "${customParameters?.user_voice_id}"`
               // );
@@ -4146,16 +4146,16 @@ fastify.post("/twilio-status", async (request, reply) => {
           if (
             !userError &&
             userData &&
-            userData.twilio_subaccount_sid &&
-            userData.twilio_auth_token
+            userData[0]?.twilio_subaccount_sid &&
+            userData[0]?.twilio_auth_token
           ) {
             // Use subaccount client
             twilioClientToUse = new Twilio(
-              userData.twilio_subaccount_sid,
-              userData.twilio_auth_token
+              userData[0]?.twilio_subaccount_sid,
+              userData[0]?.twilio_auth_token
             );
             console.log(
-              `🔍 [TWILIO STATUS] Using subaccount client for call ${callSid}: ${userData.twilio_subaccount_sid}`
+              `🔍 [TWILIO STATUS] Using subaccount client for call ${callSid}: ${userData[0]?.twilio_subaccount_sid}`
             );
           } else {
             console.log(
