@@ -2728,11 +2728,6 @@ fastify.register(async (fastifyInstance) => {
               },
             };
 
-            console.log(
-              `🔊 [ElevenLabs] Full config sent to ElevenLabs:`,
-              JSON.stringify(initialConfig, null, 2)
-            );
-
             // Verificar que el WebSocket esté abierto antes de enviar
             if (newWs.readyState === WebSocket.OPEN) {
               newWs.send(JSON.stringify(initialConfig));
@@ -4094,10 +4089,7 @@ fastify.post("/twilio-status", async (request, reply) => {
 
         const twilioRecord = await twilioClientToUse.calls(callSid).fetch();
         const callUri = twilioRecord.uri || null;
-        console.log(
-          "🔎 [TWILIO] Call record (json):",
-          JSON.stringify(twilioRecord, null, 2)
-        );
+        //
 
         // Twilio devuelve price con signo (usualmente negativo), guarda valor absoluto
         const priceStr = twilioRecord.price;
@@ -4559,10 +4551,6 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     }
 
     const webhookData = request.body;
-    console.log(
-      "📋 [ELEVENLABS] Webhook data:",
-      JSON.stringify(webhookData, null, 2)
-    );
 
     const {
       event_type,
