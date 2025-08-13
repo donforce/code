@@ -4988,7 +4988,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
       apiKeyData: apiKeyData,
     });
 
-    if (apiKeyError || !apiKeyData || !apiKeyData.is_active) {
+    if (apiKeyError || !apiKeyData || apiKeyData.length === 0 || !apiKeyData[0].is_active) {
       console.log("❌ [API KEY DEBUG] API key validation failed");
       return reply.code(401).send({
         error: "API key inválida o inactiva",
@@ -4996,7 +4996,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
       });
     }
 
-    const userId = apiKeyData.user_id;
+    const userId = apiKeyData[0].user_id;
     console.log("✅ [API KEY DEBUG] API key validated for user:", userId);
 
     // Obtener datos del body
@@ -5347,14 +5347,14 @@ fastify.get("/api/integration/leads", async (request, reply) => {
       .order("created_at", { ascending: false })
       .limit(1);
 
-    if (apiKeyError || !apiKeyData || !apiKeyData.is_active) {
+    if (apiKeyError || !apiKeyData || apiKeyData.length === 0 || !apiKeyData[0].is_active) {
       return reply.code(401).send({
         error: "API key inválida o inactiva",
         message: "Verifica que tu API key sea correcta y esté activa",
       });
     }
 
-    const userId = apiKeyData.user_id;
+    const userId = apiKeyData[0].user_id;
 
     // Obtener parámetros de consulta
     const page = parseInt(request.query.page || "1");
