@@ -634,6 +634,12 @@ function verifyElevenLabsSignature(rawBody, signature) {
     let timestamp = null;
     let actualSignature = null;
 
+    // Verificar que signature existe y es una cadena
+    if (!signature || typeof signature !== "string") {
+      console.warn("[WEBHOOK] Signature is missing or invalid:", signature);
+      return false;
+    }
+
     if (signature.includes("t=") && signature.includes("v0=")) {
       const tMatch = signature.match(/t=(\d+)/);
       if (tMatch) timestamp = tMatch[1];
@@ -7251,7 +7257,10 @@ fastify.post("/api/leads/unmark-invalid-phone", async (request, reply) => {
 fastify.post("/twilio-recording-status", async (request, reply) => {
   try {
     console.log("🎙️ [TWILIO RECORDING] Recording status callback received");
-    console.log("🎙️ [TWILIO RECORDING] Body:", request.body);
+    console.log(
+      "🎙️ [TWILIO RECORDING] Body:",
+      JSON.stringify(request.body, null, 2)
+    );
 
     const {
       CallSid,
@@ -7271,16 +7280,16 @@ fastify.post("/twilio-recording-status", async (request, reply) => {
         .send({ error: "CallSid and RecordingSid required" });
     }
 
-    // console.log("🎙️ [TWILIO RECORDING] Processing recording:", {
-    //   CallSid,
-    //   RecordingSid,
-    //   RecordingUrl,
-    //   RecordingDuration,
-    //   RecordingStatus,
-    //   RecordingChannels,
-    //   RecordingSource,
-    //   AccountSid,
-    // });
+    console.log("��️ [TWILIO RECORDING] Processing recording:", {
+      CallSid,
+      RecordingSid,
+      RecordingUrl,
+      RecordingDuration,
+      RecordingStatus,
+      RecordingChannels,
+      RecordingSource,
+      AccountSid,
+    });
 
     // Verificar si la grabación viene de una subcuenta
     let isFromSubaccount = false;
@@ -9088,8 +9097,10 @@ async function fetchCallPriceAsync(callSid, callUri) {
         const { data: pricingData, error: pricingError } = await supabase
           .from("country_call_pricing")
           .select("*")
-          .eq("country_code", countryCode)
-          .order("price_per_minute", { ascending: false }); // Ordenar por precio descendente
+          .or(
+            `country_code.eq.${countryCode},country_code.like.${countryCode}_%`
+          )
+          .order("price_per_minute", { ascending: false });
 
         if (pricingError) {
           console.error(
@@ -9151,9 +9162,8 @@ async function fetchCallPriceAsync(callSid, callUri) {
           );
         }
 
-        // Calcular créditos totales
-        const totalCredits = selectedTariff.estimated_credits * minutesRounded;
-
+        // �� MODIFICACIÓN: Usar directamente los créditos de la BD sin multiplicar por minutos
+        const totalCredits = selectedTariff.estimated_credits;
         console.log(
           `🎯 [TWILIO PRICE] Créditos calculados para CallSid ${callSid}:`,
           {
