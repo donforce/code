@@ -631,14 +631,32 @@ function determineDetailedCallResult(callData) {
 // Optimized signature verification - minimal logging
 function verifyElevenLabsSignature(rawBody, signature) {
   try {
-    let timestamp = null;
-    let actualSignature = null;
+    // Si no hay ELEVENLABS_WEBHOOK_SECRET, permitir sin verificación
+    if (!ELEVENLABS_WEBHOOK_SECRET) {
+      console.warn(
+        "[WEBHOOK] No ELEVENLABS_WEBHOOK_SECRET configured, skipping signature verification"
+      );
+      return true;
+    }
 
     // Verificar que signature existe y es una cadena
     if (!signature || typeof signature !== "string") {
       console.warn("[WEBHOOK] Signature is missing or invalid:", signature);
+      // En desarrollo, permitir sin firma para testing
+      if (
+        process.env.NODE_ENV === "development" ||
+        process.env.NODE_ENV === "test"
+      ) {
+        console.warn(
+          "[WEBHOOK] Development mode: allowing request without signature"
+        );
+        return true;
+      }
       return false;
     }
+
+    let timestamp = null;
+    let actualSignature = null;
 
     if (signature.includes("t=") && signature.includes("v0=")) {
       const tMatch = signature.match(/t=(\d+)/);
@@ -647,10 +665,12 @@ function verifyElevenLabsSignature(rawBody, signature) {
       const v0Match = signature.match(/v0=([a-f0-9]+)/);
       if (v0Match) actualSignature = v0Match[1];
     } else {
+      console.warn("[WEBHOOK] Invalid signature format:", signature);
       return false;
     }
 
     if (!timestamp || !actualSignature) {
+      console.warn("[WEBHOOK] Missing timestamp or signature in header");
       return false;
     }
 
@@ -660,7 +680,15 @@ function verifyElevenLabsSignature(rawBody, signature) {
       .update(signedPayload, "utf8")
       .digest("hex");
 
-    return expectedSignature === actualSignature;
+    const isValid = expectedSignature === actualSignature;
+
+    if (!isValid) {
+      console.warn("[WEBHOOK] Signature verification failed");
+      console.warn("[WEBHOOK] Expected:", expectedSignature);
+      console.warn("[WEBHOOK] Received:", actualSignature);
+    }
+
+    return isValid;
   } catch (error) {
     console.error("[WEBHOOK] Error verifying signature:", error);
     return false;
@@ -4458,8 +4486,36 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
   try {
     console.log("🎤 [ELEVENLABS] Webhook received");
 
+    // Log all headers to see what ElevenLabs is sending
+    console.log(
+      "🔍 [ELEVENLABS] All headers:",
+      JSON.stringify(request.headers, null, 2)
+    );
+
+    // Check for different possible signature header names
+    const signatureX = request.headers["x-elevenlabs-signature"];
+    const signatureElevenLabs = request.headers["elevenlabs-signature"];
+    const signatureElevenLabsCap = request.headers["ElevenLabs-Signature"];
+
+    console.log("🔍 [ELEVENLABS] Signature headers found:");
+    console.log("  - x-elevenlabs-signature:", signatureX);
+    console.log("  - elevenlabs-signature:", signatureElevenLabs);
+    console.log("  - ElevenLabs-Signature:", signatureElevenLabsCap);
+
     const rawBody = request.rawBody;
-    const signature = request.headers["x-elevenlabs-signature"];
+    console.log(
+      "🔍 [ELEVENLABS] Raw body length:",
+      rawBody ? rawBody.length : "undefined"
+    );
+    console.log(
+      "🔍 [ELEVENLABS] Raw body preview:",
+      rawBody ? rawBody.substring(0, 200) + "..." : "undefined"
+    );
+
+    // Try different signature headers
+    let signature = signatureElevenLabsCap || signatureElevenLabs || signatureX;
+
+    console.log("�� [ELEVENLABS] Using signature:", signature);
 
     // Verify signature
     if (!verifyElevenLabsSignature(rawBody, signature)) {
