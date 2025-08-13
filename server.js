@@ -3598,6 +3598,14 @@ fastify.register(async (fastifyInstance) => {
               customParameters = msg.start.customParameters;
 
               // console.log(
+              console.log("🔍 [WEBSOCKET DEBUG] Received customParameters:", {
+                agent_firstname: customParameters?.agent_firstname,
+                agent_name: customParameters?.agent_name,
+                assistant_name: customParameters?.assistant_name,
+                client_name: customParameters?.client_name,
+                client_phone: customParameters?.client_phone,
+                client_email: customParameters?.client_email
+              });
               //   `🔊 [WebSocket] Received user_voice_id: "${customParameters?.user_voice_id}"`
               // );
 
@@ -4988,7 +4996,12 @@ fastify.post("/api/integration/leads", async (request, reply) => {
       apiKeyData: apiKeyData,
     });
 
-    if (apiKeyError || !apiKeyData || apiKeyData.length === 0 || !apiKeyData[0].is_active) {
+    if (
+      apiKeyError ||
+      !apiKeyData ||
+      apiKeyData.length === 0 ||
+      !apiKeyData[0].is_active
+    ) {
       console.log("❌ [API KEY DEBUG] API key validation failed");
       return reply.code(401).send({
         error: "API key inválida o inactiva",
@@ -5347,7 +5360,12 @@ fastify.get("/api/integration/leads", async (request, reply) => {
       .order("created_at", { ascending: false })
       .limit(1);
 
-    if (apiKeyError || !apiKeyData || apiKeyData.length === 0 || !apiKeyData[0].is_active) {
+    if (
+      apiKeyError ||
+      !apiKeyData ||
+      apiKeyData.length === 0 ||
+      !apiKeyData[0].is_active
+    ) {
       return reply.code(401).send({
         error: "API key inválida o inactiva",
         message: "Verifica que tu API key sea correcta y esté activa",
