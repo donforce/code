@@ -4529,13 +4529,14 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     console.log("  - ElevenLabs-Signature:", signatureElevenLabsCap);
 
     const rawBody = request.rawBody;
+    const rawBodyString = rawBody ? rawBody.toString("utf8") : null;
     console.log(
       "🔍 [ELEVENLABS] Raw body length:",
       rawBody ? rawBody.length : "undefined"
     );
     console.log(
       "🔍 [ELEVENLABS] Raw body preview:",
-      rawBody ? rawBody.substring(0, 200) + "..." : "undefined"
+      rawBodyString ? rawBodyString.substring(0, 200) + "..." : "undefined"
     );
 
     // Try different signature headers
@@ -4544,7 +4545,7 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     console.log(" [ELEVENLABS] Using signature:", signature);
 
     // Verify signature
-    if (!verifyElevenLabsSignature(rawBody, signature)) {
+    if (!verifyElevenLabsSignature(rawBodyString, signature)) {
       console.error("❌ [ELEVENLABS] Invalid signature");
 
       // TEMPORAL: Permitir webhook sin verificación mientras debuggeamos
