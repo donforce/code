@@ -7868,7 +7868,7 @@ async function fetchCallPriceAsync(callSid, callUri) {
     `🔄 [TWILIO PRICE] Iniciando proceso asíncrono para CallSid: ${callSid}`
   );
 
-  const MAX_RETRIES = 5;
+  const MAX_RETRIES = 10;
   const RETRY_DELAY = 5000; // 5 segundos
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
