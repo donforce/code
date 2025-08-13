@@ -1905,7 +1905,6 @@ async function processQueueItem(queueItem, workerId = "unknown") {
             `
             )
             .eq("user_id", queueItem.user_id)
-            .eq("is_active", true)
             .single();
 
         if (!voiceSettingsError && voiceSettingsData) {
@@ -1937,7 +1936,6 @@ async function processQueueItem(queueItem, workerId = "unknown") {
         const { data: questionsData, error: questionsError } = await supabase
           .from("agent_questions")
           .select("question_text, question_type, is_required, order_index")
-          .eq("is_active", true)
           .order("order_index", { ascending: true });
 
         if (!questionsError && questionsData && questionsData.length > 0) {
@@ -6483,7 +6481,6 @@ async function handleCheckoutSessionCompleted(session, stripe) {
         .from("subscription_plans")
         .select("id, minutes_per_month, monthly_call_credits") // cambiar credits_per_month -> monthly_call_credits
         .eq("name", product.name)
-        .eq("is_active", true)
         .single();
 
       if (planError) {
@@ -6495,7 +6492,6 @@ async function handleCheckoutSessionCompleted(session, stripe) {
           .from("subscription_plans")
           .select("id, minutes_per_month, monthly_call_credits") // cambiar credits_per_month -> monthly_call_credits
           .eq("stripe_price_id", price.id)
-          .eq("is_active", true)
           .single();
 
         if (planByPriceId) {
@@ -6629,6 +6625,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
           ),
           cancel_at_period_end: subscription.cancel_at_period_end,
           minutes_per_month: minutesPerMonth,
+          credits_per_month: planCredits || minutesPerMonth, // Agregar campo requerido
           product_name: product.name,
           updated_at: new Date().toISOString(),
         })
@@ -6655,6 +6652,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
           ),
           cancel_at_period_end: subscription.cancel_at_period_end,
           minutes_per_month: minutesPerMonth,
+          credits_per_month: planCredits || minutesPerMonth, // Agregar campo requerido
           product_name: product.name,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -7370,7 +7368,7 @@ fastify.post("/twilio-recording-status", async (request, reply) => {
         .send({ error: "CallSid and RecordingSid required" });
     }
 
-    console.log("��️ [TWILIO RECORDING] Processing recording:", {
+    console.log("🎙️ [TWILIO RECORDING] Processing recording:", {
       CallSid,
       RecordingSid,
       RecordingUrl,
