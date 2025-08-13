@@ -1834,7 +1834,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       userData: {
         first_name: userData.first_name,
         last_name: userData.last_name,
-        assistant_name:  userData.assistant_name,
+        assistant_name: userData.assistant_name,
         email: userData.email,
       },
       constructed: {
@@ -2730,12 +2730,15 @@ fastify.register(async (fastifyInstance) => {
               dia_semana: customParameters?.dia_semana,
               agent_firstname: customParameters?.agent_firstname,
               agent_name: customParameters?.agent_name,
-              assistant_name:  customParameters?.assistant_name,
+              assistant_name: customParameters?.assistant_name,
               calendar_availability: customParameters?.calendar_availability,
               calendar_timezone: customParameters?.calendar_timezone,
               user_voice_id: customParameters?.user_voice_id,
-              custom_llm_prompt: customParameters?.custom_llm_prompt ? "Present" : "Not present"
-            });            const initialConfig = {
+              custom_llm_prompt: customParameters?.custom_llm_prompt
+                ? "Present"
+                : "Not present",
+            });
+            const initialConfig = {
               type: "conversation_initiation_client_data",
               conversation_config_override: {
                 agent: {
@@ -2785,7 +2788,7 @@ fastify.register(async (fastifyInstance) => {
               agent_firstname: initialConfig.dynamic_variables.agent_firstname,
               agent_name: initialConfig.dynamic_variables.agent_name,
               assistant_name: initialConfig.dynamic_variables.assistant_name,
-              client_name: initialConfig.dynamic_variables.client_name
+              client_name: initialConfig.dynamic_variables.client_name,
             });
 
             // Verificar que el WebSocket esté abierto antes de enviar
@@ -4946,14 +4949,20 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
 });
 
 // API Integration endpoints for leads
+// API Integration endpoints for leads
 fastify.post("/api/integration/leads", async (request, reply) => {
   try {
-    console.log("📞 [API] POST /api/integration/leads - Creating lead");
+    console.log("�� [API] POST /api/integration/leads - Creating lead");
 
     // Obtener API key del header
     const apiKey =
       request.headers["x-api-key"] ||
       request.headers.authorization?.replace("Bearer ", "");
+
+    console.log(
+      "🔍 [API KEY DEBUG] API Key received:",
+      apiKey ? "Present" : "Missing"
+    );
 
     if (!apiKey) {
       return reply.code(401).send({
@@ -4964,6 +4973,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
     }
 
     // Validar API key
+    console.log("🔍 [API KEY DEBUG] Searching for API key in database...");
     const { data: apiKeyData, error: apiKeyError } = await supabase
       .from("api_keys")
       .select("user_id, is_active")
@@ -4972,7 +4982,14 @@ fastify.post("/api/integration/leads", async (request, reply) => {
       .order("created_at", { ascending: false })
       .limit(1);
 
+    console.log("🔍 [API KEY DEBUG] Query result:", {
+      hasData: !!apiKeyData,
+      error: apiKeyError,
+      apiKeyData: apiKeyData,
+    });
+
     if (apiKeyError || !apiKeyData || !apiKeyData.is_active) {
+      console.log("❌ [API KEY DEBUG] API key validation failed");
       return reply.code(401).send({
         error: "API key inválida o inactiva",
         message: "Verifica que tu API key sea correcta y esté activa",
@@ -4980,6 +4997,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
     }
 
     const userId = apiKeyData.user_id;
+    console.log("✅ [API KEY DEBUG] API key validated for user:", userId);
 
     // Obtener datos del body
     const body = request.body;
@@ -5132,10 +5150,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                   updated_at: new Date().toISOString(),
                 })
                 .eq("id", existingLead.id)
-                .select()
-                .eq("is_active", true)
-                .order("created_at", { ascending: false })
-                .limit(1);
+                .select();
 
               if (updateError) {
                 return {
@@ -5199,10 +5214,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                   created_at: new Date().toISOString(),
                   updated_at: new Date().toISOString(),
                 })
-                .select()
-                .eq("is_active", true)
-                .order("created_at", { ascending: false })
-                .limit(1);
+                .select();
 
               if (insertError) {
                 return {
