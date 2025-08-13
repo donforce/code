@@ -4300,6 +4300,10 @@ fastify.post("/twilio-status", async (request, reply) => {
     }
     activeCalls--;
 
+    // ⚠️ ELIMINADO: Deducción de créditos del webhook de status
+    // La deducción de créditos ahora solo ocurre en fetchCallPriceAsync
+    // para evitar doble deducción
+
     // Deduct minutes from user's available time if call was successful
     if (
       existingCall &&
@@ -4315,7 +4319,7 @@ fastify.post("/twilio-status", async (request, reply) => {
         // Get current user data
         const { data: userData, error: userError } = await supabase
           .from("users")
-          .select("available_minutes, available_call_credits") // añadir credits
+          .select("available_minutes")
           .eq("id", existingCall.user_id)
           .single();
 
@@ -4323,52 +4327,31 @@ fastify.post("/twilio-status", async (request, reply) => {
           console.error("[TWILIO STATUS] Error fetching user data:", userError);
         } else if (userData) {
           // available_minutes stores the value in seconds
-          // available_minutes stores the value in seconds
           const totalAvailableSeconds = userData.available_minutes || 0;
-          const availableCredits = userData.available_call_credits || 0;
 
-          // Créditos necesarios por la llamada (ceil(segundos/60)) – se cobran SIEMPRE
-          const creditsNeededTotal = Math.ceil(callDuration / 60);
-          const creditsToDeduct = Math.min(
-            availableCredits,
-            creditsNeededTotal
-          );
-
-          // Segundos: SIEMPRE restar la duración completa de la llamada (como antes)
+          // Segundos: SIEMPRE restar la duración completa de la llamada
           const remainingSeconds = Math.max(
             0,
             totalAvailableSeconds - callDuration
           );
-          const remainingCredits = Math.max(
-            0,
-            availableCredits - creditsToDeduct
-          );
 
-          console.log(
-            "[TWILIO STATUS] Post-call deduction (both: seconds + credits):",
-            {
-              callDuration,
-              creditsNeededTotal,
-              creditsToDeduct,
-              before: {
-                seconds: totalAvailableSeconds,
-                minutes: Math.floor(totalAvailableSeconds / 60),
-                credits: availableCredits,
-              },
-              after: {
-                seconds: remainingSeconds,
-                minutes: Math.floor(remainingSeconds / 60),
-                credits: remainingCredits,
-              },
-            }
-          );
+          console.log("[TWILIO STATUS] Post-call deduction (minutes only):", {
+            callDuration,
+            before: {
+              seconds: totalAvailableSeconds,
+              minutes: Math.floor(totalAvailableSeconds / 60),
+            },
+            after: {
+              seconds: remainingSeconds,
+              minutes: Math.floor(remainingSeconds / 60),
+            },
+          });
 
-          // Actualizar saldos
+          // Actualizar saldos (solo minutos, créditos se descuentan en fetchCallPriceAsync)
           const { error: updateError } = await supabase
             .from("users")
             .update({
               available_minutes: remainingSeconds,
-              available_call_credits: remainingCredits,
               updated_at: new Date().toISOString(),
             })
             .eq("id", existingCall.user_id);
