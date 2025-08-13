@@ -4488,7 +4488,7 @@ fastify.post("/twilio-status", async (request, reply) => {
     }
 
     // Update associated queue item
-    if (existingCall && existingCall.queue_id) {
+    if (existingCall && existingCall.queue_id && callStatus === "completed") {
       await supabase
         .from("call_queue")
         .update({
@@ -6291,7 +6291,7 @@ async function analyzeTranscriptAndGenerateInsights(
     );
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-5",
       messages: [
         {
           role: "system",
@@ -7875,7 +7875,7 @@ async function fetchCallPriceAsync(callSid, callUri) {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       console.log(
-        `🔄 [TWILIO PRICE] Intento ${attempt}/${MAX_RETRIES} para CallSid: ${callSid}`
+        `�� [TWILIO PRICE] Intento ${attempt}/${MAX_RETRIES} para CallSid: ${callSid}`
       );
 
       // Extraer AccountSid de la URI
@@ -7949,7 +7949,7 @@ async function fetchCallPriceAsync(callSid, callUri) {
         // Calcular precio por minuto
         const pricePerMinute = callPrice / minutesRounded;
 
-        console.log(`🔄 [TWILIO PRICE] Cálculos para CallSid ${callSid}:`, {
+        console.log(`�� [TWILIO PRICE] Cálculos para CallSid ${callSid}:`, {
           precio_total: callPrice,
           duracion_segundos: durationSeconds,
           minutos_redondeados: minutesRounded,
@@ -7962,7 +7962,6 @@ async function fetchCallPriceAsync(callSid, callUri) {
           .from("calls")
           .select("to_country")
           .eq("call_sid", callSid)
-
           .order("created_at", { ascending: false })
           .limit(1);
 
@@ -7982,12 +7981,42 @@ async function fetchCallPriceAsync(callSid, callUri) {
         const countryCode = callRecord[0].to_country;
         console.log(`🌍 [TWILIO PRICE] País de la llamada: ${countryCode}`);
 
-        // Buscar tarifa en country_call_pricing
-        const { data: pricingData, error: pricingError } = await supabase
+        // 🔧 CORRECCIÓN 1: Buscar tarifa en country_call_pricing con variantes
+        let { data: pricingData, error: pricingError } = await supabase
           .from("country_call_pricing")
           .select("*")
           .eq("country_code", countryCode)
           .order("price_per_minute", { ascending: false }); // Ordenar por precio descendente
+
+        // Si no se encuentra tarifa para el país base, intentar con variantes (ej: US -> US_1, US_2, etc.)
+        if (
+          (!pricingData || pricingData.length === 0) &&
+          !countryCode.includes("_")
+        ) {
+          console.log(
+            `�� [TWILIO PRICE] Buscando variantes para: ${countryCode}`
+          );
+
+          // Buscar todas las variantes posibles (US_1, US_2, etc.)
+          const { data: pricingDataVariants, error: pricingErrorVariants } =
+            await supabase
+              .from("country_call_pricing")
+              .select("*")
+              .like("country_code", `${countryCode}_%`)
+              .order("price_per_minute", { ascending: false });
+
+          if (
+            !pricingErrorVariants &&
+            pricingDataVariants &&
+            pricingDataVariants.length > 0
+          ) {
+            pricingData = pricingDataVariants;
+            pricingError = pricingErrorVariants;
+            console.log(
+              `✅ [TWILIO PRICE] Encontradas ${pricingDataVariants.length} tarifas con variantes para ${countryCode}`
+            );
+          }
+        }
 
         if (pricingError) {
           console.error(
