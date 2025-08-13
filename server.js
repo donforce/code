@@ -6481,7 +6481,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
 
       const { data: plan, error: planError } = await supabase
         .from("subscription_plans")
-        .select("id, name, minutes_per_month, monthly_call_credits") // agregar name para logging
+        .select("id, name, minutes_per_month, credits_per_month") // agregar name para logging
         .eq("name", product.name)
         .single();
 
@@ -6490,7 +6490,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
         planId: plan?.id,
         planName: plan?.name,
         planMinutes: plan?.minutes_per_month,
-        planCredits: plan?.monthly_call_credits,
+        planCredits: plan?.credits_per_month,
         error: planError?.message,
         errorCode: planError?.code,
       });
@@ -6506,7 +6506,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
         // Try to find plan by stripe_price_id as fallback
         const { data: planByPriceId } = await supabase
           .from("subscription_plans")
-          .select("id, name, minutes_per_month, monthly_call_credits") // agregar name para logging
+          .select("id, name, minutes_per_month, credits_per_month") // agregar name para logging
           .eq("stripe_price_id", price.id)
           .single();
 
@@ -6515,13 +6515,13 @@ async function handleCheckoutSessionCompleted(session, stripe) {
           planId: planByPriceId?.id,
           planName: planByPriceId?.name,
           planMinutes: planByPriceId?.minutes_per_month,
-          planCredits: planByPriceId?.monthly_call_credits,
+          planCredits: planByPriceId?.credits_per_month,
         });
 
         if (planByPriceId) {
           planId = planByPriceId.id;
           minutesPerMonth = planByPriceId.minutes_per_month || 2500;
-          planCredits = planByPriceId.monthly_call_credits || minutesPerMonth;
+          planCredits = planByPriceId.credits_per_month || minutesPerMonth;
           console.log(
             "✅ [STRIPE] Plan found by stripe_price_id:",
             planByPriceId.id
@@ -6543,7 +6543,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
       } else {
         planId = plan.id;
         minutesPerMonth = plan.minutes_per_month || 2500;
-        planCredits = plan.monthly_call_credits || minutesPerMonth; // cambiar plan.credits_per_month -> monthly_call_credits
+        planCredits = plan.credits_per_month || minutesPerMonth; // cambiar plan.credits_per_month -> credits_per_month
         console.log("✅ [STRIPE] Plan found by name:", plan.id);
       }
     } else {
