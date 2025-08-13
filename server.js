@@ -7552,3 +7552,190 @@ fastify.post("/api/admin/cleanup-recordings", async (request, reply) => {
     });
   }
 });
+
+// Función para inicializar el bucket de grabaciones en Supabase Storage
+async function initializeRecordingBucket() {
+  try {
+    console.log("🪣 [STORAGE] Initializing recording bucket...");
+
+    // Listar buckets existentes
+    const { data: buckets, error: listError } =
+      await supabase.storage.listBuckets();
+
+    if (listError) {
+      console.error("❌ [STORAGE] Error listing buckets:", listError);
+      return false;
+    }
+
+    // Verificar si el bucket ya existe
+    const bucketExists = buckets.some(
+      (bucket) => bucket.name === "call-recordings"
+    );
+
+    if (bucketExists) {
+      console.log("✅ [STORAGE] Recording bucket already exists");
+      return true;
+    }
+
+    // Crear el bucket si no existe
+    const { data: bucket, error: createError } =
+      await supabase.storage.createBucket("call-recordings", {
+        public: true,
+        allowedMimeTypes: ["audio/wav", "audio/mp3"],
+        fileSizeLimit: 52428800, // 50MB limit
+      });
+
+    if (createError) {
+      console.error("❌ [STORAGE] Error creating bucket:", createError);
+      return false;
+    }
+
+    console.log("✅ [STORAGE] Recording bucket created successfully");
+    return true;
+  } catch (error) {
+    console.error("❌ [STORAGE] Error initializing recording bucket:", error);
+    return false;
+  }
+}
+
+// Función para descargar grabación de Twilio y guardarla en Supabase Storage
+async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
+  try {
+    console.log(
+      `🎙️ [RECORDING DOWNLOAD] Starting download for call ${callSid}`
+    );
+
+    // Primero, obtener información de la llamada para determinar qué credenciales usar
+    const { data: callData, error: callError } = await supabase
+      .from("calls")
+      .select(
+        `
+        user_id,
+        users!calls_user_id_fkey(
+          twilio_subaccount_sid,
+          twilio_auth_token
+        )
+      `
+      )
+      .eq("call_sid", callSid)
+      .single();
+
+    if (callError) {
+      console.error(
+        `❌ [RECORDING DOWNLOAD] Error getting call data for ${callSid}:`,
+        callError
+      );
+      throw new Error(`Failed to get call data: ${callError.message}`);
+    }
+
+    // Determinar qué cliente de Twilio usar
+    let twilioClientToUse = twilioClient; // Default
+    let accountSid = TWILIO_ACCOUNT_SID;
+    let authToken = TWILIO_AUTH_TOKEN;
+
+    if (
+      callData.users?.twilio_subaccount_sid &&
+      callData.users?.twilio_auth_token
+    ) {
+      // Usar las credenciales de la subcuenta del usuario
+      accountSid = callData.users.twilio_subaccount_sid;
+      authToken = callData.users.twilio_auth_token;
+      twilioClientToUse = new Twilio(accountSid, authToken);
+
+      console.log(
+        `🎙️ [RECORDING DOWNLOAD] Using user's subaccount for call ${callSid}:`,
+        {
+          userId: callData.user_id,
+          subaccountSid: accountSid,
+        }
+      );
+    } else {
+      console.log(
+        `🎙️ [RECORDING DOWNLOAD] Using main account for call ${callSid}`
+      );
+    }
+
+    // Usar el cliente correcto para obtener la grabación con autenticación
+    const recording = await twilioClientToUse.recordings(recordingSid).fetch();
+    const extension = recording.mediaFormat || "wav"; // fallback
+    const actualRecordingUrl = `https://api.twilio.com${recording.uri.replace(
+      ".json",
+      `.${extension}`
+    )}`;
+
+    const response = await fetch(actualRecordingUrl, {
+      headers: {
+        Authorization:
+          "Basic " +
+          Buffer.from(`${accountSid}:${authToken}`).toString("base64"),
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to download recording: ${response.status} ${response.statusText}`
+      );
+    }
+
+    const audioBuffer = await response.arrayBuffer();
+    const audioData = Buffer.from(audioBuffer);
+
+    console.log(
+      `🎙️ [RECORDING DOWNLOAD] Downloaded ${audioData.length} bytes for call ${callSid}`
+    );
+
+    // Generar nombre único para el archivo
+    const fileName = `recordings/${callSid}_${recordingSid}.${extension}`;
+
+    // Subir a Supabase    // Subir a Supabase Storage
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from("call-recordings")
+      .upload(fileName, audioData, {
+        contentType: `audio/${extension}`,
+        upsert: false,
+      });
+
+    if (uploadError) {
+      throw new Error(
+        `Failed to upload to Supabase Storage: ${uploadError.message}`
+      );
+    }
+
+    console.log(
+      `🎙️ [RECORDING DOWNLOAD] Successfully uploaded to Supabase Storage: ${fileName}`
+    );
+
+    // Obtener URL pública del archivo
+    const { data: urlData } = supabase.storage
+      .from("call-recordings")
+      .getPublicUrl(fileName);
+
+    const publicUrl = urlData.publicUrl;
+
+    // Actualizar la base de datos con la URL del archivo descargado
+    const { error: updateError } = await supabase
+      .from("calls")
+      .update({
+        recording_storage_url: publicUrl,
+        recording_storage_path: fileName,
+        recording_downloaded_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("call_sid", callSid);
+
+    if (updateError) {
+      throw new Error(`Failed to update database: ${updateError.message}`);
+    }
+
+    console.log(
+      `✅ [RECORDING DOWNLOAD] Successfully stored recording for call ${callSid}: ${publicUrl}`
+    );
+    return publicUrl;
+  } catch (error) {
+    console.error(
+      `❌ [RECORDING DOWNLOAD] Error downloading/storing recording for call ${callSid}:`,
+      error
+    );
+    throw error;
+  }
+}
