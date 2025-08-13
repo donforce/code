@@ -1140,7 +1140,6 @@ async function checkGoogleCalendarAvailability(userId) {
         "access_token, refresh_token, calendar_enabled, calendar_timezone"
       )
       .eq("user_id", userId)
-      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -1348,7 +1347,6 @@ async function getCalendarAvailabilitySummary(userId) {
         "access_token, refresh_token, calendar_enabled, calendar_timezone"
       )
       .eq("user_id", userId)
-      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -1609,7 +1607,6 @@ async function processQueueItem(queueItem, workerId = "unknown") {
         "available_call_credits, email, first_name, last_name, assistant_name, twilio_phone_number, twilio_subaccount_sid, twilio_auth_token"
       )
       .eq("id", queueItem.user_id)
-      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -1937,7 +1934,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
             `
             )
             .eq("user_id", queueItem.user_id)
-            .eq("is_active", true)
+            
             .order("created_at", { ascending: false })
             .limit(1);
 
@@ -2249,7 +2246,7 @@ fastify.post("/outbound-call", async (request, reply) => {
       "first_name, last_name, assistant_name, twilio_phone_number, twilio_subaccount_sid, twilio_auth_token, automated_calls_consent, terms_accepted_at, privacy_accepted_at, is_active, available_minutes, is_admin"
     )
     .eq("id", user_id)
-    .eq("is_active", true)
+    
     .order("created_at", { ascending: false })
     .limit(1);
 
@@ -3993,7 +3990,7 @@ async function cleanupStuckCalls() {
           .from("calls")
           .select("status")
           .eq("queue_id", queueItem.id)
-          .eq("is_active", true)
+          
           .order("created_at", { ascending: false })
           .limit(1);
 
@@ -4049,7 +4046,6 @@ fastify.post("/twilio-status", async (request, reply) => {
       .from("calls")
       .select("*")
       .eq("call_sid", callSid)
-      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -4139,7 +4135,7 @@ fastify.post("/twilio-status", async (request, reply) => {
             .from("users")
             .select("twilio_subaccount_sid, twilio_auth_token")
             .eq("id", existingCall.user_id)
-            .eq("is_active", true)
+            
             .order("created_at", { ascending: false })
             .limit(1);
 
@@ -4434,7 +4430,7 @@ fastify.post("/twilio-status", async (request, reply) => {
           .from("users")
           .select("available_minutes")
           .eq("id", existingCall.user_id)
-          .eq("is_active", true)
+          
           .order("created_at", { ascending: false })
           .limit(1);
 
@@ -4513,7 +4509,7 @@ fastify.post("/twilio-status", async (request, reply) => {
           .from("calls")
           .select("status")
           .eq("queue_id", queueItem.id)
-          .eq("is_active", true)
+          
           .order("created_at", { ascending: false })
           .limit(1);
         if (!associatedCall || associatedCall.status !== "In Progress") {
@@ -4682,7 +4678,6 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       .from("calls")
       .select("*")
       .eq("conversation_id", conversation_id)
-      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -4807,7 +4802,7 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
         .from("calls")
         .select("*")
         .eq("conversation_id", conversation_id)
-        .eq("is_active", true)
+        
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -4927,7 +4922,7 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
         .from("calls")
         .select("*")
         .eq("conversation_id", conversation_id)
-        .eq("is_active", true)
+        
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -4986,7 +4981,6 @@ fastify.post("/api/integration/leads", async (request, reply) => {
       .from("api_keys")
       .select("user_id, is_active")
       .eq("api_key", apiKey)
-      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -5356,7 +5350,6 @@ fastify.get("/api/integration/leads", async (request, reply) => {
       .from("api_keys")
       .select("user_id, is_active")
       .eq("api_key", apiKey)
-      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -5585,7 +5578,7 @@ async function checkForScheduledCall(webhookData, call) {
         .from("leads")
         .select("name, phone, email")
         .eq("id", call.lead_id)
-        .eq("is_active", true)
+        
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -6066,7 +6059,6 @@ async function createCalendarEvent(scheduledCallInfo, call) {
         "access_token, refresh_token, calendar_enabled, calendar_timezone"
       )
       .eq("user_id", call.user_id)
-      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -6601,7 +6593,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
         .from("subscription_plans")
         .select("id, name, minutes_per_month, credits_per_month") // agregar name para logging
         .eq("name", product.name)
-        .eq("is_active", true)
+        
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -6628,7 +6620,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
           .from("subscription_plans")
           .select("id, name, minutes_per_month, credits_per_month") // agregar name para logging
           .eq("stripe_price_id", price.id)
-          .eq("is_active", true)
+          
           .order("created_at", { ascending: false })
           .limit(1);
 
@@ -6698,7 +6690,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
         .from("users")
         .select("*")
         .eq("email", session.customer_email)
-        .eq("is_active", true)
+        
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -6713,7 +6705,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
         .from("users")
         .select("*")
         .eq("stripe_customer_id", session.customer)
-        .eq("is_active", true)
+        
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -6766,7 +6758,6 @@ async function handleCheckoutSessionCompleted(session, stripe) {
       .from("user_subscriptions")
       .select("*")
       .eq("stripe_subscription_id", subscription.id)
-      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -6819,7 +6810,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
           updated_at: new Date().toISOString(),
         })
         .select()
-        .eq("is_active", true)
+        
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -6839,7 +6830,6 @@ async function handleCheckoutSessionCompleted(session, stripe) {
       .from("users")
       .select("available_minutes, available_call_credits") // añadir credits
       .eq("id", user.id)
-      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -6974,7 +6964,6 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
       .from("user_subscriptions")
       .select("user_id, minutes_per_month, plan_id")
       .eq("stripe_subscription_id", subscription.id)
-      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -7022,7 +7011,6 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
       .from("users")
       .select("available_minutes")
       .eq("id", userSubscription.user_id)
-      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -7126,7 +7114,6 @@ async function handleInvoicePaymentFailed(invoice, stripe) {
       .from("user_subscriptions")
       .select("user_id, minutes_per_month, plan_id")
       .eq("stripe_subscription_id", subscription.id)
-      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -7183,7 +7170,7 @@ async function handleInvoicePaymentFailed(invoice, stripe) {
         .from("users")
         .select("available_minutes")
         .eq("id", userSubscription.user_id)
-        .eq("is_active", true)
+        
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -7302,7 +7289,6 @@ async function handleSubscriptionUpdated(subscription) {
       .from("user_subscriptions")
       .select("user_id")
       .eq("stripe_subscription_id", subscription.id)
-      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -7330,7 +7316,6 @@ async function handleSubscriptionDeleted(subscription) {
       .from("user_subscriptions")
       .select("user_id, minutes_per_month")
       .eq("stripe_subscription_id", subscription.id)
-      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -7373,7 +7358,6 @@ async function handleSubscriptionDeleted(subscription) {
       .from("users")
       .select("available_minutes")
       .eq("id", userSubscription.user_id)
-      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -7428,7 +7412,6 @@ async function syncReferralData(userId, subscriptionData) {
       .from("user_subscriptions")
       .select("plan_id, minutes_per_month, status")
       .eq("user_id", userId)
-      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -7447,7 +7430,7 @@ async function syncReferralData(userId, subscriptionData) {
         .from("subscription_plans")
         .select("name")
         .eq("id", userSubscription.plan_id)
-        .eq("is_active", true)
+        
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -7756,7 +7739,6 @@ async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
       `
       )
       .eq("call_sid", callSid)
-      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -7979,7 +7961,7 @@ async function fetchCallPriceAsync(callSid, callUri) {
           .from("calls")
           .select("to_country")
           .eq("call_sid", callSid)
-          .eq("is_active", true)
+          
           .order("created_at", { ascending: false })
           .limit(1);
 
