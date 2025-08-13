@@ -7313,7 +7313,7 @@ async function syncReferralData(userId, subscriptionData) {
         referred_plan: planName,
         referred_status: userSubscription.status || "active",
         referred_minutes: userSubscription.minutes_per_month || 5,
-        referred_credits: userSubscription.credits_per_month || 0,
+        // referred_credits: userSubscription.credits_per_month || 0, // Comentado: columna no existe
         updated_at: new Date().toISOString(),
       })
       .eq("referred_id", userId);
