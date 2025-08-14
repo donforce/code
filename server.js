@@ -355,305 +355,23 @@ async function handleTwilioError(
   return translatedError;
 }
 
-// Function to determine detailed call result based on available data
+// Function to determine detailed call result based on AI analysis only
 function determineDetailedCallResult(callData) {
   try {
-    const {
-      result,
-      call_successful,
-      connection_status,
-      end_reason,
-      calendar_event_id,
-      duration,
-      turn_count,
-      transcript_summary,
-      commercial_suggestion,
-    } = callData;
+    const { calendar_event_id, detailed_result } = callData;
 
-    const textIncludesAny = (text, phrases) => {
-      if (!text) return false;
-      const t = String(text).toLowerCase();
-      return phrases.some((p) => t.includes(p));
-    };
-
-    const explicitNoInterest = () => {
-      const phrases = [
-        "no está interesado",
-        "no estoy interesado",
-        "no estoy interesada",
-        "no le interesa",
-        "no me interesa",
-        "no interesa",
-        "no quiero",
-        "no quiere",
-        "no estoy interesado en",
-        "no estoy interesada en",
-        "no desea",
-        "no le interesa la oferta",
-        "not interested",
-        "no interest",
-        "no está interesado en comprar",
-        "no estoy interesado en comprar",
-        "no le interesa comprar",
-        "no me interesa comprar",
-        "no está interesado en comprar en este momento",
-        "no estoy interesado en comprar en este momento",
-        "cerrar su registro",
-        "cerrar registro",
-      ];
-      return (
-        textIncludesAny(transcript_summary, phrases) ||
-        textIncludesAny(commercial_suggestion, phrases)
-      );
-    };
-
-    // Check if call was connected and had conversation
-    const wasConnected = connection_status === "connected" || duration > 10;
-    const hadConversation = turn_count > 0 && !!transcript_summary;
-    const wasSuccessful = call_successful === "success";
-    const hasAppointment = !!calendar_event_id;
-
-    // Determine detailed result
-    if (hasAppointment) {
+    // Si hay cita agendada, siempre retornar "Cita Agendada"
+    if (calendar_event_id) {
       return "Cita Agendada";
     }
 
-    // 1. Check specific end reasons FIRST
-    if (end_reason) {
-      // Comprehensive voicemail detection
-      if (
-        end_reason.includes("voicemail") ||
-        end_reason === "voicemail_detected_by_silence" ||
-        end_reason === "voicemail_detected_by_transcript" ||
-        end_reason === "elevenlabs_voicemail_detected" ||
-        end_reason.toLowerCase().includes("grabación") ||
-        end_reason.toLowerCase().includes("recording") ||
-        end_reason.toLowerCase().includes("tecla") ||
-        end_reason.toLowerCase().includes("key") ||
-        end_reason.toLowerCase().includes("detener") ||
-        end_reason.toLowerCase().includes("stop")
-      ) {
-        return "Buzón de Voz";
-      }
-
-      // Enhanced no-answer detection
-      if (
-        end_reason.includes("no_answer") ||
-        end_reason.includes("not_answered") ||
-        end_reason === "elevenlabs_call_not_answered"
-      ) {
-        return "No Contestó";
-      }
-
-      if (end_reason.includes("busy")) {
-        return "Línea Ocupada";
-      }
-
-      if (end_reason.includes("invalid_phone")) {
-        return "Teléfono Inválido";
-      }
-
-      if (
-        end_reason.includes("timeout") ||
-        end_reason === "elevenlabs_timeout_no_response"
-      ) {
-        return "Sin Respuesta (Timeout)";
-      }
-
-      if (
-        end_reason.includes("ended_early") ||
-        end_reason === "elevenlabs_call_ended_early"
-      ) {
-        return "Llamada Cortada";
-      }
-
-      // Handle conversation failures
-      if (
-        end_reason === "elevenlabs_conversation_failed" ||
-        end_reason === "elevenlabs_no_user_response"
-      ) {
-        return "Conversación Falló";
-      }
-
-      if (end_reason === "elevenlabs_conversation_ended") {
-        return "Conversación Terminada";
-      }
+    // Usar únicamente el resultado de la IA (detailed_result)
+    if (detailed_result) {
+      return detailed_result;
     }
 
-    // 2. Check transcript for voicemail indicators
-    if (transcript_summary || commercial_suggestion) {
-      const transcriptText = (transcript_summary || "").toLowerCase();
-      const suggestionText = (commercial_suggestion || "").toLowerCase();
-
-      // Check for voicemail indicators in transcript
-      const voicemailIndicators = [
-        "buzón de voz",
-        "voicemail",
-        "grabación",
-        "recording",
-        "tecla",
-        "key",
-        "detener",
-        "stop",
-        "mensaje",
-        "message",
-        "deje su mensaje",
-        "leave a message",
-        "grabe su mensaje",
-      ];
-
-      if (
-        voicemailIndicators.some(
-          (indicator) =>
-            transcriptText.includes(indicator) ||
-            suggestionText.includes(indicator)
-        )
-      ) {
-        return "Buzón de Voz";
-      }
-
-      // Check for appointment scheduling
-      if (
-        transcriptText.includes("cita") ||
-        transcriptText.includes("appointment") ||
-        transcriptText.includes("agendar") ||
-        transcriptText.includes("schedule") ||
-        calendar_event_id
-      ) {
-        return "Cita Agendada";
-      }
-
-      // Check for explicit disinterest
-      const disinterestPhrases = [
-        "no está interesado",
-        "no estoy interesado",
-        "no le interesa",
-        "no me interesa",
-        "no quiero",
-        "no quiere",
-        "not interested",
-      ];
-
-      if (
-        disinterestPhrases.some(
-          (phrase) =>
-            transcriptText.includes(phrase) || suggestionText.includes(phrase)
-        )
-      ) {
-        return "Cliente No Interesado";
-      }
-
-      // Check for successful conversation indicators
-      const successIndicators = [
-        "interesado",
-        "interested",
-        "me interesa",
-        "quiero",
-        "want",
-        "propuesta",
-        "proposal",
-        "seguimiento",
-        "follow up",
-      ];
-
-      if (
-        successIndicators.some(
-          (indicator) =>
-            transcriptText.includes(indicator) ||
-            suggestionText.includes(indicator)
-        )
-      ) {
-        return "Cliente Interesado";
-      }
-    }
-
-    // 3. THEN check conversation logic
-    if (wasConnected && hadConversation) {
-      // Only mark no-interest when explicit in transcript or suggestion
-      if (explicitNoInterest()) {
-        return "Cliente No Interesado";
-      }
-
-      if (wasSuccessful) {
-        // Use commercial suggestion to determine interest level
-        if (commercial_suggestion) {
-          const suggestion = commercial_suggestion.toLowerCase();
-          if (
-            suggestion.includes("seguimiento") ||
-            suggestion.includes("propuesta") ||
-            suggestion.includes("interesado") ||
-            suggestion.includes("interes")
-          ) {
-            return "Cliente Interesado";
-          } else if (
-            suggestion.includes("reintentar") ||
-            suggestion.includes("objeciones") ||
-            suggestion.includes("follow up")
-          ) {
-            return "Cliente con Objeciones";
-          } else {
-            return "Conversación Exitosa";
-          }
-        }
-        return "Conversación Exitosa";
-      }
-
-      // Hubo conversación pero no fue exitosa y sin negativa explícita
-      return "Cliente con Objeciones";
-    }
-
-    if (wasConnected && !hadConversation) {
-      return "Cliente Conectó pero No Habló";
-    }
-
-    // 4. IMPROVED FALLBACK LOGIC for early termination
-    // If we have some duration but no clear indicators, make educated guesses
-    if (duration) {
-      if (duration < 30) {
-        // Very short calls are likely no answer or voicemail
-        return "No Contestó";
-      } else if (duration < 60) {
-        // Short calls might be early disconnection
-        return "Llamada Cortada";
-      }
-    }
-
-    // If we have connection status but no conversation
-    if (connection_status) {
-      if (connection_status === "failed" || connection_status === "error") {
-        return "Error de Conexión";
-      }
-      if (connection_status === "no_answer") {
-        return "No Contestó";
-      }
-    }
-
-    // If we have a result from Twilio/other systems
-    if (result) {
-      const resultLower = result.toLowerCase();
-      if (resultLower.includes("busy")) {
-        return "Línea Ocupada";
-      }
-      if (
-        resultLower.includes("no-answer") ||
-        resultLower.includes("no_answer")
-      ) {
-        return "No Contestó";
-      }
-      if (resultLower.includes("failed") || resultLower.includes("error")) {
-        return "Error de Conexión";
-      }
-    }
-
-    // 5. FINAL FALLBACK - More specific than "Desconocido"
-    // If we have any data at all, make a reasonable guess
-    if (duration || connection_status || end_reason || transcript_summary) {
-      // If we have some data but can't determine specifics, it's likely a failed attempt
-      return "Llamada Fallida";
-    }
-
-    // Only return "Desconocido" if we have absolutely no data
-    return "Desconocido";
+    // Si no hay resultado de la IA, retornar null
+    return null;
   } catch (error) {
     console.error("Error in determineDetailedCallResult:", error);
     return "Desconocido";
@@ -2536,7 +2254,7 @@ fastify.register(async (fastifyInstance) => {
       let lastAudioTime = Date.now(); // Para detectar silencios largos
       let silenceThreshold = 15000; // 15 segundos de silencio para considerar buzón de voz
       let audioBuffer = []; // Buffer para acumular audio antes de enviar
-      let bufferSize = 5; // Número de chunks a acumular antes de enviar (aumentado de 3 a 5 para mayor estabilidad)
+      let bufferSize = 1; // 🚀 ULTRA RÁPIDO: Buffer mínimo para latencia ultra baja (reducido de 5 a 1)
       let bufferTimeout = null; // Timeout para enviar buffer parcial
 
       // 🆕 NUEVAS VARIABLES PARA MEJORAR DETECCIÓN DE DUPLICADOS
@@ -2690,7 +2408,7 @@ fastify.register(async (fastifyInstance) => {
       };
 
       // Verificar silencios cada 2 segundos
-      const silenceCheckInterval = setInterval(checkForLongSilence, 5000);
+      const silenceCheckInterval = setInterval(checkForLongSilence, 1000); // 🚀 ULTRA RÁPIDO: Verificación cada segundo (reducido de 5000ms a 1000ms)
 
       const sendClearToTwilio = (streamSid) => {
         if (streamSid) {
@@ -2779,19 +2497,27 @@ fastify.register(async (fastifyInstance) => {
                     "",
                 },
                 keep_alive: true,
+                // 🚀 ULTRA RÁPIDO: Configuraciones adicionales para latencia mínima
+                conversation_config: {
+                  enable_fast_response: true, // Habilitar respuesta rápida
+                  enable_instant_processing: true, // Procesamiento instantáneo
+                  response_timeout: 0.5, // Timeout de respuesta de 0.5 segundos
+                },
                 // 🚀 OPTIMIZADO: Configuraciones para reducir latencia de respuesta
                 processing_config: {
                   enable_streaming: true, // Habilitar streaming para respuestas más rápidas
                   enable_early_termination: true, // Terminación temprana para respuestas más ágiles
-                  response_delay_threshold: 0.5, // Umbral de 0.5 segundos para respuesta rápida
+                  response_delay_threshold: 0.2, // 🚀 ULTRA RÁPIDO: 0.2 segundos para respuesta inmediata
+                  enable_realtime_processing: true, // Procesamiento en tiempo real
+                  enable_instant_response: true, // Respuesta instantánea
                 },
 
                 interruption_settings: {
                   enabled: true,
-                  sensitivity: "medium", // 🚀 OPTIMIZADO: Sensibilidad media para balance
-                  min_duration: 0.5, // 🚀 OPTIMIZADO: 0.5 segundos para detección más rápida del fin de habla
-                  max_duration: 2.0, // 🚀 OPTIMIZADO: 2 segundos máximo para respuestas más ágiles
-                  cooldown_period: 0.8, // 🚀 OPTIMIZADO: 0.8 segundos de cooldown para mayor reactividad
+                  sensitivity: "high", // 🚀 ULTRA RÁPIDO: Alta sensibilidad para detección inmediata
+                  min_duration: 0.2, // 🚀 ULTRA RÁPIDO: 0.2 segundos para detección instantánea del fin de habla
+                  max_duration: 1.0, // 🚀 ULTRA RÁPIDO: 1 segundo máximo para respuestas ultra rápidas
+                  cooldown_period: 0.3, // 🚀 ULTRA RÁPIDO: 0.3 segundos de cooldown para reactividad máxima
                 },
               },
               dynamic_variables: {
@@ -3705,16 +3431,16 @@ fastify.register(async (fastifyInstance) => {
                     clearTimeout(bufferTimeout);
                   }
 
-                  // Si el buffer está lleno, enviar inmediatamente
+                  // 🚀 ULTRA RÁPIDO: Envío inmediato para latencia mínima
                   if (audioBuffer.length >= bufferSize) {
                     sendAudioBuffer();
                   } else {
-                    // Si no está lleno, programar envío con timeout
+                    // Timeout ultra corto para respuesta inmediata
                     bufferTimeout = setTimeout(() => {
                       if (audioBuffer.length > 0) {
                         sendAudioBuffer();
                       }
-                    }, 100); // 100ms timeout para mayor estabilidad (aumentado de 100ms)
+                    }, 20); // 🚀 ULTRA RÁPIDO: 20ms timeout para latencia mínima
                   }
 
                   // Log ocasional para debugging
