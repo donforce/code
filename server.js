@@ -4805,11 +4805,20 @@ fastify.post("/api/integration/leads", async (request, reply) => {
         name,
         phone,
         email,
-        auto_call = false,
+        auto_call,
         source = "api",
         notes,
         external_id,
       } = leadData;
+
+      // Normalizar auto_call para manejar diferentes tipos de entrada
+      const normalizedAutoCall =
+        auto_call === true ||
+        auto_call === "true" ||
+        auto_call === "TRUE" ||
+        auto_call === "True" ||
+        auto_call === 1 ||
+        auto_call === "1";
 
       // Validar campos requeridos
       if (!name || !phone || !email) {
@@ -4853,7 +4862,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
           name,
           phone: formattedPhone,
           email,
-          auto_call,
+          auto_call: normalizedAutoCall,
           source,
           notes: notes || null,
           external_id: external_id || null,
