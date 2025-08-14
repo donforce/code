@@ -4628,7 +4628,18 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       // return reply.code(401).send({ error: "Invalid signature" });
     }
 
-    const webhookData = request.body;
+    // Parse the webhook data from rawBodyString instead of request.body
+    let webhookData;
+    try {
+      webhookData = JSON.parse(rawBodyString);
+    } catch (parseError) {
+      console.error("❌ [ELEVENLABS] Error parsing webhook data:", parseError);
+      console.log(
+        "🔍 [ELEVENLABS] Raw body that failed to parse:",
+        rawBodyString
+      );
+      return reply.code(400).send({ error: "Invalid JSON in webhook body" });
+    }
 
     // 🔍 DETAILED LOGGING - Log the complete webhook data
     console.log("🔍 [ELEVENLABS] Complete webhook data structure:");
