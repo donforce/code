@@ -6129,6 +6129,7 @@ async function analyzeTranscriptAndGenerateInsights(
 
     if (analysisResult) {
       console.log("✅ [ANALYSIS] Analysis completed successfully");
+      console.log("🔍 [ANALYSIS] Raw OpenAI response:", analysisResult);
 
       // Parse the response to extract summary, commercial suggestion, and detailed result
       const summaryMatch = analysisResult.match(
@@ -6144,6 +6145,10 @@ async function analyzeTranscriptAndGenerateInsights(
         ? suggestionMatch[1].trim()
         : null;
       const detailedResult = resultMatch ? resultMatch[1].trim() : null;
+
+      console.log("🔍 [ANALYSIS] Summary match:", !!summaryMatch);
+      console.log("🔍 [ANALYSIS] Suggestion match:", !!suggestionMatch);
+      console.log("🔍 [ANALYSIS] Result match:", !!resultMatch);
 
       console.log(
         "📝 [ANALYSIS] Summary length:",
