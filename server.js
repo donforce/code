@@ -4706,6 +4706,17 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       updated_at: new Date().toISOString(),
     };
 
+    // Save transcript data if available
+    if (transcript && transcript.length > 0) {
+      updateData.transcript = JSON.stringify(transcript);
+      console.log("📝 [ELEVENLABS] Saving transcript with", transcript.length, "turns");
+    }
+
+    if (transcript_summary) {
+      updateData.transcript_summary = transcript_summary;
+      console.log("📋 [ELEVENLABS] Saving transcript summary:", transcript_summary.substring(0, 100) + "...");
+    }
+
     const { error: updateError } = await supabase
       .from("calls")
       .update(updateData)
@@ -6291,7 +6302,7 @@ async function analyzeTranscriptAndGenerateInsights(
     );
 
     const response = await openai.chat.completions.create({
-      model: "gpt-5",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
