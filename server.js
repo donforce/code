@@ -6112,39 +6112,79 @@ async function analyzeTranscriptAndGenerateInsights(
       messages: [
         {
           role: "system",
-          content: `Eres un asistente que analiza el RESULTADO de llamadas comerciales.
-        
+          content: `Eres un asistente experto que analiza el RESULTADO FINAL de llamadas comerciales.
+
         INSTRUCCIONES:
         1. Lee la transcripción completa
-        2. Analiza qué PASÓ en la llamada (el resultado)
-        3. Genera un resumen CONCISO del resultado (máximo 100 palabras)
-        4. Sugiere el próximo paso (máximo 50 palabras)
-        5. Determina el resultado detallado de la llamada
+        2. Analiza los DATOS ADICIONALES (razón de fin, duración, etc.)
+        3. Determina el RESULTADO FINAL basado en lo que REALMENTE PASÓ
+        4. Genera un resumen CONCISO del resultado (máximo 100 palabras)
+        5. Sugiere el próximo paso comercial (máximo 50 palabras)
         
-        REGLAS:
-        - Enfócate en el RESULTADO, no en el objetivo
-        - Si es buzón de voz: "Angela llamó a [nombre], sin embargo llegó a buzón de voz"
-        - Si no contestó: "Angela llamó a [nombre], pero no contestó"
-        - Si se agendó cita: "Angela llamó a [nombre] y logró agendar una cita"
-        - Si el cliente no está interesado: "Angela llamó a [nombre], pero no está interesado"
-        - Si el cliente está interesado: "Angela llamó a [nombre] y mostró interés"
-        - Si hubo conversación: describe brevemente qué pasó y el resultado
-        - No menciones "objetivo", "herramientas" o términos técnicos
+        CRITERIOS ESPECÍFICOS PARA CADA RESULTADO:
         
-        RESULTADOS POSIBLES:
-        - "Buzón de Voz" - Cuando llega a buzón de voz
-        - "No Contestó" - Cuando no hay respuesta
-        - "Cliente No Interesado" - Cuando el cliente expresa claramente que no está interesado
-        - "Cliente Interesado" - Cuando el cliente muestra interés
-        - "Cliente con Objeciones" - Cuando hay conversación pero el cliente tiene objeciones
-        - "Cita Agendada" - Cuando se agenda una cita
-        - "Conversación Exitosa" - Cuando la conversación fue exitosa
-        - "Línea Ocupada" - Cuando la línea está ocupada
-        - "Teléfono Inválido" - Cuando el teléfono es inválido
-        - "Llamada Cortada" - Cuando la llamada se corta
-        - "Conversación Falló" - Cuando la conversación falla
+        🎯 "Buzón de Voz" - SOLO cuando:
+        - Se escucha un mensaje de buzón de voz
+        - No hay conversación humana
         
-        Formato:
+        🎯 "No Contestó" - SOLO cuando:
+        - El teléfono suena pero nadie contesta
+        - No hay conversación ni buzón de voz
+        
+        🎯 "Línea Ocupada" - SOLO cuando:
+        - Se escucha tono de ocupado
+        - end_reason indica línea ocupada
+        
+        🎯 "Teléfono Inválido" - SOLO cuando:
+        - El número no existe o está mal formado
+        - end_reason indica número inválido
+        
+        🎯 "Llamada Cortada" - SOLO cuando:
+        - La llamada se corta abruptamente
+        - end_reason indica desconexión inesperada
+        - Duración muy corta sin conversación
+        
+        🎯 "Cita Agendada" - SOLO cuando:
+        - Se confirma que se agendó una cita
+        - calendar_event_id existe
+        - El cliente aceptó agendar
+        
+        🎯 "Cliente No Interesado" - SOLO cuando:
+        - El cliente dice EXPLÍCITAMENTE que no está interesado
+        - Rechaza la oferta de forma clara
+        - Dice "no me interesa", "no quiero", etc.
+        
+        🎯 "Cliente Interesado" - SOLO cuando:
+        - El cliente muestra interés claro
+        - Pregunta por detalles, precios, etc.
+        - Dice que le interesa pero no agenda
+        
+        🎯 "Cliente con Objeciones" - SOLO cuando:
+        - El cliente está indeciso o tiene dudas
+        - Menciona objeciones pero no rechaza completamente
+        - Dice "déjame pensarlo", "no estoy seguro", etc.
+        - Muestra interés pero no se compromete
+        
+
+        
+        🎯 "Conversación Falló" - SOLO cuando:
+        - Hubo un fallo técnico en la llamada
+        - Problemas de conexión o audio
+        - Error en el sistema que impidió la conversación
+        - Fallo en la tecnología de la llamada
+        
+        REGLAS IMPORTANTES:
+        - Analiza PRIMERO los DATOS ADICIONALES (end_reason, duración, etc.)
+        - El end_reason "Client disconnected: 1005" indica que el cliente colgó
+        - Si el cliente colgó durante la conversación, considera el contexto
+        - Duración corta (<30 seg) sin conversación = "No Contestó"
+        - Duración media con conversación = analiza el contenido
+        - Duración larga con conversación = analiza el resultado final
+        - Si el cliente mostró interés = "Cliente Interesado"
+        - Si el cliente está indeciso = "Cliente con Objeciones"
+        - Si el cliente rechazó = "Cliente No Interesado"
+        
+        Formato EXACTO:
         RESUMEN:
         [resultado simple y directo de la llamada]
         
