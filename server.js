@@ -3613,7 +3613,7 @@ async function cleanupStuckCalls() {
               .eq("id", call.queue_id);
           }
         } else if (twilioCall.status === "in-progress") {
-          // Check if call has been running too long (more than 5 minutes)
+          // Check if call has been running too long (more than 15 minutes)
           const callStartTime = new Date(call.created_at);
           const now = new Date();
           const durationMinutes = (now - callStartTime) / (1000 * 60);
@@ -3748,16 +3748,58 @@ async function cleanupStuckCalls() {
       .eq("status", "in_progress");
 
     if (stuckQueue && stuckQueue.length > 0) {
+      console.log(`[CLEANUP] Found ${stuckQueue.length} stuck queue items`);
+
       for (const queueItem of stuckQueue) {
         const { data: associatedCall } = await supabase
           .from("calls")
-          .select("status")
+          .select("status, created_at")
           .eq("queue_id", queueItem.id)
-
           .order("created_at", { ascending: false })
           .limit(1);
 
-        if (!associatedCall || associatedCall.status !== "In Progress") {
+        console.log(
+          `[CLEANUP] Queue item ${queueItem.id}: associated call status = ${
+            associatedCall?.status || "none"
+          }`
+        );
+
+        // Only mark as completed if:
+        // 1. There's no associated call (orphaned queue item)
+        // 2. The call is actually finished (completed, failed, etc.)
+        // 3. The call has been running for more than 20 minutes (stuck)
+
+        let shouldMarkCompleted = false;
+        let reason = "";
+
+        if (!associatedCall) {
+          shouldMarkCompleted = true;
+          reason = "no_associated_call";
+        } else if (
+          ["completed", "failed", "busy", "no-answer", "canceled"].includes(
+            associatedCall.status
+          )
+        ) {
+          shouldMarkCompleted = true;
+          reason = `call_${associatedCall.status}`;
+        } else if (associatedCall.status === "In Progress") {
+          // Check if call has been running too long (more than 20 minutes)
+          const callStartTime = new Date(
+            queueItem.started_at || queueItem.created_at
+          );
+          const now = new Date();
+          const durationMinutes = (now - callStartTime) / (1000 * 60);
+
+          if (durationMinutes > 20) {
+            shouldMarkCompleted = true;
+            reason = "call_stuck_too_long";
+          }
+        }
+
+        if (shouldMarkCompleted) {
+          console.log(
+            `[CLEANUP] Marking queue item ${queueItem.id} as completed - reason: ${reason}`
+          );
           await supabase
             .from("call_queue")
             .update({
@@ -3765,6 +3807,10 @@ async function cleanupStuckCalls() {
               completed_at: new Date().toISOString(),
             })
             .eq("id", queueItem.id);
+        } else {
+          console.log(
+            `[CLEANUP] Queue item ${queueItem.id} still active - call status: ${associatedCall?.status}`
+          );
         }
       }
     }
