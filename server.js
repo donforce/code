@@ -3618,7 +3618,7 @@ async function cleanupStuckCalls() {
           const now = new Date();
           const durationMinutes = (now - callStartTime) / (1000 * 60);
 
-          if (durationMinutes > 8) {
+          if (durationMinutes > 15) {
             console.log(
               `[CLEANUP] Call ${
                 call.call_sid
@@ -3641,9 +3641,9 @@ async function cleanupStuckCalls() {
                   duration: Math.round(durationMinutes * 60),
                   result: "failed",
                   error_code: "TIMEOUT",
-                  error_message: "Call hung up due to timeout (5+ minutes)",
+                  error_message: "Call hung up due to timeout (15+ minutes)",
                   connection_status: "no_connection",
-                  connection_failure_reason: "timeout_5_minutes",
+                  connection_failure_reason: "timeout_15_minutes",
                   updated_at: new Date().toISOString(),
                 })
                 .eq("call_sid", call.call_sid);
