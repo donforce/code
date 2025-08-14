@@ -271,7 +271,17 @@ function translateTwilioError(twilioError) {
     60020: "Parámetro no válido para el tipo de API",
   };
 
-  const translatedMessage = errorTranslations[errorCode] || errorMessage;
+  // Manejo especial para errores de geo-permissions
+  let translatedMessage = errorTranslations[errorCode] || errorMessage;
+
+  // Detectar errores de geo-permissions por el mensaje
+  if (
+    errorMessage.toLowerCase().includes("geo-permissions") ||
+    errorMessage.toLowerCase().includes("not authorized to call") ||
+    errorMessage.toLowerCase().includes("international permissions")
+  ) {
+    translatedMessage = "País no autorizado para realizar llamadas";
+  }
 
   return {
     code: errorCode,
@@ -1823,6 +1833,15 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
         translatedError.message.toLowerCase().includes("invalid phone")
       ) {
         result = "invalid_phone";
+      } else if (
+        twilioError.message.toLowerCase().includes("geo-permissions") ||
+        twilioError.message.toLowerCase().includes("not authorized to call") ||
+        twilioError.message
+          .toLowerCase()
+          .includes("international permissions") ||
+        translatedError.message.toLowerCase().includes("país no autorizado")
+      ) {
+        result = "país no autorizado";
       }
 
       // Register the call with the correct result
