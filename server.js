@@ -4920,13 +4920,13 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     }
 
     //  CALCULATE AND SAVE DETAILED RESULT (FALLBACK)
+    //  CALCULATE AND SAVE DETAILED RESULT (FALLBACK)
     try {
       // Get updated call data to calculate detailed result
       const { data: updatedCall, error: fetchError } = await supabase
         .from("calls")
         .select("*")
         .eq("conversation_id", conversation_id)
-
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -4940,46 +4940,6 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
         let finalDetailedResult =
           updatedCall.detailed_result ||
           determineDetailedCallResult(updatedCall);
-
-        // Validate the AI result
-        const validResults = [
-          "Buzón de Voz",
-          "No Contestó",
-          "Cliente No Interesado",
-          "Cliente Interesado",
-          "Cliente con Objeciones",
-          "Cita Agendada",
-          "Conversación Exitosa",
-          "Línea Ocupada",
-          "Teléfono Inválido",
-          "Llamada Cortada",
-          "Conversación Falló",
-          // Add more variations that OpenAI might generate
-          "Llamada cortada",
-          "Conversación cortada",
-          "Llamada interrumpida",
-          "Conversación interrumpida",
-          "Llamada terminada prematuramente",
-          "Conversación terminada prematuramente",
-          "Llamada fallida",
-          "Conversación fallida",
-          "Cliente conectó pero no habló",
-          "Cliente Conectó pero No Habló",
-          "Sin Respuesta (Timeout)",
-          "Error de Conexión",
-          "Conversación Terminada",
-        ];
-
-        if (!validResults.includes(finalDetailedResult)) {
-          console.warn(
-            `[AI RESULT] Invalid AI result: ${finalDetailedResult}, using rule-based fallback`
-          );
-          console.log(`🔍 [AI RESULT] Available valid results:`, validResults);
-          console.log(
-            `🔍 [AI RESULT] AI result not found in valid list, using fallback`
-          );
-          finalDetailedResult = determineDetailedCallResult(updatedCall);
-        }
 
         console.log(
           `[AI RESULT] Final result: ${finalDetailedResult} (${
