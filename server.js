@@ -4634,18 +4634,17 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     console.log("🔍 [ELEVENLABS] Complete webhook data structure:");
     console.log(JSON.stringify(webhookData, null, 2));
 
-    const {
-      event_type,
-      conversation_id,
-      transcript,
-      transcript_summary,
-      end_reason,
-      connection_status,
-      duration,
-      turn_count,
-      call_successful,
-      calendar_event_id,
-    } = webhookData;
+    // Extract data from the correct structure
+    const event_type = webhookData.type;
+    const conversation_id = webhookData.data?.conversation_id;
+    const transcript = webhookData.data?.transcript;
+    const transcript_summary = webhookData.data?.analysis?.transcript_summary;
+    const end_reason = webhookData.data?.metadata?.termination_reason;
+    const connection_status = webhookData.data?.status;
+    const duration = webhookData.data?.metadata?.call_duration_secs;
+    const turn_count = webhookData.data?.transcript?.length || 0;
+    const call_successful = webhookData.data?.analysis?.call_successful;
+    const calendar_event_id = null; // Not available in this structure
 
     // 🔍 LOG SPECIFIC FIELDS
     console.log("🔍 [ELEVENLABS] Extracted fields:");
@@ -4670,10 +4669,10 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       console.log("  - Number of turns:", transcript.length);
       transcript.forEach((turn, index) => {
         console.log(
-          `    Turn ${index + 1}: ${turn.speaker} - ${turn.text?.substring(
+          `    Turn ${index + 1}: ${turn.role} - ${turn.message?.substring(
             0,
             100
-          )}${turn.text?.length > 100 ? "..." : ""}`
+          )}${turn.message?.length > 100 ? "..." : ""}`
         );
       });
     } else {
@@ -6340,7 +6339,7 @@ async function analyzeTranscriptAndGenerateInsights(
 
     // Prepare the full transcript text
     const fullTranscript = transcript
-      .map((turn) => `${turn.speaker}: ${turn.text}`)
+      .map((turn) => `${turn.role}: ${turn.message}`)
       .join("\n");
 
     console.log(
