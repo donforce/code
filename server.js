@@ -7880,8 +7880,8 @@ async function fetchCallPriceAsync(callSid, callUri) {
         ? Math.abs(parseFloat(twilioRecord.price))
         : null;
       const priceUnit = twilioRecord.priceUnit || null;
-      const pricePerMinute = twilioRecord.priceUnit
-        ? Math.abs(parseFloat(twilioRecord.priceUnit))
+      const pricePerMinute = twilioRecord.price
+        ? Math.abs(parseFloat(twilioRecord.price))
         : null;
 
       // Obtener duración de la llamada
