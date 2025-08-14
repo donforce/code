@@ -1732,13 +1732,27 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       let customLlmPrompt = null;
       try {
         const { data: questionsData, error: questionsError } = await supabase
-          .from("agent_questions")
-          .select("question_text, question_type, is_required, order_index")
-          .order("order_index", { ascending: true });
+          .from("user_agent_responses")
+          .select(
+            `
+            response_boolean,
+            agent_questions!user_agent_responses_question_id_fkey(
+              question_text,
+              question_type,
+              is_required,
+              order_index
+            )
+          `
+          )
+          .eq("user_id", queueItem.user_id)
+          .eq("response_boolean", true)
+          .order("agent_questions.order_index", { ascending: true });
 
         if (!questionsError && questionsData && questionsData.length > 0) {
           const questionsList = questionsData
-            .map((q, index) => `${index + 1}. ${q.question_text}`)
+            .map(
+              (q, index) => `${index + 1}. ${q.agent_questions.question_text}`
+            )
             .join("\n");
 
           customLlmPrompt = `Durante el paso 1 (Descubrir Interés y Necesidades), asegúrate de hacer las siguientes preguntas siempre teniendo en cuenta la respuesta a cada una cuando formules la proxima pregunta:
@@ -4629,6 +4643,55 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
         console.log(
           "🔍 [ANALYSIS] Analyzing transcript and generating insights"
         );
+
+        // Obtener las preguntas personalizadas para el análisis
+        let questions = null;
+        try {
+          // Primero necesitamos obtener el user_id de la llamada
+          const { data: callDataForUser, error: callUserError } = await supabase
+            .from("calls")
+            .select("user_id")
+            .eq("conversation_id", conversation_id)
+            .single();
+
+          if (!callUserError && callDataForUser) {
+            const { data: questionsData, error: questionsError } =
+              await supabase
+                .from("user_agent_responses")
+                .select(
+                  `
+                response_boolean,
+                agent_questions!user_agent_responses_question_id_fkey(
+                  question_text,
+                  question_type,
+                  is_required,
+                  order_index
+                )
+              `
+                )
+                .eq("user_id", callDataForUser.user_id)
+                .eq("response_boolean", true)
+                .order("agent_questions.order_index", { ascending: true });
+
+            if (!questionsError && questionsData && questionsData.length > 0) {
+              questions = questionsData.map((q) => q.agent_questions);
+              console.log(
+                `🔍 [ANALYSIS] Found ${questionsData.length} questions for analysis`
+              );
+            } else {
+              console.log(
+                "⚠️ [ANALYSIS] No custom questions found for analysis"
+              );
+            }
+          } else {
+            console.log("⚠️ [ANALYSIS] Could not get user_id from call data");
+          }
+        } catch (questionsError) {
+          console.log(
+            `❌ [ANALYSIS] Error getting questions for analysis: ${questionsError.message}`
+          );
+        }
+
         const { summary, commercialSuggestion, detailedResult } =
           await analyzeTranscriptAndGenerateInsights(
             transcript,
@@ -4640,7 +4703,8 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
               turn_count,
               call_successful,
               calendar_event_id,
-            }
+            },
+            questions
           );
 
         if (summary || commercialSuggestion || detailedResult) {
@@ -6058,7 +6122,8 @@ const resumeTwilioCall = async (callSid, delayMs = 1000) => {
 async function analyzeTranscriptAndGenerateInsights(
   transcript,
   originalSummary,
-  callData = null // Agregar parámetro opcional para datos de la llamada
+  callData = null, // Agregar parámetro opcional para datos de la llamada
+  questions = null // Agregar parámetro para las preguntas enviadas
 ) {
   try {
     console.log(
@@ -6101,8 +6166,30 @@ async function analyzeTranscriptAndGenerateInsights(
         1. Lee la transcripción completa
         2. Analiza los DATOS ADICIONALES (razón de fin, duración, etc.)
         3. Determina el RESULTADO FINAL basado en lo que REALMENTE PASÓ
-        4. Genera un resumen CONCISO del resultado (máximo 100 palabras)
+        4. Genera un resumen CONCISO que incluya las respuestas a las preguntas enviadas (máximo 150 palabras)
         5. Sugiere el próximo paso comercial (máximo 50 palabras)
+        
+        IMPORTANTE PARA EL RESUMEN:
+        - El resumen DEBE incluir las respuestas específicas que dio el cliente a las preguntas
+        - Menciona qué información proporcionó el cliente (presupuesto, ubicación, tiempo, etc.)
+        - Incluye detalles relevantes sobre sus necesidades o preferencias
+        - Si el cliente no respondió ciertas preguntas, indícalo
+        - El resumen debe ser útil para el seguimiento comercial
+        
+        PREGUNTAS ENVIADAS AL CLIENTE:
+        ${
+          questions
+            ? questions
+                .map((q, index) => `${index + 1}. ${q.question_text}`)
+                .join("\n")
+            : "No se especificaron preguntas personalizadas"
+        }
+        
+        INSTRUCCIONES ESPECÍFICAS:
+        - Identifica en la transcripción las respuestas a cada pregunta enviada
+        - En el resumen, menciona específicamente qué respondió el cliente a cada pregunta
+        - Si el cliente no respondió alguna pregunta, indícalo claramente
+        - Organiza la información de manera clara y estructurada
         
         CRITERIOS ESPECÍFICOS PARA CADA RESULTADO:
         
