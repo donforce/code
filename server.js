@@ -4652,7 +4652,10 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     console.log("  - event_type:", event_type);
     console.log("  - conversation_id:", conversation_id);
     console.log("  - transcript type:", typeof transcript);
-    console.log("  - transcript length:", transcript ? transcript.length : "undefined");
+    console.log(
+      "  - transcript length:",
+      transcript ? transcript.length : "undefined"
+    );
     console.log("  - transcript_summary:", transcript_summary);
     console.log("  - end_reason:", end_reason);
     console.log("  - connection_status:", connection_status);
@@ -4666,7 +4669,12 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       console.log("🔍 [ELEVENLABS] Transcript details:");
       console.log("  - Number of turns:", transcript.length);
       transcript.forEach((turn, index) => {
-        console.log(`    Turn ${index + 1}: ${turn.speaker} - ${turn.text?.substring(0, 100)}${turn.text?.length > 100 ? "..." : ""}`);
+        console.log(
+          `    Turn ${index + 1}: ${turn.speaker} - ${turn.text?.substring(
+            0,
+            100
+          )}${turn.text?.length > 100 ? "..." : ""}`
+        );
       });
     } else {
       console.log("⚠️ [ELEVENLABS] No transcript available");
@@ -4692,16 +4700,20 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
         console.log("🏁 [ELEVENLABS] Conversation ended");
         break;
 
+      case "post_call_transcription":
+        console.log("📝 [ELEVENLABS] Post call transcription received");
+        break;
+
       default:
         console.log(`ℹ️ [ELEVENLABS] Unhandled event type: ${event_type}`);
     }
 
-    // Only process conversation_ended events
-    if (event_type !== "conversation_ended") {
+    // Process post_call_transcription events (this is where the transcript comes)
+    if (event_type !== "post_call_transcription") {
       return reply.send({ success: true, message: "Event processed" });
     }
 
-    console.log("🎯 [ELEVENLABS] Processing conversation ended event");
+    console.log("🎯 [ELEVENLABS] Processing post call transcription event");
 
     // Get call data
     const { data: call, error: callError } = await supabase
