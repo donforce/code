@@ -1597,7 +1597,11 @@ async function processQueueItem(queueItem, workerId = "unknown") {
         email: queueItem.lead.email,
       },
     });
+    // Obtener fecha en zona horaria de Nueva York
     const date = new Date();
+    const nyDate = new Date(
+      date.toLocaleString("en-US", { timeZone: "America/New_York" })
+    );
     const diasSemana = [
       "Domingo",
       "Lunes",
@@ -1607,10 +1611,10 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       "Viernes",
       "Sábado",
     ];
-    const dia_semana = diasSemana[date.getDay()];
-    const fecha = `${String(date.getDate()).padStart(2, "0")}/${String(
-      date.getMonth() + 1
-    ).padStart(2, "0")}/${String(date.getFullYear()).slice(-2)}`;
+    const dia_semana = diasSemana[nyDate.getDay()];
+    const fecha = `${String(nyDate.getDate()).padStart(2, "0")}/${String(
+      nyDate.getMonth() + 1
+    ).padStart(2, "0")}/${String(nyDate.getFullYear()).slice(-2)}`;
 
     // Make the call with error handling
     let call;
@@ -2078,7 +2082,11 @@ fastify.post("/outbound-call", async (request, reply) => {
     `${userData[0]?.first_name || ""} ${userData[0]?.last_name || ""}`.trim() ||
     "Agente";
 
+  // Obtener fecha en zona horaria de Nueva York
   const date = new Date();
+  const nyDate = new Date(
+    date.toLocaleString("en-US", { timeZone: "America/New_York" })
+  );
   const diasSemana = [
     "Domingo",
     "Lunes",
@@ -2088,10 +2096,10 @@ fastify.post("/outbound-call", async (request, reply) => {
     "Viernes",
     "Sábado",
   ];
-  const dia_semana = diasSemana[date.getDay()];
-  const fecha = `${String(date.getDate()).padStart(2, "0")}/${String(
-    date.getMonth() + 1
-  ).padStart(2, "0")}/${String(date.getFullYear()).slice(-2)}`;
+  const dia_semana = diasSemana[nyDate.getDay()];
+  const fecha = `${String(nyDate.getDate()).padStart(2, "0")}/${String(
+    nyDate.getMonth() + 1
+  ).padStart(2, "0")}/${String(nyDate.getFullYear()).slice(-2)}`;
 
   try {
     const call = await twilioClientToUse.calls.create({
@@ -2309,7 +2317,7 @@ fastify.register(async (fastifyInstance) => {
           existingTimestamp &&
           now - existingTimestamp < duplicateDetectionWindow
         ) {
-          //console.log(`[Audio] Temporal duplicate detected, skipping`);
+          console.log(`[Audio] Temporal duplicate detected, skipping`);
           return true;
         }
 
