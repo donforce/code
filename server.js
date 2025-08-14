@@ -1,5 +1,3 @@
-// 🚀 Optimized server for Railway deployment - Performance enhanced
-// Server configuration and setup
 import Fastify from "fastify";
 import WebSocket from "ws";
 import dotenv from "dotenv";
@@ -24,15 +22,11 @@ const {
   SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY,
   RAILWAY_PUBLIC_DOMAIN,
-  // Google Calendar configuration
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
-  // OpenAI configuration
   OPENAI_API_KEY,
-  // Stripe configuration
   STRIPE_SECRET_KEY,
   STRIPE_WEBHOOK_SECRET,
-  // Multi-threading configuration
   MAX_CONCURRENT_CALLS,
   MAX_CALLS_PER_USER,
   WORKER_POOL_SIZE,
@@ -61,7 +55,6 @@ if (
   throw new Error("Missing required environment variables");
 }
 
-// Optimized Supabase client with connection pooling
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: {
     autoRefreshToken: false,
@@ -69,33 +62,26 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   },
 });
 
-// Optimized Fastify configuration
 const fastify = Fastify({
   logger: false,
-  // Performance optimizations
   connectionTimeout: 30000,
   keepAliveTimeout: 30000,
   maxRequestsPerSocket: 100,
-  // Disable request logging for better performance
   disableRequestLogging: true,
-  // Configure body parsing for Stripe webhooks
-  bodyLimit: 1048576, // 1MB
+  bodyLimit: 1048576,
 });
 
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
-// Register content type parser for Stripe webhooks to preserve raw body
 fastify.addContentTypeParser(
   "application/json",
   { parseAs: "buffer" },
   (req, body, done) => {
     if (req.url === "/webhook/stripe" || req.url === "/webhook/elevenlabs") {
-      // For Stripe and ElevenLabs webhooks, preserve the raw buffer
       req.rawBody = body;
       done(null, body);
     } else {
-      // For other routes, parse as JSON
       try {
         const parsed = JSON.parse(body.toString());
         done(null, parsed);
@@ -762,7 +748,6 @@ function verifyElevenLabsSignature(rawBody, signature) {
         return true;
       }
     } else {
-      console.log("[WEBHOOK] Signature verification successful");
     }
 
     return isValid;
@@ -817,7 +802,6 @@ let isProcessingQueue = false;
 async function processAllPendingQueues() {
   // Mutex: evitar procesamiento simultáneo
   if (isProcessingQueue) {
-    console.log("[Queue] ⏸️ Already processing queue, skipping");
     return;
   }
 
@@ -2795,13 +2779,19 @@ fastify.register(async (fastifyInstance) => {
                     "",
                 },
                 keep_alive: true,
+                // 🚀 OPTIMIZADO: Configuraciones para reducir latencia de respuesta
+                processing_config: {
+                  enable_streaming: true, // Habilitar streaming para respuestas más rápidas
+                  enable_early_termination: true, // Terminación temprana para respuestas más ágiles
+                  response_delay_threshold: 0.5, // Umbral de 0.5 segundos para respuesta rápida
+                },
 
                 interruption_settings: {
                   enabled: true,
-                  sensitivity: "low", // 🆕 CAMBIADO: Baja sensibilidad para reducir falsos positivos
-                  min_duration: 1.0, // 🆕 AUMENTADO: 1 segundo mínimo para evitar interrupciones muy cortas
-                  max_duration: 3.0, // 🆕 AUMENTADO: 3 segundos máximo para mayor estabilidad
-                  cooldown_period: 1.5, // 🆕 AUMENTADO: 1.5 segundos de cooldown para más estabilidad
+                  sensitivity: "medium", // 🚀 OPTIMIZADO: Sensibilidad media para balance
+                  min_duration: 0.5, // 🚀 OPTIMIZADO: 0.5 segundos para detección más rápida del fin de habla
+                  max_duration: 2.0, // 🚀 OPTIMIZADO: 2 segundos máximo para respuestas más ágiles
+                  cooldown_period: 0.8, // 🚀 OPTIMIZADO: 0.8 segundos de cooldown para mayor reactividad
                 },
               },
               dynamic_variables: {
