@@ -620,7 +620,53 @@ function determineDetailedCallResult(callData) {
       return "Cliente Conectó pero No Habló";
     }
 
-    // Default fallback
+    // 4. IMPROVED FALLBACK LOGIC for early termination
+    // If we have some duration but no clear indicators, make educated guesses
+    if (duration) {
+      if (duration < 30) {
+        // Very short calls are likely no answer or voicemail
+        return "No Contestó";
+      } else if (duration < 60) {
+        // Short calls might be early disconnection
+        return "Llamada Cortada";
+      }
+    }
+
+    // If we have connection status but no conversation
+    if (connection_status) {
+      if (connection_status === "failed" || connection_status === "error") {
+        return "Error de Conexión";
+      }
+      if (connection_status === "no_answer") {
+        return "No Contestó";
+      }
+    }
+
+    // If we have a result from Twilio/other systems
+    if (result) {
+      const resultLower = result.toLowerCase();
+      if (resultLower.includes("busy")) {
+        return "Línea Ocupada";
+      }
+      if (
+        resultLower.includes("no-answer") ||
+        resultLower.includes("no_answer")
+      ) {
+        return "No Contestó";
+      }
+      if (resultLower.includes("failed") || resultLower.includes("error")) {
+        return "Error de Conexión";
+      }
+    }
+
+    // 5. FINAL FALLBACK - More specific than "Desconocido"
+    // If we have any data at all, make a reasonable guess
+    if (duration || connection_status || end_reason || transcript_summary) {
+      // If we have some data but can't determine specifics, it's likely a failed attempt
+      return "Llamada Fallida";
+    }
+
+    // Only return "Desconocido" if we have absolutely no data
     return "Desconocido";
   } catch (error) {
     console.error("Error in determineDetailedCallResult:", error);
@@ -4852,8 +4898,16 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
             }
             if (detailedResult) {
               console.log(
-                "🎯 [ANALYSIS] Detailed result saved:",
-                detailedResult
+                "🔍 [ANALYSIS] Detailed result type:",
+                typeof detailedResult
+              );
+              console.log(
+                "🔍 [ANALYSIS] Detailed result length:",
+                detailedResult.length
+              );
+              console.log(
+                "🔍 [ANALYSIS] Detailed result trimmed:",
+                `"${detailedResult.trim()}"`
               );
             }
           }
@@ -4900,11 +4954,29 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
           "Teléfono Inválido",
           "Llamada Cortada",
           "Conversación Falló",
+          // Add more variations that OpenAI might generate
+          "Llamada cortada",
+          "Conversación cortada",
+          "Llamada interrumpida",
+          "Conversación interrumpida",
+          "Llamada terminada prematuramente",
+          "Conversación terminada prematuramente",
+          "Llamada fallida",
+          "Conversación fallida",
+          "Cliente conectó pero no habló",
+          "Cliente Conectó pero No Habló",
+          "Sin Respuesta (Timeout)",
+          "Error de Conexión",
+          "Conversación Terminada",
         ];
 
         if (!validResults.includes(finalDetailedResult)) {
           console.warn(
             `[AI RESULT] Invalid AI result: ${finalDetailedResult}, using rule-based fallback`
+          );
+          console.log(`🔍 [AI RESULT] Available valid results:`, validResults);
+          console.log(
+            `🔍 [AI RESULT] AI result not found in valid list, using fallback`
           );
           finalDetailedResult = determineDetailedCallResult(updatedCall);
         }
