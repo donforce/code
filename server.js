@@ -4630,6 +4630,10 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
 
     const webhookData = request.body;
 
+    // 🔍 DETAILED LOGGING - Log the complete webhook data
+    console.log("🔍 [ELEVENLABS] Complete webhook data structure:");
+    console.log(JSON.stringify(webhookData, null, 2));
+
     const {
       event_type,
       conversation_id,
@@ -4642,6 +4646,31 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       call_successful,
       calendar_event_id,
     } = webhookData;
+
+    // 🔍 LOG SPECIFIC FIELDS
+    console.log("🔍 [ELEVENLABS] Extracted fields:");
+    console.log("  - event_type:", event_type);
+    console.log("  - conversation_id:", conversation_id);
+    console.log("  - transcript type:", typeof transcript);
+    console.log("  - transcript length:", transcript ? transcript.length : "undefined");
+    console.log("  - transcript_summary:", transcript_summary);
+    console.log("  - end_reason:", end_reason);
+    console.log("  - connection_status:", connection_status);
+    console.log("  - duration:", duration);
+    console.log("  - turn_count:", turn_count);
+    console.log("  - call_successful:", call_successful);
+    console.log("  - calendar_event_id:", calendar_event_id);
+
+    // 🔍 LOG TRANSCRIPT DETAILS IF AVAILABLE
+    if (transcript && transcript.length > 0) {
+      console.log("🔍 [ELEVENLABS] Transcript details:");
+      console.log("  - Number of turns:", transcript.length);
+      transcript.forEach((turn, index) => {
+        console.log(`    Turn ${index + 1}: ${turn.speaker} - ${turn.text?.substring(0, 100)}${turn.text?.length > 100 ? "..." : ""}`);
+      });
+    } else {
+      console.log("⚠️ [ELEVENLABS] No transcript available");
+    }
 
     // Handle different event types
     switch (event_type) {
@@ -4709,12 +4738,19 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     // Save transcript data if available
     if (transcript && transcript.length > 0) {
       updateData.transcript = JSON.stringify(transcript);
-      console.log("📝 [ELEVENLABS] Saving transcript with", transcript.length, "turns");
+      console.log(
+        "📝 [ELEVENLABS] Saving transcript with",
+        transcript.length,
+        "turns"
+      );
     }
 
     if (transcript_summary) {
       updateData.transcript_summary = transcript_summary;
-      console.log("📋 [ELEVENLABS] Saving transcript summary:", transcript_summary.substring(0, 100) + "...");
+      console.log(
+        "📋 [ELEVENLABS] Saving transcript summary:",
+        transcript_summary.substring(0, 100) + "..."
+      );
     }
 
     const { error: updateError } = await supabase
