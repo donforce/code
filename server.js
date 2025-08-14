@@ -4607,7 +4607,7 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     );
     console.log(
       "🔍 [ELEVENLABS] Raw body preview:",
-      rawBodyString ? rawBodyString.substring(0, 200) + "..." : "undefined"
+      rawBodyString ? rawBodyString : "undefined"
     );
 
     // Try different signature headers
