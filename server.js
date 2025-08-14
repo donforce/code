@@ -2309,7 +2309,7 @@ fastify.register(async (fastifyInstance) => {
           existingTimestamp &&
           now - existingTimestamp < duplicateDetectionWindow
         ) {
-          console.log(`[Audio] Temporal duplicate detected, skipping`);
+          //console.log(`[Audio] Temporal duplicate detected, skipping`);
           return true;
         }
 
