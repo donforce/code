@@ -74,31 +74,6 @@ const fastify = Fastify({
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
-// Middleware para control de dominios
-fastify.addHook("preHandler", (request, reply, done) => {
-  const host = request.headers.host;
-  const path = request.url;
-
-  console.log(`🌐 [ACCESS] ${host} → ${path}`);
-
-  // Si viene de api.orquest-ai.com
-  if (host === "api.orquest-ai.com") {
-    // Solo permitir /api/integration/leads
-    if (path !== "/api/integration/leads") {
-      console.log(`❌ [BLOCKED] ${host} intentó acceder a ${path}`);
-      return reply.code(404).send({
-        error: "Endpoint no encontrado",
-        message: "Este dominio solo acepta peticiones a /api/integration/leads",
-        allowed_endpoint: "/api/integration/leads",
-      });
-    }
-    console.log(`✅ [ALLOWED] ${host} → ${path}`);
-  }
-
-  // code-production-3f72.up.railway.app puede acceder a todo (no hacer nada)
-  done();
-});
-
 fastify.addContentTypeParser(
   "application/json",
   { parseAs: "buffer" },
