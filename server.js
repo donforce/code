@@ -6594,12 +6594,9 @@ async function handleCheckoutSessionCompleted(session, stripe) {
     // --- Lógica de búsqueda de usuario robusta (para ambos handlers) ---
     let user = null;
     let foundBy = null;
-    let stripeCustomerId = session?.customer || invoice?.customer || null;
-    let userIdFromMeta =
-      session?.metadata?.userId ||
-      invoice?.parent?.subscription_details?.metadata?.userId ||
-      null;
-    let email = session?.customer_email || invoice?.customer_email || null;
+    let stripeCustomerId = session?.customer || null;
+    let userIdFromMeta = session?.metadata?.userId || null;
+    let email = session?.customer_email || null;
 
     // 1. Buscar por userId (metadata)
     if (userIdFromMeta) {
@@ -6642,10 +6639,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
     }
     // Si no hay usuario, loguear y retornar
     if (!user) {
-      console.error(
-        "❌ [STRIPE] User not found for event",
-        session?.id || invoice?.id
-      );
+      console.error("❌ [STRIPE] User not found for event", session?.id);
       return;
     }
     // Si el stripe_customer_id no coincide, actualizarlo
@@ -6892,12 +6886,10 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
     // --- Lógica de búsqueda de usuario robusta (para ambos handlers) ---
     let user = null;
     let foundBy = null;
-    let stripeCustomerId = session?.customer || invoice?.customer || null;
+    let stripeCustomerId = invoice?.customer || null;
     let userIdFromMeta =
-      session?.metadata?.userId ||
-      invoice?.parent?.subscription_details?.metadata?.userId ||
-      null;
-    let email = session?.customer_email || invoice?.customer_email || null;
+      invoice?.parent?.subscription_details?.metadata?.userId || null;
+    let email = invoice?.customer_email || null;
 
     // 1. Buscar por userId (metadata)
     if (userIdFromMeta) {
@@ -6940,10 +6932,7 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
     }
     // Si no hay usuario, loguear y retornar
     if (!user) {
-      console.error(
-        "❌ [STRIPE] User not found for event",
-        session?.id || invoice?.id
-      );
+      console.error("❌ [STRIPE] User not found for event", invoice?.id);
       return;
     }
     // Si el stripe_customer_id no coincide, actualizarlo
@@ -7069,7 +7058,6 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
     console.error("❌ [STRIPE] Error processing invoice payment:", error);
   }
 }
-
 // Handle invoice.payment_failed event
 async function handleInvoicePaymentFailed(invoice, stripe) {
   try {
@@ -7114,12 +7102,10 @@ async function handleInvoicePaymentFailed(invoice, stripe) {
     // --- Lógica de búsqueda de usuario robusta (para ambos handlers) ---
     let user = null;
     let foundBy = null;
-    let stripeCustomerId = session?.customer || invoice?.customer || null;
+    let stripeCustomerId = invoice?.customer || null;
     let userIdFromMeta =
-      session?.metadata?.userId ||
-      invoice?.parent?.subscription_details?.metadata?.userId ||
-      null;
-    let email = session?.customer_email || invoice?.customer_email || null;
+      invoice?.parent?.subscription_details?.metadata?.userId || null;
+    let email = invoice?.customer_email || null;
 
     // 1. Buscar por userId (metadata)
     if (userIdFromMeta) {
@@ -7162,10 +7148,7 @@ async function handleInvoicePaymentFailed(invoice, stripe) {
     }
     // Si no hay usuario, loguear y retornar
     if (!user) {
-      console.error(
-        "❌ [STRIPE] User not found for event",
-        session?.id || invoice?.id
-      );
+      console.error("❌ [STRIPE] User not found for event", invoice?.id);
       return;
     }
     // Si el stripe_customer_id no coincide, actualizarlo
@@ -7791,7 +7774,6 @@ async function initializeRecordingBucket() {
     return false;
   }
 }
-
 // Función para descargar grabación de Twilio y guardarla en Supabase Storage
 async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
   try {
