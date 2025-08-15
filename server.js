@@ -740,7 +740,6 @@ async function processAllPendingQueues() {
     isProcessingQueue = false;
   }
 }
-
 // Optimized queue item processing with minimal logging
 async function processQueueItemWithRetry(queueItem, attempt = 1) {
   const workerId = `worker_${Date.now()}_${Math.random()
@@ -1352,7 +1351,6 @@ async function getCalendarAvailabilitySummary(userId) {
     return null;
   }
 }
-
 async function processQueueItem(queueItem, workerId = "unknown") {
   try {
     totalCalls++;
@@ -1989,7 +1987,6 @@ async function getSignedUrl() {
   const data = await response.json();
   return data.signed_url;
 }
-
 // Your existing outbound-call endpoint
 fastify.post("/outbound-call", async (request, reply) => {
   const {
@@ -2474,7 +2471,6 @@ fastify.register(async (fastifyInstance) => {
           bufferTimeout = null;
         }
       };
-
       const setupElevenLabs = async () => {
         try {
           const signedUrl = await getSignedUrl();
@@ -3249,7 +3245,6 @@ fastify.register(async (fastifyInstance) => {
                       }
                     }
                     break;
-
                   case "call_ended_early":
                     console.log("📞 [ENDED_EARLY] Call ended early");
 
@@ -3845,7 +3840,6 @@ async function cleanupStuckCalls() {
     console.error("[CLEANUP] Error during cleanup:", error);
   }
 }
-
 // Your existing twilio-status endpoint with enhanced logging and error handling
 fastify.post("/twilio-status", async (request, reply) => {
   //console.log("📞 [TWILIO STATUS] Status update received");
@@ -4411,7 +4405,6 @@ fastify.post("/queue/cleanup", async (request, reply) => {
     reply.code(500).send({ error: "Error during cleanup" });
   }
 });
-
 // Add webhook endpoint for ElevenLabs
 // ElevenLabs webhook endpoint
 fastify.post("/webhook/elevenlabs", async (request, reply) => {
@@ -5178,7 +5171,6 @@ fastify.post("/api/integration/leads", async (request, reply) => {
     });
   }
 });
-
 fastify.get("/api/integration/leads", async (request, reply) => {
   try {
     console.log("📞 [API] GET /api/integration/leads - Getting leads");
@@ -5897,7 +5889,6 @@ function getMonthNumber(monthName) {
 
   return monthMap[monthName.toLowerCase()] || -1;
 }
-
 // Function to create calendar event
 async function createCalendarEvent(scheduledCallInfo, call) {
   try {
@@ -6450,7 +6441,6 @@ fastify.post("/webhook/stripe", async (request, reply) => {
     return reply.code(500).send({ error: "Internal server error" });
   }
 });
-
 // Handle checkout.session.completed event
 async function handleCheckoutSessionCompleted(session, stripe) {
   try {
@@ -6634,7 +6624,21 @@ async function handleCheckoutSessionCompleted(session, stripe) {
       }
     }
 
-    if (!user) {
+    if (!user && session.metadata && session.metadata.userId) {
+      const { data: userByMetaId } = await supabase
+        .from("users")
+        .select("*")
+        .eq("id", session.metadata.userId)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (userByMetaId) {
+        user = userByMetaId;
+        console.log("✅ [STRIPE] User found by metadata.userId:", user.id);
+      }
+    }
+
+    if (!user || !user.id) {
       console.error("❌ [STRIPE] User not found for session:", session.id);
       return;
     }
@@ -7218,7 +7222,6 @@ async function handleSubscriptionUpdated(subscription) {
     console.error("❌ [STRIPE] Error processing subscription update:", error);
   }
 }
-
 // Handle customer.subscription.deleted event
 async function handleSubscriptionDeleted(subscription) {
   try {
@@ -7780,7 +7783,6 @@ async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
     throw error;
   }
 }
-
 // 🆕 Función asíncrona para obtener precio de llamada con reintentos
 async function fetchCallPriceAsync(callSid, callUri) {
   const MAX_RETRIES = 50;
