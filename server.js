@@ -6591,69 +6591,76 @@ async function handleCheckoutSessionCompleted(session, stripe) {
       productName: product.name,
     });
 
-    // Find user by customer email or customer ID
+    // --- Lógica de búsqueda de usuario robusta (para ambos handlers) ---
     let user = null;
+    let foundBy = null;
+    let stripeCustomerId = session?.customer || invoice?.customer || null;
+    let userIdFromMeta =
+      session?.metadata?.userId ||
+      invoice?.parent?.subscription_details?.metadata?.userId ||
+      null;
+    let email = session?.customer_email || invoice?.customer_email || null;
 
-    if (session.customer_email) {
+    // 1. Buscar por userId (metadata)
+    if (userIdFromMeta) {
+      const { data: userById } = await supabase
+        .from("users")
+        .select("*")
+        .eq("id", userIdFromMeta)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (userById) {
+        user = userById;
+        foundBy = "userId";
+      }
+    }
+    // 2. Buscar por email
+    if (!user && email) {
       const { data: userByEmail } = await supabase
         .from("users")
         .select("*")
-        .eq("email", session.customer_email)
-
+        .eq("email", email)
         .order("created_at", { ascending: false })
         .limit(1);
-
       if (userByEmail) {
         user = userByEmail;
-        console.log("✅ [STRIPE] User found by email:", user.id);
+        foundBy = "email";
       }
     }
-
-    if (!user && session.customer) {
-      const { data: userByCustomerId } = await supabase
+    // 3. Buscar por stripe_customer_id
+    if (!user && stripeCustomerId) {
+      const { data: userByStripeId } = await supabase
         .from("users")
         .select("*")
-        .eq("stripe_customer_id", session.customer)
-
+        .eq("stripe_customer_id", stripeCustomerId)
         .order("created_at", { ascending: false })
         .limit(1);
-
-      if (userByCustomerId) {
-        user = userByCustomerId;
-        console.log("✅ [STRIPE] User found by customer ID:", user.id);
+      if (userByStripeId) {
+        user = userByStripeId;
+        foundBy = "stripe_customer_id";
       }
     }
-
-    if (!user && session.metadata && session.metadata.userId) {
-      const { data: userByMetaId } = await supabase
-        .from("users")
-        .select("*")
-        .eq("id", session.metadata.userId)
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-      if (userByMetaId) {
-        user = userByMetaId;
-        console.log("✅ [STRIPE] User found by metadata.userId:", user.id);
-      }
-    }
-
-    if (!user || !user.id) {
-      console.error("❌ [STRIPE] User not found for session:", session.id);
+    // Si no hay usuario, loguear y retornar
+    if (!user) {
+      console.error(
+        "❌ [STRIPE] User not found for event",
+        session?.id || invoice?.id
+      );
       return;
     }
-
-    // Update user's stripe_customer_id if not set
-    if (!user.stripe_customer_id && session.customer) {
+    // Si el stripe_customer_id no coincide, actualizarlo
+    if (stripeCustomerId && user.stripe_customer_id !== stripeCustomerId) {
       await supabase
         .from("users")
         .update({
-          stripe_customer_id: session.customer,
+          stripe_customer_id: stripeCustomerId,
           updated_at: new Date().toISOString(),
         })
         .eq("id", user.id);
-
-      console.log("✅ [STRIPE] Updated user stripe_customer_id");
+      console.log(
+        "✅ [STRIPE] Updated user stripe_customer_id for user:",
+        user.id
+      );
     }
 
     // Helper function to safely convert Stripe timestamp to ISO string
@@ -6882,6 +6889,78 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
       }
     };
 
+    // --- Lógica de búsqueda de usuario robusta (para ambos handlers) ---
+    let user = null;
+    let foundBy = null;
+    let stripeCustomerId = session?.customer || invoice?.customer || null;
+    let userIdFromMeta =
+      session?.metadata?.userId ||
+      invoice?.parent?.subscription_details?.metadata?.userId ||
+      null;
+    let email = session?.customer_email || invoice?.customer_email || null;
+
+    // 1. Buscar por userId (metadata)
+    if (userIdFromMeta) {
+      const { data: userById } = await supabase
+        .from("users")
+        .select("*")
+        .eq("id", userIdFromMeta)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (userById) {
+        user = userById;
+        foundBy = "userId";
+      }
+    }
+    // 2. Buscar por email
+    if (!user && email) {
+      const { data: userByEmail } = await supabase
+        .from("users")
+        .select("*")
+        .eq("email", email)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (userByEmail) {
+        user = userByEmail;
+        foundBy = "email";
+      }
+    }
+    // 3. Buscar por stripe_customer_id
+    if (!user && stripeCustomerId) {
+      const { data: userByStripeId } = await supabase
+        .from("users")
+        .select("*")
+        .eq("stripe_customer_id", stripeCustomerId)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (userByStripeId) {
+        user = userByStripeId;
+        foundBy = "stripe_customer_id";
+      }
+    }
+    // Si no hay usuario, loguear y retornar
+    if (!user) {
+      console.error(
+        "❌ [STRIPE] User not found for event",
+        session?.id || invoice?.id
+      );
+      return;
+    }
+    // Si el stripe_customer_id no coincide, actualizarlo
+    if (stripeCustomerId && user.stripe_customer_id !== stripeCustomerId) {
+      await supabase
+        .from("users")
+        .update({
+          stripe_customer_id: stripeCustomerId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", user.id);
+      console.log(
+        "✅ [STRIPE] Updated user stripe_customer_id for user:",
+        user.id
+      );
+    }
+
     // Get the user subscription record
     const { data: userSubscription, error: subscriptionError } = await supabase
       .from("user_subscriptions")
@@ -7031,6 +7110,78 @@ async function handleInvoicePaymentFailed(invoice, stripe) {
 
     // Get subscription details
     const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+
+    // --- Lógica de búsqueda de usuario robusta (para ambos handlers) ---
+    let user = null;
+    let foundBy = null;
+    let stripeCustomerId = session?.customer || invoice?.customer || null;
+    let userIdFromMeta =
+      session?.metadata?.userId ||
+      invoice?.parent?.subscription_details?.metadata?.userId ||
+      null;
+    let email = session?.customer_email || invoice?.customer_email || null;
+
+    // 1. Buscar por userId (metadata)
+    if (userIdFromMeta) {
+      const { data: userById } = await supabase
+        .from("users")
+        .select("*")
+        .eq("id", userIdFromMeta)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (userById) {
+        user = userById;
+        foundBy = "userId";
+      }
+    }
+    // 2. Buscar por email
+    if (!user && email) {
+      const { data: userByEmail } = await supabase
+        .from("users")
+        .select("*")
+        .eq("email", email)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (userByEmail) {
+        user = userByEmail;
+        foundBy = "email";
+      }
+    }
+    // 3. Buscar por stripe_customer_id
+    if (!user && stripeCustomerId) {
+      const { data: userByStripeId } = await supabase
+        .from("users")
+        .select("*")
+        .eq("stripe_customer_id", stripeCustomerId)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (userByStripeId) {
+        user = userByStripeId;
+        foundBy = "stripe_customer_id";
+      }
+    }
+    // Si no hay usuario, loguear y retornar
+    if (!user) {
+      console.error(
+        "❌ [STRIPE] User not found for event",
+        session?.id || invoice?.id
+      );
+      return;
+    }
+    // Si el stripe_customer_id no coincide, actualizarlo
+    if (stripeCustomerId && user.stripe_customer_id !== stripeCustomerId) {
+      await supabase
+        .from("users")
+        .update({
+          stripe_customer_id: stripeCustomerId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", user.id);
+      console.log(
+        "✅ [STRIPE] Updated user stripe_customer_id for user:",
+        user.id
+      );
+    }
 
     // Get the user subscription record
     const { data: userSubscription, error: subscriptionError } = await supabase
