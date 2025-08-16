@@ -2518,6 +2518,8 @@ fastify.register(async (fastifyInstance) => {
               custom_llm_prompt: customParameters?.custom_llm_prompt
                 ? "Present"
                 : "Not present",
+              agent_location: customParameters?.agent_location,
+              agent_title: customParameters?.agent_title,
             });
             const initialConfig = {
               type: "conversation_initiation_client_data",
@@ -4499,39 +4501,6 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     const turn_count = webhookData.data?.transcript?.length || 0;
     const call_successful = webhookData.data?.analysis?.call_successful;
     const calendar_event_id = null; // Not available in this structure
-
-    // 🔍 LOG SPECIFIC FIELDS
-    console.log("🔍 [ELEVENLABS] Extracted fields:");
-    console.log("  - event_type:", event_type);
-    console.log("  - conversation_id:", conversation_id);
-    console.log("  - transcript type:", typeof transcript);
-    console.log(
-      "  - transcript length:",
-      transcript ? transcript.length : "undefined"
-    );
-    console.log("  - transcript_summary:", transcript_summary);
-    console.log("  - end_reason:", end_reason);
-    console.log("  - connection_status:", connection_status);
-    console.log("  - duration:", duration);
-    console.log("  - turn_count:", turn_count);
-    console.log("  - call_successful:", call_successful);
-    console.log("  - calendar_event_id:", calendar_event_id);
-
-    // 🔍 LOG TRANSCRIPT DETAILS IF AVAILABLE
-    if (transcript && transcript.length > 0) {
-      console.log("🔍 [ELEVENLABS] Transcript details:");
-      console.log("  - Number of turns:", transcript.length);
-      transcript.forEach((turn, index) => {
-        console.log(
-          `    Turn ${index + 1}: ${turn.role} - ${turn.message?.substring(
-            0,
-            100
-          )}${turn.message?.length > 100 ? "..." : ""}`
-        );
-      });
-    } else {
-      console.log("⚠️ [ELEVENLABS] No transcript available");
-    }
 
     // Handle different event types
     switch (event_type) {
