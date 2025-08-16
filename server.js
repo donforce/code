@@ -1360,7 +1360,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     const { data: userData, error: userError } = await supabase
       .from("users")
       .select(
-        "available_call_credits, email, first_name, last_name, assistant_name, twilio_phone_number, twilio_subaccount_sid, twilio_auth_token"
+        "available_call_credits, email, first_name, last_name, assistant_name, twilio_phone_number, twilio_subaccount_sid, twilio_auth_token, location, title"
       )
       .eq("id", queueItem.user_id)
       .order("created_at", { ascending: false })
@@ -1770,6 +1770,9 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
         }"`
       );
 
+      const agentLocation = userData[0]?.location || "Florida";
+      const agentTitle = userData[0]?.title || "Agente Inmobiliario";
+
       call = await twilioClientToUse.calls.create({
         from: fromPhoneNumber,
         to: queueItem.lead.phone,
@@ -1789,7 +1792,9 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
           agentName
         )}&assistant_name=${encodeURIComponent(
           userData[0]?.assistant_name
-        )}&calendar_availability=${availabilityParam}&calendar_timezone=${timezoneParam}${voiceParam}${customLlmParam}`,
+        )}&calendar_availability=${availabilityParam}&calendar_timezone=${timezoneParam}${voiceParam}${customLlmParam}&agent_location=${encodeURIComponent(
+          agentLocation
+        )}&agent_title=${encodeURIComponent(agentTitle)}`,
         statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
         statusCallbackEvent: ["completed"],
         statusCallbackMethod: "POST",
