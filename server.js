@@ -2565,6 +2565,9 @@ fastify.register(async (fastifyInstance) => {
                 calendar_timezone:
                   customParameters?.calendar_timezone || "America/New_York",
                 preguntas: customParameters?.custom_llm_prompt || "",
+                agent_title:
+                  customParameters?.agent_title || "Agente Inmobiliario",
+                agent_location: customParameters?.agent_location || "Florida",
               },
               usage: {
                 no_ip_reason: "user_ip_not_collected",
