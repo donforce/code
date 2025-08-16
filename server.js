@@ -1770,8 +1770,15 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
         }"`
       );
 
+      console.log("[DEBUG] userData[0]", userData[0]);
       const agentLocation = userData[0]?.location || "Florida";
       const agentTitle = userData[0]?.title || "Agente Inmobiliario";
+      console.log(
+        "[DEBUG] agentLocation",
+        agentLocation,
+        "agentTitle",
+        agentTitle
+      );
 
       call = await twilioClientToUse.calls.create({
         from: fromPhoneNumber,
