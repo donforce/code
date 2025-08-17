@@ -4467,10 +4467,6 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       "🔍 [ELEVENLABS] Raw body length:",
       rawBody ? rawBody.length : "undefined"
     );
-    console.log(
-      "🔍 [ELEVENLABS] Raw body preview:",
-      rawBodyString ? rawBodyString : "undefined"
-    );
 
     // Try different signature headers
     let signature = signatureElevenLabsCap || signatureElevenLabs || signatureX;
@@ -4502,10 +4498,6 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       );
       return reply.code(400).send({ error: "Invalid JSON in webhook body" });
     }
-
-    // 🔍 DETAILED LOGGING - Log the complete webhook data
-    console.log("🔍 [ELEVENLABS] Complete webhook data structure:");
-    console.log(JSON.stringify(webhookData, null, 2));
 
     // Extract data from the correct structure
     const event_type = webhookData.type;
