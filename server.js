@@ -2543,11 +2543,8 @@ fastify.register(async (fastifyInstance) => {
             const initialConfig = {
               type: "conversation_initiation_client_data",
               conversation_config_override: {
-                conversation: {
-                  input_language: idioma,
-                  output_language: idioma,
-                },
                 agent: {
+                  language: idioma,
                   agent_id: ELEVENLABS_AGENT_ID,
                 },
                 tts: {
