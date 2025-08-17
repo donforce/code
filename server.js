@@ -2540,6 +2540,7 @@ fastify.register(async (fastifyInstance) => {
               agent_title: customParameters?.agent_title,
             });
             const idioma = customParameters?.language || "es";
+            console.log("🔍 [ELEVENLABS CONFIG] Custom language:", idioma);
             const initialConfig = {
               type: "conversation_initiation_client_data",
               conversation_config_override: {
