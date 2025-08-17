@@ -1775,11 +1775,25 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
       console.log("[DEBUG] userData[0]", userData[0]);
       const agentLocation = userData[0]?.location || "Florida";
       const agentTitle = userData[0]?.title || "Agente Inmobiliario";
+      // Traducción de agentTitle si idioma es inglés
+      let agentTitleTranslated = agentTitle;
+      if (idioma === "en") {
+        if (agentTitle === "Agente Inmobiliario")
+          agentTitleTranslated = "Realtor";
+        else if (agentTitle === "Realtor") agentTitleTranslated = "Realtor";
+        else if (agentTitle === "Broker") agentTitleTranslated = "Broker";
+        else if (agentTitle === "Asesor Inmobiliario")
+          agentTitleTranslated = "Real Estate Advisor";
+        else if (agentTitle === "Consultor Inmobiliario")
+          agentTitleTranslated = "Real Estate Consultant";
+      }
       console.log(
         "[DEBUG] agentLocation",
         agentLocation,
         "agentTitle",
-        agentTitle
+        agentTitle,
+        "agentTitleTranslated",
+        agentTitleTranslated
       );
 
       let idioma = queueItem.lead.language || "es";
@@ -1815,7 +1829,7 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
         )}&calendar_availability=${availabilityParam}&calendar_timezone=${timezoneParam}${voiceParam}${customLlmParam}&agent_location=${encodeURIComponent(
           agentLocation
         )}&agent_title=${encodeURIComponent(
-          agentTitle
+          agentTitleTranslated
         )}&language=${languageParam}`,
         statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
         statusCallbackEvent: ["completed"],
