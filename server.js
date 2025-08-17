@@ -1830,6 +1830,8 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
           agentLocation
         )}&agent_title=${encodeURIComponent(
           agentTitleTranslated
+        )}&conversation_language=${encodeURIComponent(
+          idioma
         )}&language=${languageParam}`,
         statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
         statusCallbackEvent: ["completed"],
@@ -2638,6 +2640,7 @@ fastify.register(async (fastifyInstance) => {
                 agent_title:
                   customParameters?.agent_title || "Agente Inmobiliario",
                 agent_location: customParameters?.agent_location || "Florida",
+                conversation_language: idioma,
               },
               usage: {
                 no_ip_reason: "user_ip_not_collected",
