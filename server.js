@@ -1782,6 +1782,7 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
         agentTitle
       );
 
+      let idioma = queueItem.lead.language || "es";
       // ... justo antes de armar initialConfig ...
       let firstMessage;
       if (idioma === "en") {
