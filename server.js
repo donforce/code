@@ -1733,12 +1733,19 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       try {
         const { data: questionsData, error: questionsError } = await supabase
           .from("agent_questions")
-          .select("question_text, question_type, is_required, order_index")
+          .select(
+            "question_text, question_text_en, question_type, is_required, order_index"
+          )
           .order("order_index", { ascending: true });
 
         if (!questionsError && questionsData && questionsData.length > 0) {
           const questionsList = questionsData
-            .map((q, index) => `${index + 1}. ${q.question_text}`)
+            .map((q, index) => {
+              if (idioma === "en" && q.question_text_en) {
+                return `${index + 1}. ${q.question_text_en}`;
+              }
+              return `${index + 1}. ${q.question_text}`;
+            })
             .join("\n");
 
           customLlmPrompt = `Durante el paso 1 (Descubrir Interés y Necesidades), asegúrate de hacer las siguientes preguntas siempre teniendo en cuenta la respuesta a cada una cuando formules la proxima pregunta:
