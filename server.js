@@ -1773,6 +1773,7 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
       );
 
       console.log("[DEBUG] userData[0]", userData[0]);
+      let idioma = queueItem.lead.language || "es";
       const agentLocation = userData[0]?.location || "Florida";
       const agentTitle = userData[0]?.title || "Agente Inmobiliario";
       // Traducción de agentTitle si idioma es inglés
@@ -1796,8 +1797,6 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
         agentTitleTranslated
       );
 
-      let idioma = queueItem.lead.language || "es";
-      // ... justo antes de armar initialConfig ...
       let firstMessage;
       if (idioma === "en") {
         firstMessage =
