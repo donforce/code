@@ -2013,7 +2013,10 @@ fastify.post("/outbound-call", async (request, reply) => {
     client_email,
     client_id,
     user_id,
+    language,
   } = request.body;
+
+  console.log("🌐 [OUTBOUND-CALL] Idioma recibido:", language);
 
   if (!number) {
     return reply.code(400).send({ error: "Phone number is required" });
@@ -2154,7 +2157,9 @@ fastify.post("/outbound-call", async (request, reply) => {
         agentFirstName
       )}&agent_name=${encodeURIComponent(
         agentName
-      )}&assistant_name=${encodeURIComponent(userData[0]?.assistant_name)}`,
+      )}&assistant_name=${encodeURIComponent(
+        userData[0]?.assistant_name
+      )}&language=${encodeURIComponent(language)}`,
       statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
       statusCallbackEvent: ["completed"],
       statusCallbackMethod: "POST",
@@ -2228,6 +2233,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
   } = request.query;
 
   console.log(`🔊 [TWiML] Received user_voice_id: "${user_voice_id}"`);
+  console.log("🌐 [TWiML] Idioma recibido en query:", language);
 
   // Función para escapar caracteres especiales en XML
   const escapeXml = (str) => {
@@ -4490,6 +4496,12 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     let webhookData;
     try {
       webhookData = JSON.parse(rawBodyString);
+      if (webhookData?.data?.conversation_config_override?.conversation) {
+        console.log(
+          "🌐 [ELEVENLABS WEBHOOK] Idioma recibido:",
+          webhookData.data.conversation_config_override.conversation
+        );
+      }
     } catch (parseError) {
       console.error("❌ [ELEVENLABS] Error parsing webhook data:", parseError);
       console.log(
