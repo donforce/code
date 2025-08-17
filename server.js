@@ -547,20 +547,21 @@ async function processAllPendingQueues() {
         .from("call_queue")
         .select(
           `
-        id,
-        user_id,
-        lead_id,
-        queue_position,
-        status,
-        created_at,
-        priority,
-        scheduled_at,
-        lead:leads (
-          name,
-          phone,
-          email
-        )
-      `
+          id,
+          user_id,
+          lead_id,
+          queue_position,
+          status,
+          created_at,
+          priority,
+          scheduled_at,
+          lead:leads (
+            name,
+            phone,
+            email,
+            language
+          )
+        `
         )
         .eq("status", "pending")
         .or(`scheduled_at.lte.${new Date().toISOString()},scheduled_at.is.null`)
