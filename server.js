@@ -1782,13 +1782,23 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
         agentTitle
       );
 
+      // ... justo antes de armar initialConfig ...
+      let firstMessage;
+      if (idioma === "en") {
+        firstMessage =
+          "Hello {{client_name}}, I am {{assistant_name}}, assistant to {{agent_name}}, {{agent_title}} in {{agent_location}}. How are you?";
+      } else {
+        firstMessage =
+          "Holaa {{client_name}}, soy {{assistant_name}}. Asistente de {{agent_name}},{{agent_title}} en {{agent_location}}. ¿Cómo estás?";
+      }
+
       call = await twilioClientToUse.calls.create({
         from: fromPhoneNumber,
         to: queueItem.lead.phone,
         url: `https://${RAILWAY_PUBLIC_DOMAIN}/outbound-call-twiml?prompt=${encodeURIComponent(
           "Eres un asistente de ventas inmobiliarias."
         )}&first_message=${encodeURIComponent(
-          "Hola, ¿cómo estás?"
+          firstMessage
         )}&client_name=${encodeURIComponent(
           queueItem.lead.name
         )}&client_phone=${clientPhoneParam}&client_email=${clientEmailParam}&client_id=${encodeURIComponent(
@@ -2542,12 +2552,26 @@ fastify.register(async (fastifyInstance) => {
             });
             const idioma = customParameters?.language || "es";
             console.log("🔍 [ELEVENLABS CONFIG] Custom language:", idioma);
+
+            // ... justo antes de armar initialConfig ...
+            let firstMessage;
+            if (idioma === "en") {
+              firstMessage =
+                "Hello {{client_name}}, I am {{assistant_name}}, assistant to {{agent_name}}, {{agent_title}} in {{agent_location}}. How are you?";
+            } else {
+              firstMessage =
+                "Holaa {{client_name}}, soy {{assistant_name}}. Asistente de {{agent_name}},{{agent_title}} en {{agent_location}}. ¿Cómo estás?";
+            }
+            // ...
+
+            // Al armar initialConfig:
             const initialConfig = {
               type: "conversation_initiation_client_data",
               conversation_config_override: {
                 agent: {
                   language: idioma,
                   agent_id: ELEVENLABS_AGENT_ID,
+                  first_message: firstMessage, // solo agrega esta línea
                 },
                 tts: {
                   voice_id:
