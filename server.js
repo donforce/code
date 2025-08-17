@@ -6654,13 +6654,21 @@ async function handleCheckoutSessionCompleted(session, stripe) {
       const subscription = await stripe.subscriptions.retrieve(
         session.subscription
       );
-      const planId = subscription?.items?.data?.[0]?.plan?.id || null;
-
+      const stripePriceId = subscription?.items?.data?.[0]?.plan?.id || null;
+      let planUuid = null;
+      if (stripePriceId) {
+        const { data: planData } = await supabase
+          .from("subscription_plans")
+          .select("id")
+          .eq("stripe_price_id", stripePriceId)
+          .single();
+        planUuid = planData?.id || null;
+      }
       await supabase.from("user_subscriptions").upsert(
         {
           user_id: user.id,
           stripe_subscription_id: session.subscription,
-          plan_id: planId,
+          plan_id: planUuid,
           status: subscription.status,
           // ...otros campos relevantes
         },
@@ -6668,7 +6676,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
       );
 
       // Resetear créditos del usuario según el plan
-      const planCredits = await getPlanCredits(planId);
+      const planCredits = await getPlanCredits(stripePriceId);
       await supabase
         .from("users")
         .update({
@@ -6711,15 +6719,22 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
     let subscription = null;
     let userIdFromMeta =
       invoice?.parent?.subscription_details?.metadata?.userId || null;
-    let planId = null;
-
+    let stripePriceId = null;
     if (!userIdFromMeta) {
       try {
         subscription = await stripe.subscriptions.retrieve(subscriptionId);
         userIdFromMeta = subscription?.metadata?.userId || null;
-        planId = subscription?.items?.data?.[0]?.plan?.id || null;
+        stripePriceId = subscription?.items?.data?.[0]?.plan?.id || null;
       } catch (err) {
         console.error("[STRIPE] Error fetching subscription for userId:", err);
+      }
+    } else {
+      // Si ya tenemos userIdFromMeta, igual necesitamos el stripePriceId
+      try {
+        subscription = await stripe.subscriptions.retrieve(subscriptionId);
+        stripePriceId = subscription?.items?.data?.[0]?.plan?.id || null;
+      } catch (err) {
+        console.error("[STRIPE] Error fetching subscription for planId:", err);
       }
     }
 
@@ -6771,26 +6786,36 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
       return;
     }
 
-    // 4. Si no tienes la suscripción, obténla aquí para el planId y status
+    // 4. Si no tienes la suscripción, obténla aquí para el stripePriceId y status
     if (!subscription) {
       subscription = await stripe.subscriptions.retrieve(subscriptionId);
-      planId = subscription?.items?.data?.[0]?.plan?.id || null;
+      stripePriceId = subscription?.items?.data?.[0]?.plan?.id || null;
     }
 
-    // 5. Upsert en user_subscriptions
+    // Buscar el UUID del plan
+    let planUuid = null;
+    if (stripePriceId) {
+      const { data: planData } = await supabase
+        .from("subscription_plans")
+        .select("id")
+        .eq("stripe_price_id", stripePriceId)
+        .single();
+      planUuid = planData?.id || null;
+    }
+
     await supabase.from("user_subscriptions").upsert(
       {
         user_id: user.id,
         stripe_subscription_id: subscriptionId,
-        plan_id: planId,
+        plan_id: planUuid,
         status: subscription?.status || null,
-        // ...otros campos relevantes
+        // ... otros campos relevantes
       },
       { onConflict: "user_id" }
     );
 
-    // 6. Resetear créditos del usuario según el plan
-    const planCredits = await getPlanCredits(planId);
+    // Resetear créditos del usuario según el plan
+    const planCredits = await getPlanCredits(stripePriceId);
     await supabase
       .from("users")
       .update({
@@ -7980,13 +8005,12 @@ async function fetchCallPriceAsync(callSid, callUri) {
     `⚠️ [TWILIO PRICE] No se pudo obtener precio después de ${MAX_RETRIES} intentos para CallSid: ${callSid}`
   );
 }
-async function getPlanCredits(planId) {
-  if (!planId) return 0;
-  // Supón que tienes una tabla subscription_plans con credits_per_month
+async function getPlanCredits(stripePriceId) {
+  if (!stripePriceId) return 0;
   const { data, error } = await supabase
     .from("subscription_plans")
     .select("credits_per_month")
-    .eq("id", planId)
+    .eq("stripe_price_id", stripePriceId)
     .single();
   if (error || !data) {
     console.error("[STRIPE] Error fetching plan credits:", error);
