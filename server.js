@@ -2676,7 +2676,9 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                   language: idioma,
                   agent_id: ELEVENLABS_AGENT_ID,
                   first_message: firstMessage, // solo agrega esta línea
-                  ...(promptOverride ? { prompt: promptOverride } : {}),
+                  ...(promptOverride
+                    ? { prompt: { prompt: promptOverride } }
+                    : {}),
                 },
                 tts: {
                   voice_id:
