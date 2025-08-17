@@ -1675,6 +1675,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       const timezoneParam = encodeURIComponent(calendarTimezone);
       const clientPhoneParam = encodeURIComponent(queueItem.lead.phone);
       const clientEmailParam = encodeURIComponent(queueItem.lead.email);
+      const languageParam = encodeURIComponent(queueItem.lead.language || "es");
 
       // Obtener la voz seleccionada del usuario
       let selectedVoiceId = null;
@@ -1801,7 +1802,9 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
           userData[0]?.assistant_name
         )}&calendar_availability=${availabilityParam}&calendar_timezone=${timezoneParam}${voiceParam}${customLlmParam}&agent_location=${encodeURIComponent(
           agentLocation
-        )}&agent_title=${encodeURIComponent(agentTitle)}`,
+        )}&agent_title=${encodeURIComponent(
+          agentTitle
+        )}&language=${languageParam}`,
         statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
         statusCallbackEvent: ["completed"],
         statusCallbackMethod: "POST",
@@ -2221,6 +2224,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     user_voice_id,
     agent_location,
     agent_title,
+    language,
   } = request.query;
 
   console.log(`🔊 [TWiML] Received user_voice_id: "${user_voice_id}"`);
@@ -2270,6 +2274,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
             agent_location
           )}" />
           <Parameter name="agent_title" value="${escapeXml(agent_title)}" />
+          <Parameter name="language" value="${escapeXml(language)}" />
         </Stream>
       </Connect>
     </Response>`;
@@ -2528,12 +2533,13 @@ fastify.register(async (fastifyInstance) => {
               agent_location: customParameters?.agent_location,
               agent_title: customParameters?.agent_title,
             });
+            const idioma = customParameters?.language || "es";
             const initialConfig = {
               type: "conversation_initiation_client_data",
               conversation_config_override: {
                 conversation: {
-                  input_language: "es",
-                  output_language: "es",
+                  input_language: idioma,
+                  output_language: idioma,
                 },
                 agent: {
                   agent_id: ELEVENLABS_AGENT_ID,
