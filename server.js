@@ -6666,6 +6666,8 @@ async function handleCheckoutSessionCompleted(session, stripe) {
           .single();
         planUuid = planData?.id || null;
       }
+      // Resetear créditos del usuario según el plan
+      const planCredits = await getPlanCredits(stripePriceId);
       await supabase.from("user_subscriptions").upsert(
         {
           user_id: user.id,
@@ -6673,13 +6675,11 @@ async function handleCheckoutSessionCompleted(session, stripe) {
           plan_id: planUuid,
           status: subscription.status,
           stripe_customer_id: user.stripe_customer_id || session.customer,
+          credits_per_month: planCredits, // <-- aquí
           // ...otros campos relevantes
         },
         { onConflict: "user_id" }
       );
-
-      // Resetear créditos del usuario según el plan
-      const planCredits = await getPlanCredits(stripePriceId);
       await supabase
         .from("users")
         .update({
@@ -6687,7 +6687,6 @@ async function handleCheckoutSessionCompleted(session, stripe) {
           updated_at: new Date().toISOString(),
         })
         .eq("id", user.id);
-
       console.log(
         "[STRIPE] Créditos reseteados para usuario",
         user.id,
@@ -6825,6 +6824,7 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
 
     // 5. Upsert en user_subscriptions (solo si hay user y planUuid)
     if (user && planUuid) {
+      const planCredits = await getPlanCredits(stripePriceId);
       const { data: upsertData, error: upsertError } = await supabase
         .from("user_subscriptions")
         .upsert(
@@ -6834,6 +6834,7 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
             plan_id: planUuid,
             status: subscription?.status || null,
             stripe_customer_id: user.stripe_customer_id || invoice.customer,
+            credits_per_month: planCredits, // <-- aquí
             // ... otros campos relevantes
           },
           { onConflict: "user_id" }
