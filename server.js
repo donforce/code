@@ -6584,373 +6584,114 @@ fastify.post("/webhook/stripe", async (request, reply) => {
 // Handle checkout.session.completed event
 async function handleCheckoutSessionCompleted(session, stripe) {
   try {
-    console.log("✅ [STRIPE] Processing checkout.session.completed");
-    console.log("📋 [STRIPE] Session details:", {
-      id: session.id,
-      customer: session.customer,
-      subscription: session.subscription,
-      customer_email: session.customer_email,
-      amount_total: session.amount_total,
-      currency: session.currency,
-      metadata: session.metadata,
-    });
-
-    if (!session.subscription) {
-      console.log("❌ [STRIPE] No subscription found in session");
-      return;
-    }
-
-    // Get subscription details from Stripe using the subscription ID
-    const subscription = await stripe.subscriptions.retrieve(
-      session.subscription
-    );
-    console.log("📦 [STRIPE] Subscription retrieved:", subscription.id);
-    console.log("📦 [STRIPE] Subscription timestamps:", {
-      current_period_start: subscription.current_period_start,
-      current_period_end: subscription.current_period_end,
-    });
-
-    // Get product and price details from the subscription
-    const price = await stripe.prices.retrieve(
-      subscription.items.data[0].price.id
-    );
-    const product = await stripe.products.retrieve(price.product);
-
-    console.log("📦 [STRIPE] Product details:", {
-      name: product.name,
-      metadata: product.metadata,
-    });
-
-    // Find the subscription plan by product name
-    let planId = null;
-    let minutesPerMonth = 2500; // Default fallback - cambiar a 2500
-    let planCredits = 2500; // Default fallback - cambiar a 2500
-
-    console.log(
-      "🔍 [STRIPE] Searching for plan with product name:",
-      product.name
-    );
-    console.log("🔍 [STRIPE] Available plans in DB:", [
-      "Profesional",
-      "Empresarial",
-    ]);
-
-    if (product.name) {
-      console.log("🔍 [STRIPE] Product name exists, searching in DB...");
-
-      const { data: plan, error: planError } = await supabase
-        .from("subscription_plans")
-        .select("id, name, minutes_per_month, credits_per_month") // agregar name para logging
-        .eq("name", product.name)
-
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-      console.log("🔍 [STRIPE] Plan search result:", {
-        found: !!plan,
-        planId: plan?.id,
-        planName: plan?.name,
-        planMinutes: plan?.minutes_per_month,
-        planCredits: plan?.credits_per_month,
-        error: planError?.message,
-        errorCode: planError?.code,
-      });
-
-      if (planError) {
-        console.warn("⚠️ [STRIPE] Plan not found by name:", product.name);
-        console.warn("⚠️ [STRIPE] Plan error:", planError.message);
-        console.warn(
-          "⚠️ [STRIPE] Trying fallback with stripe_price_id:",
-          price.id
-        );
-
-        // Try to find plan by stripe_price_id as fallback
-        const { data: planByPriceId } = await supabase
-          .from("subscription_plans")
-          .select("id, name, minutes_per_month, credits_per_month") // agregar name para logging
-          .eq("stripe_price_id", price.id)
-
-          .order("created_at", { ascending: false })
-          .limit(1);
-
-        console.log("🔍 [STRIPE] Fallback search result:", {
-          found: !!planByPriceId,
-          planId: planByPriceId?.id,
-          planName: planByPriceId?.name,
-          planMinutes: planByPriceId?.minutes_per_month,
-          planCredits: planByPriceId?.credits_per_month,
-        });
-
-        if (planByPriceId) {
-          planId = planByPriceId.id;
-          minutesPerMonth = planByPriceId.minutes_per_month || 2500;
-          planCredits = planByPriceId.credits_per_month || minutesPerMonth;
-          console.log(
-            "✅ [STRIPE] Plan found by stripe_price_id:",
-            planByPriceId.id
-          );
-        } else {
-          console.warn(
-            "⚠️ [STRIPE] Plan not found by stripe_price_id either:",
-            price.id
-          );
-          // Use default values
-          minutesPerMonth =
-            parseInt(
-              product.metadata?.minutes_per_month ||
-                price.metadata?.minutes_per_month ||
-                "2500"
-            ) || 2500;
-          planCredits = minutesPerMonth; // Usar el mismo valor por defecto
-        }
-      } else {
-        planId = plan.id;
-        minutesPerMonth = plan.minutes_per_month || 2500;
-        planCredits = plan.credits_per_month || minutesPerMonth; // cambiar plan.credits_per_month -> credits_per_month
-        console.log("✅ [STRIPE] Plan found by name:", plan.id);
-      }
-    } else {
-      console.warn("⚠️ [STRIPE] Product name is empty, using default values");
-      minutesPerMonth =
-        parseInt(
-          product.metadata?.minutes_per_month ||
-            price.metadata?.minutes_per_month ||
-            "2500"
-        ) || 2500;
-      planCredits = minutesPerMonth; // Usar el mismo valor por defecto
-    }
-
-    // Asegurar que los valores nunca sean null
-    minutesPerMonth = minutesPerMonth || 2500;
-    planCredits = planCredits || minutesPerMonth || 2500;
-
-    console.log("📦 [STRIPE] Final plan details:", {
-      planId: planId,
-      minutesPerMonth: minutesPerMonth,
-      planCredits: planCredits, // nuevo
-      productName: product.name,
-    });
-
-    // --- Lógica de búsqueda de usuario robusta (para ambos handlers) ---
+    // 1. Extraer userId de metadata
+    let userId = session?.metadata?.userId || null;
     let user = null;
     let foundBy = null;
-    let stripeCustomerId = session?.customer || null;
-    let userIdFromMeta = session?.metadata?.userId || null;
-    let email = session?.customer_email || null;
 
-    // 1. Buscar por userId (metadata)
-    if (userIdFromMeta) {
-      const { data: userById } = await supabase
+    // 2. Buscar usuario por userId
+    if (userId) {
+      const { data } = await supabase
         .from("users")
         .select("*")
-        .eq("id", userIdFromMeta)
-        .order("created_at", { ascending: false })
-        .limit(1);
-      if (userById) {
-        user = userById;
+        .eq("id", userId)
+        .single();
+      if (data) {
+        user = data;
         foundBy = "userId";
       }
     }
-    // 2. Buscar por email
-    if (!user && email) {
-      const { data: userByEmail } = await supabase
+    // 3. Si no, buscar por email
+    if (!user && session?.customer_email) {
+      const { data } = await supabase
         .from("users")
         .select("*")
-        .eq("email", email)
-        .order("created_at", { ascending: false })
-        .limit(1);
-      if (userByEmail) {
-        user = userByEmail;
+        .eq("email", session.customer_email)
+        .single();
+      if (data) {
+        user = data;
         foundBy = "email";
       }
     }
-    // 3. Buscar por stripe_customer_id
-    if (!user && stripeCustomerId) {
-      const { data: userByStripeId } = await supabase
+    // 4. Si no, buscar por stripe_customer_id
+    if (!user && session?.customer) {
+      const { data } = await supabase
         .from("users")
         .select("*")
-        .eq("stripe_customer_id", stripeCustomerId)
-        .order("created_at", { ascending: false })
-        .limit(1);
-      if (userByStripeId) {
-        user = userByStripeId;
+        .eq("stripe_customer_id", session.customer)
+        .single();
+      if (data) {
+        user = data;
         foundBy = "stripe_customer_id";
       }
     }
-    // Si no hay usuario, loguear y retornar
     if (!user) {
-      console.error("❌ [STRIPE] User not found for event", session?.id);
-      return;
-    }
-    // Si el stripe_customer_id no coincide, actualizarlo
-    if (stripeCustomerId && user.stripe_customer_id !== stripeCustomerId) {
-      await supabase
-        .from("users")
-        .update({
-          stripe_customer_id: stripeCustomerId,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", user.id);
-      console.log(
-        "✅ [STRIPE] Updated user stripe_customer_id for user:",
-        user.id
-      );
-    }
-
-    // Helper function to safely convert Stripe timestamp to ISO string
-    const convertStripeTimestamp = (timestamp) => {
-      if (!timestamp || typeof timestamp !== "number") {
-        console.warn("⚠️ [STRIPE] Invalid timestamp:", timestamp);
-        return new Date().toISOString(); // Fallback to current time
-      }
-
-      try {
-        const date = new Date(timestamp * 1000);
-        if (isNaN(date.getTime())) {
-          console.warn("⚠️ [STRIPE] Invalid date from timestamp:", timestamp);
-          return new Date().toISOString(); // Fallback to current time
-        }
-        return date.toISOString();
-      } catch (error) {
-        console.error("❌ [STRIPE] Error converting timestamp:", error);
-        return new Date().toISOString(); // Fallback to current time
-      }
-    };
-
-    // Check if subscription already exists
-    const { data: existingSubscription } = await supabase
-      .from("user_subscriptions")
-      .select("*")
-      .eq("stripe_subscription_id", subscription.id)
-      .order("created_at", { ascending: false })
-      .limit(1);
-
-    if (existingSubscription) {
-      console.log("ℹ️ [STRIPE] Subscription already exists, updating...");
-
-      await supabase
-        .from("user_subscriptions")
-        .update({
-          plan_id: planId,
-          status: subscription.status,
-          current_period_start: convertStripeTimestamp(
-            subscription.current_period_start
-          ),
-          current_period_end: convertStripeTimestamp(
-            subscription.current_period_end
-          ),
-          cancel_at_period_end: subscription.cancel_at_period_end,
-          minutes_per_month: minutesPerMonth,
-          credits_per_month: planCredits, // Usar directamente planCredits
-          product_name: product.name,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", existingSubscription.id);
-
-      console.log("✅ [STRIPE] Subscription updated");
-    } else {
-      console.log("🆕 [STRIPE] Creating new subscription...");
-
-      // Create new subscription record
-      const { data: newSubscription, error: insertError } = await supabase
-        .from("user_subscriptions")
-        .insert({
-          user_id: user.id,
-          plan_id: planId,
-          stripe_subscription_id: subscription.id,
-          stripe_customer_id: session.customer,
-          status: subscription.status,
-          current_period_start: convertStripeTimestamp(
-            subscription.current_period_start
-          ),
-          current_period_end: convertStripeTimestamp(
-            subscription.current_period_end
-          ),
-          cancel_at_period_end: subscription.cancel_at_period_end,
-          minutes_per_month: minutesPerMonth,
-          credits_per_month: planCredits, // Usar directamente planCredits que ya tiene valor por defecto
-          product_name: product.name,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .select()
-
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-      if (insertError) {
-        console.error("❌ [STRIPE] Error creating subscription:", insertError);
-        return;
-      }
-
-      console.log("✅ [STRIPE] New subscription created:", newSubscription.id);
-    }
-
-    // Add minutes to user's available_minutes (for both new and existing subscriptions)
-    console.log("💰 [STRIPE] Adding minutes to user account...");
-
-    // Get current user minutes
-    const { data: currentUser, error: userError } = await supabase
-      .from("users")
-      .select("available_minutes, available_call_credits") // añadir credits
-      .eq("id", user.id)
-      .order("created_at", { ascending: false })
-      .limit(1);
-
-    if (userError) {
       console.error(
-        "❌ [STRIPE] Error getting current user minutes:",
-        userError
+        "[STRIPE] No se encontró usuario para checkout.session.completed",
+        {
+          userId,
+          email: session?.customer_email,
+          stripeCustomerId: session?.customer,
+          session,
+        }
       );
       return;
     }
 
-    const currentSeconds = currentUser.available_minutes || 0;
-    const secondsToAdd = minutesPerMonth * 60; // Convert minutes to seconds
-    const newTotalSeconds = secondsToAdd; // Clear existing and set to new amount
-
-    console.log("💰 [STRIPE] Minutes calculation:", {
-      currentSeconds: currentSeconds,
-      addingMinutes: minutesPerMonth,
-      addingSeconds: secondsToAdd,
-      addingMinutes: minutesPerMonth,
-      newTotalSeconds: newTotalSeconds,
-    });
-
-    // Update user's available minutes
-    const { error: updateMinutesError } = await supabase
+    // 5. Actualizar usuario con los datos de Stripe
+    await supabase
       .from("users")
       .update({
-        available_minutes: newTotalSeconds,
-        available_call_credits: planCredits, // Usar directamente planCredits
+        stripe_customer_id: session.customer,
+        email: session.customer_email,
         updated_at: new Date().toISOString(),
       })
       .eq("id", user.id);
 
-    if (updateMinutesError) {
-      console.error(
-        "❌ [STRIPE] Error updating user minutes:",
-        updateMinutesError
+    // 6. Actualizar o crear user_subscriptions
+    if (session.subscription) {
+      // Obtener detalles de la suscripción de Stripe
+      const subscription = await stripe.subscriptions.retrieve(
+        session.subscription
       );
-      return;
+      const planId = subscription?.items?.data?.[0]?.plan?.id || null;
+
+      await supabase.from("user_subscriptions").upsert(
+        {
+          user_id: user.id,
+          stripe_subscription_id: session.subscription,
+          plan_id: planId,
+          status: subscription.status,
+          // ...otros campos relevantes
+        },
+        { onConflict: "user_id" }
+      );
+
+      // Resetear créditos del usuario según el plan
+      const planCredits = await getPlanCredits(planId);
+      await supabase
+        .from("users")
+        .update({
+          available_call_credits: planCredits,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", user.id);
+
+      console.log(
+        "[STRIPE] Créditos reseteados para usuario",
+        user.id,
+        "a",
+        planCredits
+      );
     }
 
-    console.log("✅ [STRIPE] User minutes updated successfully:", {
+    console.log("[STRIPE] Usuario y suscripción actualizados correctamente", {
       userId: user.id,
-      previousSeconds: currentSeconds,
-      addedMinutes: minutesPerMonth,
-      newTotalSeconds: newTotalSeconds,
-      newTotalCredits: planCredits || 0, // nuevo
-    });
-
-    // Sync referral data
-    await syncReferralData(user.id, {
-      plan_name: product.name,
-      status: subscription.status,
-      minutes_per_month: minutesPerMonth,
+      foundBy,
+      subscription: session.subscription,
     });
   } catch (error) {
-    console.error("❌ [STRIPE] Error processing checkout session:", error);
+    console.error("[STRIPE] Error in handleCheckoutSessionCompleted:", error);
   }
 }
 
@@ -6959,243 +6700,113 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
   try {
     console.log("✅ [STRIPE] Processing invoice.payment_succeeded");
 
-    // Extract subscription ID from different possible locations
-    let subscriptionId = invoice.subscription;
-
-    // If not found directly, check in parent.subscription_details
-    if (!subscriptionId && invoice.parent?.subscription_details?.subscription) {
-      subscriptionId = invoice.parent.subscription_details.subscription;
-    }
-
-    // Also check in lines for subscription items
-    if (!subscriptionId && invoice.lines?.data?.length > 0) {
-      const subscriptionLine = invoice.lines.data.find(
-        (line) => line.parent?.subscription_item_details?.subscription
-      );
-      if (subscriptionLine) {
-        subscriptionId =
-          subscriptionLine.parent.subscription_item_details.subscription;
-      }
-    }
-
-    console.log("📋 [STRIPE] Invoice details:", {
-      id: invoice.id,
-      customer: invoice.customer,
-      subscription: subscriptionId,
-      amount_paid: invoice.amount_paid,
-      currency: invoice.currency,
-      billing_reason: invoice.billing_reason,
-    });
-
+    // 1. Obtener subscriptionId
+    const subscriptionId = invoice.subscription;
     if (!subscriptionId) {
-      console.log("❌ [STRIPE] No subscription found in invoice");
-      console.log("🔍 [STRIPE] Invoice structure debug:", {
-        hasDirectSubscription: !!invoice.subscription,
-        hasParentSubscription:
-          !!invoice.parent?.subscription_details?.subscription,
-        parentType: invoice.parent?.type,
-        linesCount: invoice.lines?.data?.length || 0,
-        firstLineParent: invoice.lines?.data?.[0]?.parent?.type,
-      });
+      console.error("[STRIPE] No subscriptionId in invoice");
       return;
     }
 
-    // Get subscription details
-    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-
-    // Helper function to safely convert Stripe timestamp to ISO string
-    const convertStripeTimestamp = (timestamp) => {
-      if (!timestamp || typeof timestamp !== "number") {
-        console.warn("⚠️ [STRIPE] Invalid timestamp:", timestamp);
-        return new Date().toISOString(); // Fallback to current time
-      }
-
-      try {
-        const date = new Date(timestamp * 1000);
-        if (isNaN(date.getTime())) {
-          console.warn("⚠️ [STRIPE] Invalid date from timestamp:", timestamp);
-          return new Date().toISOString(); // Fallback to current time
-        }
-        return date.toISOString();
-      } catch (error) {
-        console.error("❌ [STRIPE] Error converting timestamp:", error);
-        return new Date().toISOString(); // Fallback to current time
-      }
-    };
-
-    // --- Lógica de búsqueda de usuario robusta (para ambos handlers) ---
-    let user = null;
-    let foundBy = null;
-    let stripeCustomerId = invoice?.customer || null;
+    // 2. Obtener la suscripción de Stripe para extraer el userId y plan
+    let subscription = null;
     let userIdFromMeta =
       invoice?.parent?.subscription_details?.metadata?.userId || null;
-    let email = invoice?.customer_email || null;
+    let planId = null;
 
-    // 1. Buscar por userId (metadata)
+    if (!userIdFromMeta) {
+      try {
+        subscription = await stripe.subscriptions.retrieve(subscriptionId);
+        userIdFromMeta = subscription?.metadata?.userId || null;
+        planId = subscription?.items?.data?.[0]?.plan?.id || null;
+      } catch (err) {
+        console.error("[STRIPE] Error fetching subscription for userId:", err);
+      }
+    }
+
+    // 3. Buscar usuario por userId, email o stripe_customer_id
+    let user = null;
+    let foundBy = null;
+    const email = invoice?.customer_email || null;
+    const stripeCustomerId = invoice?.customer || null;
+
     if (userIdFromMeta) {
-      const { data: userById } = await supabase
+      const { data } = await supabase
         .from("users")
         .select("*")
         .eq("id", userIdFromMeta)
-        .order("created_at", { ascending: false })
-        .limit(1);
-      if (userById) {
-        user = userById;
+        .single();
+      if (data) {
+        user = data;
         foundBy = "userId";
       }
     }
-    // 2. Buscar por email
     if (!user && email) {
-      const { data: userByEmail } = await supabase
+      const { data } = await supabase
         .from("users")
         .select("*")
         .eq("email", email)
-        .order("created_at", { ascending: false })
-        .limit(1);
-      if (userByEmail) {
-        user = userByEmail;
+        .single();
+      if (data) {
+        user = data;
         foundBy = "email";
       }
     }
-    // 3. Buscar por stripe_customer_id
     if (!user && stripeCustomerId) {
-      const { data: userByStripeId } = await supabase
+      const { data } = await supabase
         .from("users")
         .select("*")
         .eq("stripe_customer_id", stripeCustomerId)
-        .order("created_at", { ascending: false })
-        .limit(1);
-      if (userByStripeId) {
-        user = userByStripeId;
+        .single();
+      if (data) {
+        user = data;
         foundBy = "stripe_customer_id";
       }
     }
-    // Si no hay usuario, loguear y retornar
     if (!user) {
-      console.error("❌ [STRIPE] User not found for event", invoice?.id);
-      return;
-    }
-    // Si el stripe_customer_id no coincide, actualizarlo
-    if (stripeCustomerId && user.stripe_customer_id !== stripeCustomerId) {
-      await supabase
-        .from("users")
-        .update({
-          stripe_customer_id: stripeCustomerId,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", user.id);
-      console.log(
-        "✅ [STRIPE] Updated user stripe_customer_id for user:",
-        user.id
-      );
-    }
-
-    // Get the user subscription record
-    const { data: userSubscription, error: subscriptionError } = await supabase
-      .from("user_subscriptions")
-      .select("user_id, minutes_per_month, plan_id")
-      .eq("stripe_subscription_id", subscription.id)
-      .order("created_at", { ascending: false })
-      .limit(1);
-
-    if (subscriptionError || !userSubscription) {
       console.error(
-        "❌ [STRIPE] Error getting user subscription:",
-        subscriptionError
+        "❌ [STRIPE] User not found for event",
+        invoice?.id,
+        JSON.stringify(invoice, null, 2)
       );
       return;
     }
 
-    console.log("📦 [STRIPE] User subscription found:", {
-      userId: userSubscription.user_id,
-      minutesPerMonth: userSubscription.minutes_per_month,
-      planId: userSubscription.plan_id,
-    });
-
-    // Update subscription status
-    const { error: updateError } = await supabase
-      .from("user_subscriptions")
-      .update({
-        status: subscription.status,
-        current_period_start: convertStripeTimestamp(
-          subscription.current_period_start
-        ),
-        current_period_end: convertStripeTimestamp(
-          subscription.current_period_end
-        ),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("stripe_subscription_id", subscription.id);
-
-    if (updateError) {
-      console.error("❌ [STRIPE] Error updating subscription:", updateError);
-      return;
+    // 4. Si no tienes la suscripción, obténla aquí para el planId y status
+    if (!subscription) {
+      subscription = await stripe.subscriptions.retrieve(subscriptionId);
+      planId = subscription?.items?.data?.[0]?.plan?.id || null;
     }
 
-    console.log("✅ [STRIPE] Subscription updated for payment");
+    // 5. Upsert en user_subscriptions
+    await supabase.from("user_subscriptions").upsert(
+      {
+        user_id: user.id,
+        stripe_subscription_id: subscriptionId,
+        plan_id: planId,
+        status: subscription?.status || null,
+        // ...otros campos relevantes
+      },
+      { onConflict: "user_id" }
+    );
 
-    // Add minutes to user's account for monthly renewal
-    console.log("💰 [STRIPE] Adding minutes for monthly renewal...");
-
-    // Get current user minutes
-    const { data: currentUser, error: userError } = await supabase
-      .from("users")
-      .select("available_minutes")
-      .eq("id", userSubscription.user_id)
-      .order("created_at", { ascending: false })
-      .limit(1);
-
-    if (userError) {
-      console.error(
-        "❌ [STRIPE] Error getting current user minutes:",
-        userError
-      );
-      return;
-    }
-
-    const currentSeconds = currentUser.available_minutes || 0;
-    const minutesToAdd = userSubscription.minutes_per_month || 2500; // Default fallback
-    const secondsToAdd = minutesToAdd * 60; // Convert minutes to seconds
-    const newTotalSeconds = secondsToAdd; // Clear existing and set to new amount
-
-    console.log("💰 [STRIPE] Monthly renewal minutes calculation:", {
-      currentSeconds: currentSeconds,
-      addingMinutes: minutesPerMonth,
-      addingSeconds: secondsToAdd,
-      addingMinutes: minutesToAdd,
-      newTotalSeconds: newTotalSeconds,
-    });
-
-    // Update user's available minutes
-    const { error: updateMinutesError } = await supabase
+    // 6. Resetear créditos del usuario según el plan
+    const planCredits = await getPlanCredits(planId);
+    await supabase
       .from("users")
       .update({
-        available_minutes: newTotalSeconds,
-        available_call_credits: planCredits, // Usar directamente planCredits
+        available_call_credits: planCredits,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", userSubscription.user_id);
+      .eq("id", user.id);
 
-    if (updateMinutesError) {
-      console.error(
-        "❌ [STRIPE] Error updating user minutes for renewal:",
-        updateMinutesError
-      );
-      return;
-    }
-
-    console.log("✅ [STRIPE] Monthly renewal minutes added successfully:", {
-      userId: userSubscription.user_id,
-      previousSeconds: currentSeconds,
-      addedMinutes: minutesToAdd,
-      addedSeconds: secondsToAdd,
-      newTotalSeconds: newTotalSeconds,
-    });
-
-    // Sync referral data
-    await syncReferralData(userSubscription.user_id);
+    console.log(
+      "[STRIPE] Créditos reseteados para usuario",
+      user.id,
+      "a",
+      planCredits
+    );
   } catch (error) {
-    console.error("❌ [STRIPE] Error processing invoice payment:", error);
+    console.error("[STRIPE] Error in handleInvoicePaymentSucceeded:", error);
   }
 }
 // Handle invoice.payment_failed event
@@ -8368,4 +7979,18 @@ async function fetchCallPriceAsync(callSid, callUri) {
   console.warn(
     `⚠️ [TWILIO PRICE] No se pudo obtener precio después de ${MAX_RETRIES} intentos para CallSid: ${callSid}`
   );
+}
+async function getPlanCredits(planId) {
+  if (!planId) return 0;
+  // Supón que tienes una tabla subscription_plans con credits_per_month
+  const { data, error } = await supabase
+    .from("subscription_plans")
+    .select("credits_per_month")
+    .eq("id", planId)
+    .single();
+  if (error || !data) {
+    console.error("[STRIPE] Error fetching plan credits:", error);
+    return 0;
+  }
+  return data.credits_per_month || 0;
 }
