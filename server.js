@@ -6647,6 +6647,8 @@ async function handleCheckoutSessionCompleted(session, stripe) {
         updated_at: new Date().toISOString(),
       })
       .eq("id", user.id);
+    // Asegúrate de que user.stripe_customer_id esté actualizado en memoria
+    user.stripe_customer_id = session.customer;
 
     // 6. Actualizar o crear user_subscriptions
     if (session.subscription) {
@@ -6670,6 +6672,7 @@ async function handleCheckoutSessionCompleted(session, stripe) {
           stripe_subscription_id: session.subscription,
           plan_id: planUuid,
           status: subscription.status,
+          stripe_customer_id: user.stripe_customer_id || session.customer,
           // ...otros campos relevantes
         },
         { onConflict: "user_id" }
@@ -6811,6 +6814,15 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
       planUuid = planData?.id || null;
     }
 
+    // Antes del upsert, asegúrate de que user.stripe_customer_id esté actualizado
+    if (!user.stripe_customer_id && invoice.customer) {
+      await supabase
+        .from("users")
+        .update({ stripe_customer_id: invoice.customer })
+        .eq("id", user.id);
+      user.stripe_customer_id = invoice.customer;
+    }
+
     // 5. Upsert en user_subscriptions (solo si hay user y planUuid)
     if (user && planUuid) {
       const { data: upsertData, error: upsertError } = await supabase
@@ -6821,6 +6833,7 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
             stripe_subscription_id: subscriptionId,
             plan_id: planUuid,
             status: subscription?.status || null,
+            stripe_customer_id: user.stripe_customer_id || invoice.customer,
             // ... otros campos relevantes
           },
           { onConflict: "user_id" }
@@ -7474,7 +7487,6 @@ fastify.post("/twilio-recording-status", async (request, reply) => {
 // Función para limpiar grabaciones antiguas (más de 24 horas)
 // NOTA: Esta función se ha movido a Supabase para mejor rendimiento
 // Ver: supabase/migrations/20250106_add_recording_cleanup.sql
-
 // Endpoint para limpiar grabaciones antiguas manualmente
 fastify.post("/api/admin/cleanup-recordings", async (request, reply) => {
   try {
