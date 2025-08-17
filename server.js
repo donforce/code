@@ -2202,6 +2202,7 @@ fastify.post("/outbound-call", async (request, reply) => {
 
 // Your existing outbound-call-twiml endpoint
 fastify.all("/outbound-call-twiml", async (request, reply) => {
+  console.log("[DEBUG] /outbound-call-twiml params:", request.query);
   const {
     custom_llm_prompt,
     prompt,
@@ -2218,6 +2219,8 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     calendar_availability,
     calendar_timezone,
     user_voice_id,
+    agent_location,
+    agent_title,
   } = request.query;
 
   console.log(`🔊 [TWiML] Received user_voice_id: "${user_voice_id}"`);
@@ -2263,6 +2266,10 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
           <Parameter name="custom_llm_prompt" value="${escapeXml(
             custom_llm_prompt || ""
           )}" />
+          <Parameter name="agent_location" value="${escapeXml(
+            agent_location
+          )}" />
+          <Parameter name="agent_title" value="${escapeXml(agent_title)}" />
         </Stream>
       </Connect>
     </Response>`;
