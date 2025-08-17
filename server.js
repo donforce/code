@@ -2531,6 +2531,10 @@ fastify.register(async (fastifyInstance) => {
             const initialConfig = {
               type: "conversation_initiation_client_data",
               conversation_config_override: {
+                conversation: {
+                  input_language: "es",
+                  output_language: "es",
+                },
                 agent: {
                   agent_id: ELEVENLABS_AGENT_ID,
                 },
