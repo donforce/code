@@ -2392,7 +2392,7 @@ fastify.register(async (fastifyInstance) => {
       let maxConsecutiveDuplicates = 3; // Máximo de duplicados consecutivos permitidos
       let audioSequenceId = 0; // ID secuencial para tracking de chunks
       let lastProcessedSequence = -1; // Último sequence ID procesado
-      let audioChunkTimestamps = new Map(); // Timestamps de chunks para detectar duplicados temporales
+      let audioChunkTimestamps = new Map(); // Timestamps de chunks para detectar duplicados
       let duplicateDetectionWindow = 1000; // Ventana de 1 segundo para detectar duplicados
 
       ws.on("error", console.error);
@@ -6702,14 +6702,22 @@ async function handleCheckoutSessionCompleted(session, stripe) {
     console.error("[STRIPE] Error in handleCheckoutSessionCompleted:", error);
   }
 }
-
 // Handle invoice.payment_succeeded event
 async function handleInvoicePaymentSucceeded(invoice, stripe) {
   try {
     console.log("✅ [STRIPE] Processing invoice.payment_succeeded");
 
-    // 1. Obtener subscriptionId
-    const subscriptionId = invoice.subscription;
+    // 1. Obtener subscriptionId de varias rutas posibles
+    let subscriptionId = invoice.subscription;
+    if (!subscriptionId) {
+      // Opción 1: parent.subscription_details.subscription
+      subscriptionId = invoice?.parent?.subscription_details?.subscription;
+    }
+    if (!subscriptionId && invoice?.lines?.data?.length > 0) {
+      // Opción 2: lines.data[0].parent.subscription_item_details.subscription
+      subscriptionId =
+        invoice.lines.data[0]?.parent?.subscription_item_details?.subscription;
+    }
     if (!subscriptionId) {
       console.error("[STRIPE] No subscriptionId in invoice");
       return;
@@ -6803,18 +6811,36 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
       planUuid = planData?.id || null;
     }
 
-    await supabase.from("user_subscriptions").upsert(
-      {
-        user_id: user.id,
-        stripe_subscription_id: subscriptionId,
-        plan_id: planUuid,
-        status: subscription?.status || null,
-        // ... otros campos relevantes
-      },
-      { onConflict: "user_id" }
-    );
+    // 5. Upsert en user_subscriptions (solo si hay user y planUuid)
+    if (user && planUuid) {
+      const { data: upsertData, error: upsertError } = await supabase
+        .from("user_subscriptions")
+        .upsert(
+          {
+            user_id: user.id,
+            stripe_subscription_id: subscriptionId,
+            plan_id: planUuid,
+            status: subscription?.status || null,
+            // ... otros campos relevantes
+          },
+          { onConflict: "user_id" }
+        );
+      if (upsertError) {
+        console.error(
+          "[STRIPE] Error upserting user_subscriptions:",
+          upsertError
+        );
+      } else {
+        console.log("[STRIPE] user_subscriptions upserted:", upsertData);
+      }
+    } else {
+      console.warn(
+        "[STRIPE] No se pudo hacer upsert en user_subscriptions: falta user o planUuid",
+        { user: user?.id, planUuid }
+      );
+    }
 
-    // Resetear créditos del usuario según el plan
+    // 6. Resetear créditos del usuario según el plan
     const planCredits = await getPlanCredits(stripePriceId);
     await supabase
       .from("users")
@@ -7445,7 +7471,6 @@ fastify.post("/twilio-recording-status", async (request, reply) => {
     reply.code(500).send({ error: "Internal server error" });
   }
 });
-
 // Función para limpiar grabaciones antiguas (más de 24 horas)
 // NOTA: Esta función se ha movido a Supabase para mejor rendimiento
 // Ver: supabase/migrations/20250106_add_recording_cleanup.sql
