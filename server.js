@@ -547,21 +547,21 @@ async function processAllPendingQueues() {
         .from("call_queue")
         .select(
           `
-          id,
-          user_id,
-          lead_id,
-          queue_position,
-          status,
-          created_at,
-          priority,
-          scheduled_at,
-          lead:leads (
-            name,
-            phone,
+        id,
+        user_id,
+        lead_id,
+        queue_position,
+        status,
+        created_at,
+        priority,
+        scheduled_at,
+        lead:leads (
+          name,
+          phone,
             email,
             language
-          )
-        `
+        )
+      `
         )
         .eq("status", "pending")
         .or(`scheduled_at.lte.${new Date().toISOString()},scheduled_at.is.null`)
@@ -5130,7 +5130,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
               const { data: updatedLead, error: updateError } = await supabase
                 .from("leads")
                 .update({
-                  name: data.name,
+                  name: data.name.trim().split(" ")[0],
                   phone: data.phone,
                   auto_call: data.auto_call,
                   source: data.source,
@@ -5194,7 +5194,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                 .from("leads")
                 .insert({
                   user_id: userId,
-                  name: data.name,
+                  name: data.name.trim().split(" ")[0],
                   phone: data.phone,
                   email: data.email,
                   auto_call: data.auto_call,
@@ -6278,7 +6278,7 @@ async function analyzeTranscriptAndGenerateInsights(
         {
           role: "system",
           content: `Eres un asistente experto que analiza el RESULTADO FINAL de llamadas comerciales.
-
+        
         INSTRUCCIONES:
         1. Lee la transcripción completa
         2. Analiza los DATOS ADICIONALES (razón de fin, duración, etc.)
