@@ -4764,6 +4764,8 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       conversation_id: call.conversation_id,
       status: call.status,
       duration: call.duration,
+      lead_id: call.lead_id,
+      user_id: call.user_id,
     });
 
     // Update call with final data
@@ -5636,6 +5638,7 @@ async function checkForScheduledCall(webhookData, call) {
       // );
 
       // Get lead information
+      console.log("🔍 [CALENDAR] Lead ID from call:", call.lead_id);
       const { data: lead, error: leadError } = await supabase
         .from("leads")
         .select("name, phone, email")
