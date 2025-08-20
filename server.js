@@ -4968,6 +4968,28 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       console.error("❌ [METRICS] Error logging call metrics:", metricsError);
     }
 
+    // Check for scheduled call and create calendar event
+    try {
+      console.log(
+        "📅 [CALENDAR] Checking for scheduled call in webhook data..."
+      );
+      const scheduledCallInfo = await checkForScheduledCall(webhookData, call);
+
+      if (scheduledCallInfo) {
+        console.log(
+          "✅ [CALENDAR] Scheduled call detected, creating calendar event..."
+        );
+        await createCalendarEvent(scheduledCallInfo, call);
+      } else {
+        console.log("ℹ️ [CALENDAR] No scheduled call detected in webhook data");
+      }
+    } catch (calendarError) {
+      console.error(
+        "❌ [CALENDAR] Error processing calendar event:",
+        calendarError
+      );
+    }
+
     return reply.send({
       success: true,
       message: "Webhook processed successfully",
@@ -5715,6 +5737,12 @@ async function extractDateTimeFromSummary(summary) {
           /(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(january|february|march|april|may|june|july|august|september|october|november|december|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)/gi,
         type: "day_month",
       },
+      // Spanish format: "21 de agosto"
+      {
+        pattern:
+          /(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)/gi,
+        type: "day_month_spanish",
+      },
       { pattern: /(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/gi, type: "date_slash" },
       { pattern: /(\d{1,2})-(\d{1,2})(?:-(\d{2,4}))?/gi, type: "date_dash" },
     ];
@@ -5935,15 +5963,27 @@ function parseDateFromMatch(match, type) {
           .toString()
           .padStart(2, "0")}`;
 
-      case "date_slash":
-        const month3 = parseInt(match[1]);
-        const day3 = parseInt(match[2]);
-        const year3 = match[3] ? parseInt(match[3]) : currentYear;
-        if (month3 < 1 || month3 > 12 || day3 < 1 || day3 > 31) return null;
+      case "day_month_spanish":
+        const daySpanish = parseInt(match[1]);
+        const monthNameSpanish = match[2].toLowerCase();
+        const monthSpanish = getMonthNumber(monthNameSpanish);
+        if (monthSpanish === -1 || daySpanish < 1 || daySpanish > 31)
+          return null;
 
-        return `${year3}-${month3.toString().padStart(2, "0")}-${day3
+        return `${currentYear}-${monthSpanish
           .toString()
-          .padStart(2, "0")}`;
+          .padStart(2, "0")}-${daySpanish.toString().padStart(2, "0")}`;
+
+      case "date_slash":
+        const monthSlash = parseInt(match[1]);
+        const daySlash = parseInt(match[2]);
+        const yearSlash = match[3] ? parseInt(match[3]) : currentYear;
+        if (monthSlash < 1 || monthSlash > 12 || daySlash < 1 || daySlash > 31)
+          return null;
+
+        return `${yearSlash}-${monthSlash
+          .toString()
+          .padStart(2, "0")}-${daySlash.toString().padStart(2, "0")}`;
 
       case "date_dash":
         const month4 = parseInt(match[1]);
@@ -6086,6 +6126,7 @@ function getMonthNumber(monthName) {
 
   return monthMap[monthName.toLowerCase()] || -1;
 }
+
 // Function to create calendar event
 async function createCalendarEvent(scheduledCallInfo, call) {
   try {
