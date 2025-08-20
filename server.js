@@ -635,6 +635,7 @@ async function processAllPendingQueues() {
 
       // Get user data in single query for all users
       const userIds = [...new Set(availableItems.map((item) => item.user_id))];
+      console.log(`[Queue] User IDs to check:`, userIds);
 
       const { data: usersData, error: usersError } = await supabase
         .from("users")
@@ -648,6 +649,8 @@ async function processAllPendingQueues() {
         return;
       }
 
+      console.log(`[Queue] Users data found:`, usersData);
+
       // Create optimized user lookup map
       const usersMap = new Map(usersData?.map((user) => [user.id, user]) || []);
 
@@ -656,8 +659,16 @@ async function processAllPendingQueues() {
 
       for (const item of availableItems) {
         const user = usersMap.get(item.user_id);
+        console.log(`[Queue] Checking user ${item.user_id}:`, {
+          userFound: !!user,
+          availableCredits: user?.available_call_credits,
+          hasEnoughCredits: user?.available_call_credits >= 60,
+        });
 
         if (!user || user.available_call_credits < 60) {
+          console.log(
+            `[Queue] Skipping user ${item.user_id} - insufficient credits or user not found`
+          );
           continue; // Skip users with less than 60 credits
         }
 
@@ -667,11 +678,18 @@ async function processAllPendingQueues() {
         userQueues.get(item.user_id).push(item);
       }
 
+      console.log(`[Queue] User queues after credit validation:`, userQueues);
+
       // Calculate available slots
       const availableSlots =
         QUEUE_CONFIG.maxConcurrentCalls - globalActiveCalls.size;
 
+      console.log(
+        `[Queue] Available slots: ${availableSlots}, maxConcurrentCalls: ${QUEUE_CONFIG.maxConcurrentCalls}, globalActiveCalls: ${globalActiveCalls.size}`
+      );
+
       if (availableSlots <= 0) {
+        console.log(`[Queue] No available slots, skipping processing`);
         return;
       }
 
@@ -1407,6 +1425,7 @@ async function processQueueItem(queueItem, workerId = "unknown") {
     activeCalls++;
 
     // Check available credits before proceeding
+    console.log(`[DEBUG] Buscando usuario con ID: ${queueItem.user_id}`);
     const { data: userData, error: userError } = await supabase
       .from("users")
       .select(
@@ -1415,6 +1434,9 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       .eq("id", queueItem.user_id)
       .order("created_at", { ascending: false })
       .limit(1);
+
+    console.log(`[DEBUG] Resultado de consulta de usuario:`, userData);
+    console.log(`[DEBUG] Error de consulta de usuario:`, userError);
 
     if (userError) {
       console.error(
@@ -1855,7 +1877,17 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
       );
 
       console.log("[DEBUG] userData[0]", userData[0]);
+      console.log("[DEBUG] userData[0].location:", userData[0]?.location);
+      console.log(
+        "[DEBUG] userData[0].location type:",
+        typeof userData[0]?.location
+      );
+      console.log(
+        "[DEBUG] userData[0].location length:",
+        userData[0]?.location?.length
+      );
       const agentLocation = userData[0]?.location || "Florida";
+      console.log("[DEBUG] Final agentLocation:", agentLocation);
       const agentTitle = userData[0]?.title || "Agente Inmobiliario";
       // Traducción de agentTitle si idioma es inglés
       let agentTitleTranslated = agentTitle;
@@ -2820,6 +2852,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
               agent_name: initialConfig.dynamic_variables.agent_name,
               assistant_name: initialConfig.dynamic_variables.assistant_name,
               client_name: initialConfig.dynamic_variables.client_name,
+              agent_location: initialConfig.dynamic_variables.agent_location,
             });
 
             // Verificar que el WebSocket esté abierto antes de enviar
