@@ -1114,24 +1114,28 @@ async function getCalendarAvailabilitySummary(userId) {
       );
       return null;
     }
-    if (!calendarSettings) {
+    if (!calendarSettings || calendarSettings.length === 0) {
       console.log(
         `[Calendar][SUMMARY] ❌ No hay configuración de calendario para el usuario.`
       );
       return null;
     }
+
+    // Obtener la configuración más reciente (primer elemento del array)
+    const calendarConfig = calendarSettings[0];
+
     console.log(
       `[Calendar][SUMMARY] Configuración encontrada:`,
       calendarSettings
     );
 
-    if (!calendarSettings.calendar_enabled) {
+    if (!calendarConfig.calendar_enabled) {
       console.log(
         `[Calendar][SUMMARY] ⚠️ Calendario no habilitado para usuario ${userId}`
       );
       return null;
     }
-    if (!calendarSettings.access_token) {
+    if (!calendarConfig.access_token) {
       console.log(
         `[Calendar][SUMMARY] ❌ No hay token de acceso para usuario ${userId}`
       );
@@ -1144,7 +1148,7 @@ async function getCalendarAvailabilitySummary(userId) {
         `[Calendar][SUMMARY] Verificando validez del token de acceso...`
       );
       const tokenInfoResponse = await fetch(
-        `https://oauth2.googleapis.com/tokeninfo?access_token=${calendarSettings.access_token}`,
+        `https://oauth2.googleapis.com/tokeninfo?access_token=${calendarConfig.access_token}`,
         {
           method: "GET",
           headers: {
@@ -1163,8 +1167,8 @@ async function getCalendarAvailabilitySummary(userId) {
           process.env.GOOGLE_CLIENT_SECRET
         );
         oauth2Client.setCredentials({
-          access_token: calendarSettings.access_token,
-          refresh_token: calendarSettings.refresh_token,
+          access_token: calendarConfig.access_token,
+          refresh_token: calendarConfig.refresh_token,
         });
         const { credentials } = await oauth2Client.refreshAccessToken();
         if (credentials.access_token) {
@@ -1173,11 +1177,11 @@ async function getCalendarAvailabilitySummary(userId) {
             .update({
               access_token: credentials.access_token,
               refresh_token:
-                credentials.refresh_token || calendarSettings.refresh_token,
+                credentials.refresh_token || calendarConfig.refresh_token,
               updated_at: new Date().toISOString(),
             })
             .eq("user_id", userId);
-          calendarSettings.access_token = credentials.access_token;
+          calendarConfig.access_token = credentials.access_token;
           console.log(`[Calendar][SUMMARY] ✅ Token renovado correctamente.`);
         } else {
           console.log(`[Calendar][SUMMARY] ❌ No se pudo renovar el token.`);
@@ -1203,7 +1207,7 @@ async function getCalendarAvailabilitySummary(userId) {
         process.env.GOOGLE_CLIENT_SECRET
       );
       oauth2Client.setCredentials({
-        access_token: calendarSettings.access_token,
+        access_token: calendarConfig.access_token,
       });
       const calendar = google.calendar({ version: "v3", auth: oauth2Client });
       const now = new Date();
@@ -1225,7 +1229,7 @@ async function getCalendarAvailabilitySummary(userId) {
       // Procesar eventos y crear resumen detallado
       const summary = {
         userId: userId,
-        timezone: calendarSettings.calendar_timezone,
+        timezone: calendarConfig.calendar_timezone,
         period: {
           start: now.toISOString(),
           end: twoWeeksFromNow.toISOString(),
@@ -1258,12 +1262,12 @@ async function getCalendarAvailabilitySummary(userId) {
           startTime: start.toLocaleTimeString("es-ES", {
             hour: "2-digit",
             minute: "2-digit",
-            timeZone: calendarSettings.calendar_timezone,
+            timeZone: calendarConfig.calendar_timezone,
           }),
           endTime: end.toLocaleTimeString("es-ES", {
             hour: "2-digit",
             minute: "2-digit",
-            timeZone: calendarSettings.calendar_timezone,
+            timeZone: calendarConfig.calendar_timezone,
           }),
           duration: Math.round((end - start) / (1000 * 60)),
           isAllDay: !event.start.dateTime,
@@ -1282,7 +1286,7 @@ async function getCalendarAvailabilitySummary(userId) {
           year: "numeric",
           month: "long",
           day: "numeric",
-          timeZone: calendarSettings.calendar_timezone,
+          timeZone: calendarConfig.calendar_timezone,
         });
 
         if (daysWithEvents.has(dayKey)) {
@@ -1308,7 +1312,7 @@ async function getCalendarAvailabilitySummary(userId) {
             ),
             freeSlots: calculateFreeSlots(
               busySlots,
-              calendarSettings.calendar_timezone
+              calendarConfig.calendar_timezone
             ),
           };
         } else {
@@ -1714,6 +1718,28 @@ async function processQueueItem(queueItem, workerId = "unknown") {
               voiceSettingsError?.message || "No data found"
             }`
           );
+          // Buscar voz por defecto en variable de entorno
+          if (!selectedVoiceId && process.env.ELEVENLABS_DEFAULT_VOICE_ID) {
+            selectedVoiceId = process.env.ELEVENLABS_DEFAULT_VOICE_ID;
+            console.log(
+              `🔊 [VOICE] Using fallback default voice from env: ${selectedVoiceId}`
+            );
+          }
+          // Buscar en la base de datos la voz marcada como default
+          if (!selectedVoiceId) {
+            const { data: defaultVoice } = await supabase
+              .from("elevenlabs_voices")
+              .select("voice_id")
+              .eq("is_default_for_new_users", true)
+              .eq("is_active", true)
+              .maybeSingle();
+            if (defaultVoice?.voice_id) {
+              selectedVoiceId = defaultVoice.voice_id;
+              console.log(
+                `🔊 [VOICE] Using fallback default voice from DB: ${selectedVoiceId}`
+              );
+            }
+          }
         }
       } catch (voiceError) {
         console.log(
@@ -1730,6 +1756,10 @@ async function processQueueItem(queueItem, workerId = "unknown") {
 
       // Obtener preguntas personalizadas del usuario para custom_llm_extra_body
       let customLlmPrompt = null;
+
+      // Declarar idioma al principio para evitar errores de inicialización
+      let idioma = queueItem.lead.language || "es";
+
       try {
         const { data: questionsData, error: questionsError } = await supabase
           .from("agent_questions")
@@ -1780,7 +1810,6 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
       );
 
       console.log("[DEBUG] userData[0]", userData[0]);
-      let idioma = queueItem.lead.language || "es";
       const agentLocation = userData[0]?.location || "Florida";
       const agentTitle = userData[0]?.title || "Agente Inmobiliario";
       // Traducción de agentTitle si idioma es inglés
@@ -2614,12 +2643,15 @@ fastify.register(async (fastifyInstance) => {
               agent_location: customParameters?.agent_location,
               agent_title: customParameters?.agent_title,
             });
-            const idioma = customParameters?.language || "es";
-            console.log("🔍 [ELEVENLABS CONFIG] Custom language:", idioma);
+            const webhookLanguage = customParameters?.language || "es";
+            console.log(
+              "🔍 [ELEVENLABS CONFIG] Custom language:",
+              webhookLanguage
+            );
 
             // ... justo antes de armar initialConfig ...
             let promptOverride = undefined;
-            if (idioma === "en") {
+            if (webhookLanguage === "en") {
               promptOverride = `You are a professional assistant with a friendly, trustworthy, and persuasive tone, specialized in the real estate sector in {{agent_location}}. You should sound charming and always smile. You speak neutral English or Spanish and communicate clearly and effectively with clients interested in buying properties. Avoid sounding robotic; speak fluently and empathetically, as a real advisor would. Always call the client by their name. Under no circumstances repeat exactly the same phrases to the client during a call. Do not leave too much time for the client to respond; if there is a pause, continue. Use short sentences.
 Be careful with voicemail. If you detect a machine answering to leave a message or if there is no response after your greeting and a second attempt to connect, hang up. Keep the call as short as possible if the client does not respond.
 Important: If you are asked to leave a message after the tone or something similar, or if the phone number is repeated automatically, it is a machine and you should hang up. When you say you will end the call, end it. If it seems like a series of numbers has been listed, it is a voicemail. End the call no matter what.
@@ -2659,7 +2691,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
 `;
             }
             let firstMessage;
-            if (idioma === "en") {
+            if (webhookLanguage === "en") {
               firstMessage =
                 "Hello {{client_name}}, I am {{assistant_name}}, assistant to {{agent_name}}, {{agent_title}} in {{agent_location}}. How are you?";
             } else {
@@ -2673,7 +2705,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
               type: "conversation_initiation_client_data",
               conversation_config_override: {
                 agent: {
-                  language: idioma,
+                  language: webhookLanguage,
                   agent_id: ELEVENLABS_AGENT_ID,
                   first_message: firstMessage, // solo agrega esta línea
                   ...(promptOverride
@@ -2730,7 +2762,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                 agent_title:
                   customParameters?.agent_title || "Agente Inmobiliario",
                 agent_location: customParameters?.agent_location || "Florida",
-                conversation_language: idioma,
+                conversation_language: webhookLanguage,
               },
               usage: {
                 no_ip_reason: "user_ip_not_collected",
