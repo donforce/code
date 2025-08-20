@@ -5370,7 +5370,11 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                 })
                 .select();
 
+              console.log(`🔍 [API] Lead creado:`, newLead);
+              console.log(`🔍 [API] Lead ID:`, newLead?.id);
+
               if (insertError) {
+                console.error(`❌ [API] Error al crear lead:`, insertError);
                 return {
                   index,
                   success: false,
