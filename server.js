@@ -94,6 +94,31 @@ fastify.addContentTypeParser(
 
 const PORT = process.env.PORT || 8000;
 
+// Verificar variables de entorno críticas
+const requiredEnvVars = [
+  "SUPABASE_URL",
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "TWILIO_ACCOUNT_SID",
+  "TWILIO_AUTH_TOKEN",
+  "ELEVENLABS_API_KEY",
+  "ELEVENLABS_AGENT_ID",
+];
+
+const missingEnvVars = requiredEnvVars.filter(
+  (varName) => !process.env[varName]
+);
+if (missingEnvVars.length > 0) {
+  console.error("❌ [STARTUP] Variables de entorno faltantes:", missingEnvVars);
+  console.error(
+    "❌ [STARTUP] El servidor no puede iniciar sin estas variables"
+  );
+  process.exit(1);
+}
+
+console.log(
+  "✅ [STARTUP] Todas las variables de entorno críticas están definidas"
+);
+
 // Optimized metrics tracking - reduced frequency
 let startTime = performance.now();
 let totalCalls = 0;
