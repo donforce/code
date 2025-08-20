@@ -6076,7 +6076,7 @@ async function createCalendarEvent(scheduledCallInfo, call) {
       .order("created_at", { ascending: false })
       .limit(1);
 
-    if (settingsError || !calendarSettings) {
+    if (settingsError || !calendarSettings || calendarSettings.length === 0) {
       console.error(
         "❌ [CALENDAR] No calendar settings found for user:",
         call.user_id
@@ -6084,7 +6084,10 @@ async function createCalendarEvent(scheduledCallInfo, call) {
       return;
     }
 
-    if (!calendarSettings.calendar_enabled) {
+    // Obtener la configuración más reciente (primer elemento del array)
+    const calendarConfig = calendarSettings[0];
+
+    if (!calendarConfig.calendar_enabled) {
       console.log("ℹ️ [CALENDAR] Calendar not enabled for user:", call.user_id);
       return;
     }
@@ -6092,7 +6095,7 @@ async function createCalendarEvent(scheduledCallInfo, call) {
     // Verify and refresh token if needed
     try {
       const tokenInfoResponse = await fetch(
-        `https://oauth2.googleapis.com/tokeninfo?access_token=${calendarSettings.access_token}`,
+        `https://oauth2.googleapis.com/tokeninfo?access_token=${calendarConfig.access_token}`,
         {
           method: "GET",
           headers: {
@@ -6110,8 +6113,8 @@ async function createCalendarEvent(scheduledCallInfo, call) {
         );
 
         oauth2Client.setCredentials({
-          access_token: calendarSettings.access_token,
-          refresh_token: calendarSettings.refresh_token,
+          access_token: calendarConfig.access_token,
+          refresh_token: calendarConfig.refresh_token,
         });
 
         const { credentials } = await oauth2Client.refreshAccessToken();
@@ -6127,12 +6130,12 @@ async function createCalendarEvent(scheduledCallInfo, call) {
           .update({
             access_token: credentials.access_token,
             refresh_token:
-              credentials.refresh_token || calendarSettings.refresh_token,
+              credentials.refresh_token || calendarConfig.refresh_token,
             updated_at: new Date().toISOString(),
           })
           .eq("user_id", call.user_id);
 
-        calendarSettings.access_token = credentials.access_token;
+        calendarConfig.access_token = credentials.access_token;
         console.log("✅ [CALENDAR] Token refreshed successfully");
       }
     } catch (tokenError) {
@@ -6148,7 +6151,7 @@ async function createCalendarEvent(scheduledCallInfo, call) {
     );
 
     oauth2Client.setCredentials({
-      access_token: calendarSettings.access_token,
+      access_token: calendarConfig.access_token,
     });
 
     const calendar = google.calendar({ version: "v3", auth: oauth2Client });
@@ -6156,7 +6159,7 @@ async function createCalendarEvent(scheduledCallInfo, call) {
     // Get user timezone (default to America/New_York if not specified)
     const userTimeZone =
       scheduledCallInfo.timezone ||
-      calendarSettings.calendar_timezone ||
+      calendarConfig.calendar_timezone ||
       "America/New_York";
 
     console.log("🔍 [CALENDAR] User timezone:", userTimeZone);
