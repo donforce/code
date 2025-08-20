@@ -5120,6 +5120,10 @@ fastify.post("/api/integration/leads", async (request, reply) => {
         auto_call === 1 ||
         auto_call === "1";
 
+      console.log(
+        `🔍 [API] Lead ${i}: auto_call original: ${auto_call}, tipo: ${typeof auto_call}, normalizado: ${normalizedAutoCall}`
+      );
+
       // Validar campos requeridos
       if (!name || !phone || !email) {
         errors.push({
@@ -5339,6 +5343,9 @@ fastify.post("/api/integration/leads", async (request, reply) => {
               };
             } else {
               // Crear nuevo lead
+              console.log(
+                `🔍 [API] Creando nuevo lead con auto_call: ${data.auto_call}`
+              );
               const { data: newLead, error: insertError } = await supabase
                 .from("leads")
                 .insert({
