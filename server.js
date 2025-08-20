@@ -558,6 +558,9 @@ async function processAllPendingQueues() {
     return;
   }
 
+  console.log(
+    `[Queue] Starting queue processing check at ${new Date().toISOString()}`
+  );
   isProcessingQueue = true;
 
   try {
@@ -594,6 +597,23 @@ async function processAllPendingQueues() {
         .order("scheduled_at", { ascending: true, nullsFirst: true })
         .order("queue_position", { ascending: true })
         .limit(QUEUE_CONFIG.maxConcurrentCalls * 3);
+
+      console.log(
+        `[Queue] Found ${pendingQueues?.length || 0} pending queue items`
+      );
+      if (pendingQueues && pendingQueues.length > 0) {
+        console.log(
+          `[Queue] Queue items:`,
+          pendingQueues.map((q) => ({
+            id: q.id,
+            user_id: q.user_id,
+            lead_id: q.lead_id,
+            lead_name: q.lead?.name,
+            status: q.status,
+            queue_position: q.queue_position,
+          }))
+        );
+      }
 
       if (error) {
         console.error("[Queue] ❌ Error fetching pending queues:", error);
@@ -5234,6 +5254,9 @@ fastify.post("/api/integration/leads", async (request, reply) => {
 
               // NUEVO: Si auto_call es true, agregar a la cola si no está pendiente
               if (data.auto_call) {
+                console.log(
+                  `🔍 [API] Auto_call es true para lead existente ${existingLead.id}, verificando cola...`
+                );
                 // Buscar si ya está en la cola pendiente
                 const { data: queueItem, error: queueError } = await supabase
                   .from("call_queue")
@@ -5242,25 +5265,70 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                   .eq("lead_id", existingLead.id)
                   .eq("status", "pending")
                   .maybeSingle();
+
+                if (queueError) {
+                  console.error(
+                    `❌ [API] Error al verificar cola para lead ${existingLead.id}:`,
+                    queueError
+                  );
+                }
+
                 if (!queueItem) {
+                  console.log(
+                    `📋 [API] Lead ${existingLead.id} no está en cola, agregando...`
+                  );
                   // Obtener la última posición en la cola
-                  const { data: existingQueue } = await supabase
-                    .from("call_queue")
-                    .select("queue_position")
-                    .order("queue_position", { ascending: false })
-                    .limit(1);
+                  const { data: existingQueue, error: queueQueryError } =
+                    await supabase
+                      .from("call_queue")
+                      .select("queue_position")
+                      .order("queue_position", { ascending: false })
+                      .limit(1);
+
+                  if (queueQueryError) {
+                    console.error(
+                      `❌ [API] Error al consultar cola existente:`,
+                      queueQueryError
+                    );
+                  }
+
                   const nextPosition =
                     existingQueue && existingQueue.length > 0
                       ? (existingQueue[0]?.queue_position || 0) + 1
                       : 1;
-                  await supabase.from("call_queue").insert({
-                    user_id: userId,
-                    lead_id: existingLead.id,
-                    queue_position: nextPosition,
-                    status: "pending",
-                    created_at: new Date().toISOString(),
-                  });
+
+                  console.log(
+                    `📋 [API] Próxima posición en cola: ${nextPosition}`
+                  );
+
+                  const { data: queueInsertData, error: queueInsertError } =
+                    await supabase.from("call_queue").insert({
+                      user_id: userId,
+                      lead_id: existingLead.id,
+                      queue_position: nextPosition,
+                      status: "pending",
+                      created_at: new Date().toISOString(),
+                    });
+
+                  if (queueInsertError) {
+                    console.error(
+                      `❌ [API] Error al agregar lead ${existingLead.id} a la cola:`,
+                      queueInsertError
+                    );
+                  } else {
+                    console.log(
+                      `✅ [API] Lead ${existingLead.id} agregado a la cola en posición ${nextPosition}`
+                    );
+                  }
+                } else {
+                  console.log(
+                    `ℹ️ [API] Lead ${existingLead.id} ya está en cola pendiente`
+                  );
                 }
+              } else {
+                console.log(
+                  `ℹ️ [API] Auto_call es false para lead existente ${existingLead.id}, no se agrega a cola`
+                );
               }
 
               return {
@@ -5299,29 +5367,53 @@ fastify.post("/api/integration/leads", async (request, reply) => {
 
               // NUEVO: Si auto_call es true, agregar a la cola automáticamente
               if (data.auto_call) {
+                console.log(
+                  `🔍 [API] Auto_call es true para lead ${newLead.id}, agregando a cola...`
+                );
                 try {
                   // Obtener la última posición en la cola
-                  const { data: existingQueue } = await supabase
-                    .from("call_queue")
-                    .select("queue_position")
-                    .order("queue_position", { ascending: false })
-                    .limit(1);
+                  const { data: existingQueue, error: queueQueryError } =
+                    await supabase
+                      .from("call_queue")
+                      .select("queue_position")
+                      .order("queue_position", { ascending: false })
+                      .limit(1);
+
+                  if (queueQueryError) {
+                    console.error(
+                      `❌ [API] Error al consultar cola existente:`,
+                      queueQueryError
+                    );
+                  }
+
                   const nextPosition =
                     existingQueue && existingQueue.length > 0
                       ? (existingQueue[0]?.queue_position || 0) + 1
                       : 1;
 
-                  await supabase.from("call_queue").insert({
-                    user_id: userId,
-                    lead_id: newLead.id,
-                    queue_position: nextPosition,
-                    status: "pending",
-                    created_at: new Date().toISOString(),
-                  });
-
                   console.log(
-                    `✅ [API] Lead ${newLead.id} agregado automáticamente a la cola de llamadas`
+                    `📋 [API] Próxima posición en cola: ${nextPosition}`
                   );
+
+                  const { data: queueInsertData, error: queueInsertError } =
+                    await supabase.from("call_queue").insert({
+                      user_id: userId,
+                      lead_id: newLead.id,
+                      queue_position: nextPosition,
+                      status: "pending",
+                      created_at: new Date().toISOString(),
+                    });
+
+                  if (queueInsertError) {
+                    console.error(
+                      `❌ [API] Error al agregar lead ${newLead.id} a la cola:`,
+                      queueInsertError
+                    );
+                  } else {
+                    console.log(
+                      `✅ [API] Lead ${newLead.id} agregado automáticamente a la cola de llamadas en posición ${nextPosition}`
+                    );
+                  }
                 } catch (queueError) {
                   console.error(
                     `❌ [API] Error al agregar lead ${newLead.id} a la cola:`,
@@ -5329,6 +5421,10 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                   );
                   // No fallamos la creación del lead por un error en la cola
                 }
+              } else {
+                console.log(
+                  `ℹ️ [API] Auto_call es false para lead ${newLead.id}, no se agrega a cola`
+                );
               }
 
               return {
