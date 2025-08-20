@@ -6534,7 +6534,7 @@ async function analyzeTranscriptAndGenerateInsights(
         1. Lee la transcripción completa
         2. Analiza los DATOS ADICIONALES (razón de fin, duración, etc.)
         3. Determina el RESULTADO FINAL basado en lo que REALMENTE PASÓ
-        4. Genera un resumen CONCISO que incluya las respuestas a las preguntas enviadas (máximo 150 palabras)
+        4. Genera un resumen CONCISO que incluya las respuestas a las preguntas enviadas (máximo 250 palabras)
         5. Sugiere el próximo paso comercial (máximo 50 palabras)
         
         IMPORTANTE PARA EL RESUMEN:
@@ -8293,6 +8293,180 @@ async function fetchCallPriceAsync(callSid, callUri) {
   console.warn(
     `⚠️ [TWILIO PRICE] No se pudo obtener precio después de ${MAX_RETRIES} intentos para CallSid: ${callSid}`
   );
+
+  // 🔥 FALLBACK: Usar tarifa más alta para calcular créditos cuando no se puede obtener precio
+  try {
+    console.log(
+      `🔄 [TWILIO PRICE] Aplicando fallback con tarifa más alta para CallSid: ${callSid}`
+    );
+
+    // Obtener duración mínima de la llamada (1 minuto mínimo)
+    const { data: callRecord, error: callError } = await supabase
+      .from("calls")
+      .select("duration, to_country")
+      .eq("call_sid", callSid)
+      .limit(1);
+
+    if (callError || !callRecord || callRecord.length === 0) {
+      console.error(
+        `❌ [TWILIO PRICE] Error obteniendo duración para fallback CallSid ${callSid}:`,
+        callError
+      );
+      return;
+    }
+
+    const callDuration = parseInt(callRecord[0]?.duration || "60", 10); // Mínimo 1 minuto
+    const minutesRounded = Math.max(1, Math.ceil(callDuration / 60)); // Mínimo 1 minuto
+    const countryCode = callRecord[0]?.to_country || "US"; // Default a US si no hay país
+
+    console.log(
+      `📊 [TWILIO PRICE] Fallback - Duración: ${callDuration}s, Minutos: ${minutesRounded}, País: ${countryCode}`
+    );
+
+    // Obtener la tarifa más alta disponible
+    const { data: allPricing, error: pricingError } = await supabase
+      .from("country_call_pricing")
+      .select("*")
+      .order("price_per_credit", { ascending: false })
+      .limit(1);
+
+    if (pricingError || !allPricing || allPricing.length === 0) {
+      console.error(
+        `❌ [TWILIO PRICE] Error obteniendo tarifa más alta para fallback:`,
+        pricingError
+      );
+      return;
+    }
+
+    const highestTariff = allPricing[0];
+    const totalCredits = Math.ceil(
+      minutesRounded * highestTariff.price_per_credit
+    );
+
+    console.log(`🎯 [TWILIO PRICE] Fallback - Usando tarifa más alta:`, {
+      country: highestTariff.country_code,
+      pricePerCredit: highestTariff.price_per_credit,
+      minutes: minutesRounded,
+      totalCredits: totalCredits,
+    });
+
+    // Actualizar la base de datos con el fallback
+    const updateData = {
+      call_price: null, // No se pudo obtener precio real
+      call_price_unit: "USD",
+      call_price_per_minute: highestTariff.price_per_credit,
+      call_duration_minutes: minutesRounded,
+      call_credits_cost: totalCredits,
+      call_pricing_id: highestTariff.id,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error: updateError } = await supabase
+      .from("calls")
+      .update(updateData)
+      .eq("call_sid", callSid);
+
+    if (updateError) {
+      console.error(
+        `❌ [TWILIO PRICE] Error actualizando BD con fallback para CallSid ${callSid}:`,
+        updateError
+      );
+      return;
+    }
+
+    console.log(
+      `✅ [TWILIO PRICE] Fallback guardado para CallSid ${callSid}:`,
+      updateData
+    );
+
+    // 🔥 DEDUCIR CRÉDITOS DEL USUARIO CON FALLBACK
+    try {
+      // Obtener el user_id de la llamada
+      const { data: callData, error: callError } = await supabase
+        .from("calls")
+        .select("user_id")
+        .eq("call_sid", callSid)
+        .limit(1);
+
+      if (callError) {
+        console.error(
+          `❌ [TWILIO PRICE] Error obteniendo user_id para fallback CallSid ${callSid}:`,
+          callError
+        );
+        return;
+      }
+
+      if (callData && callData[0]?.user_id) {
+        const userId = callData[0].user_id;
+
+        // Obtener créditos actuales del usuario
+        const { data: userData, error: userError } = await supabase
+          .from("users")
+          .select("available_call_credits")
+          .eq("id", userId)
+          .limit(1);
+
+        if (userError) {
+          console.error(
+            `❌ [TWILIO PRICE] Error obteniendo créditos del usuario ${userId} para fallback:`,
+            userError
+          );
+          return;
+        }
+
+        if (userData) {
+          const currentCredits = userData[0]?.available_call_credits || 0;
+          const newCredits = Math.max(0, currentCredits - totalCredits);
+
+          console.log(
+            `🔄 [TWILIO PRICE] Deduciendo créditos con fallback para usuario ${userId}:`,
+            {
+              callSid,
+              totalCredits,
+              before: currentCredits,
+              after: newCredits,
+              deducted: currentCredits - newCredits,
+              method: "fallback_highest_tariff",
+            }
+          );
+
+          // Actualizar créditos del usuario
+          const { error: creditUpdateError } = await supabase
+            .from("users")
+            .update({
+              available_call_credits: newCredits,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", userId);
+
+          if (creditUpdateError) {
+            console.error(
+              `❌ [TWILIO PRICE] Error actualizando créditos del usuario ${userId} con fallback:`,
+              creditUpdateError
+            );
+          } else {
+            console.log(
+              `✅ [TWILIO PRICE] Créditos deducidos exitosamente con fallback para usuario ${userId}: ${totalCredits} créditos`
+            );
+          }
+        }
+      } else {
+        console.warn(
+          `⚠️ [TWILIO PRICE] No se encontró user_id para fallback CallSid ${callSid}`
+        );
+      }
+    } catch (fallbackDeductionError) {
+      console.error(
+        `❌ [TWILIO PRICE] Error durante la deducción de créditos con fallback para CallSid ${callSid}:`,
+        fallbackDeductionError
+      );
+    }
+  } catch (fallbackError) {
+    console.error(
+      `❌ [TWILIO PRICE] Error general en fallback para CallSid ${callSid}:`,
+      fallbackError
+    );
+  }
 }
 async function getPlanCredits(stripePriceId) {
   if (!stripePriceId) return 0;
