@@ -5080,6 +5080,9 @@ fastify.post("/api/integration/leads", async (request, reply) => {
 
     // Obtener datos del body
     const body = request.body;
+    console.log("🔍 [API] Body recibido:", JSON.stringify(body, null, 2));
+    console.log("🔍 [API] Tipo de body:", typeof body);
+    console.log("🔍 [API] Es array:", Array.isArray(body));
 
     // Verificar si es un array (creación masiva) o un objeto (creación individual)
     const isBulkOperation = Array.isArray(body);
@@ -5100,6 +5103,10 @@ fastify.post("/api/integration/leads", async (request, reply) => {
 
     for (let i = 0; i < leadsData.length; i++) {
       const leadData = leadsData[i];
+      console.log(
+        `🔍 [API] Lead ${i} data:`,
+        JSON.stringify(leadData, null, 2)
+      );
       const {
         name,
         phone,
