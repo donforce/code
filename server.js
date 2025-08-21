@@ -553,8 +553,11 @@ let isProcessingQueue = false;
 
 // Optimized queue processing with minimal logging
 async function processAllPendingQueues() {
-  // Mutex: evitar procesamiento simultáneo
+  // Mutex: evitar procesamiento simultáneo (timeout de 30 segundos)
   if (isProcessingQueue) {
+    console.log(
+      `[Queue] Skipping - already processing (${new Date().toISOString()})`
+    );
     return;
   }
 
@@ -562,6 +565,14 @@ async function processAllPendingQueues() {
     `[Queue] Starting queue processing check at ${new Date().toISOString()}`
   );
   isProcessingQueue = true;
+
+  // Timeout de seguridad para liberar el mutex
+  const mutexTimeout = setTimeout(() => {
+    console.warn(
+      `[Queue] ⚠️ Mutex timeout - forcing release at ${new Date().toISOString()}`
+    );
+    isProcessingQueue = false;
+  }, 30000); // 30 segundos máximo
 
   try {
     try {
@@ -796,11 +807,16 @@ async function processAllPendingQueues() {
             processingQueueItems.delete(item.id);
           });
       });
+
+      console.log(
+        `[Queue] ✅ Queue processing completed - ${itemsToProcess.length} items queued for execution`
+      );
     } catch (error) {
       console.error("[Queue] ❌ Error in queue processing:", error);
     }
   } finally {
-    // Liberar el mutex
+    // Limpiar timeout y liberar el mutex
+    clearTimeout(mutexTimeout);
     isProcessingQueue = false;
   }
 }
@@ -5386,7 +5402,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
               console.log(
                 `🔍 [API] Creando nuevo lead con auto_call: ${data.auto_call}`
               );
-              const { data: newLead, error: insertError } = await supabase
+              const { data: newLeadData, error: insertError } = await supabase
                 .from("leads")
                 .insert({
                   user_id: userId,
@@ -5403,8 +5419,8 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                 })
                 .select();
 
-              console.log(`🔍 [API] Lead creado:`, newLead);
-              console.log(`🔍 [API] Lead ID:`, newLead?.id);
+              console.log(`🔍 [API] Lead creado:`, newLeadData);
+              console.log(`🔍 [API] Lead ID:`, newLeadData?.[0]?.id);
 
               if (insertError) {
                 console.error(`❌ [API] Error al crear lead:`, insertError);
@@ -5415,6 +5431,20 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                   details: insertError.message,
                 };
               }
+
+              if (!newLeadData || newLeadData.length === 0) {
+                console.error(
+                  `❌ [API] No se pudo obtener el ID del lead creado`
+                );
+                return {
+                  index,
+                  success: false,
+                  error: "No se pudo obtener el ID del lead creado",
+                };
+              }
+
+              const newLead = newLeadData[0];
+              console.log(`🔍 [API] Lead ID extraído:`, newLead.id);
 
               // NUEVO: Si auto_call es true, agregar a la cola automáticamente
               if (data.auto_call) {
@@ -5637,6 +5667,58 @@ fastify.get("/api/integration/leads", async (request, reply) => {
       error: "Error interno del servidor",
       message: "Error inesperado al obtener leads",
     });
+  }
+});
+
+// Endpoint para obtener estado de la cola
+fastify.get("/api/queue-status", async (request, reply) => {
+  try {
+    const { data: pendingCount, error: pendingError } = await supabase
+      .from("call_queue")
+      .select("id", { count: "exact" })
+      .eq("status", "pending");
+
+    const { data: inProgressCount, error: inProgressError } = await supabase
+      .from("call_queue")
+      .select("id", { count: "exact" })
+      .eq("status", "in_progress");
+
+    if (pendingError || inProgressError) {
+      throw new Error("Error fetching queue status");
+    }
+
+    // Obtener estadísticas detalladas de usuarios activos
+    const userStats = [];
+    for (const [userId, activeCalls] of userActiveCalls) {
+      if (activeCalls > 0) {
+        userStats.push({
+          user_id: userId,
+          active_calls: activeCalls,
+          max_calls_per_user: QUEUE_CONFIG.maxCallsPerUser,
+        });
+      }
+    }
+
+    return {
+      pending: pendingCount || 0,
+      in_progress: inProgressCount || 0,
+      active_calls: globalActiveCalls.size,
+      max_concurrent: QUEUE_CONFIG.maxConcurrentCalls,
+      is_processing: isProcessingQueue,
+      processing_items: processingQueueItems.size,
+      worker_pool_size: workerPool.size,
+      user_stats: userStats,
+      queue_config: {
+        max_concurrent_calls: QUEUE_CONFIG.maxConcurrentCalls,
+        max_calls_per_user: QUEUE_CONFIG.maxCallsPerUser,
+        queue_check_interval: QUEUE_CONFIG.queueCheckInterval,
+        retry_attempts: QUEUE_CONFIG.retryAttempts,
+        retry_delay: QUEUE_CONFIG.retryDelay,
+      },
+      last_check: new Date().toISOString(),
+    };
+  } catch (error) {
+    reply.code(500).send({ error: error.message });
   }
 });
 
@@ -7986,6 +8068,65 @@ async function fetchCallPriceAsync(callSid, callUri) {
   const MAX_RETRIES = 50;
   const RETRY_DELAY = 5000; // 5 segundos
 
+  // 🔍 Verificar duración de la llamada antes de procesar
+  try {
+    const { data: callRecord, error: callError } = await supabase
+      .from("calls")
+      .select("duration")
+      .eq("call_sid", callSid)
+      .limit(1);
+
+    if (callError) {
+      console.error(
+        `❌ [TWILIO PRICE] Error obteniendo duración para CallSid ${callSid}:`,
+        callError
+      );
+      return;
+    }
+
+    if (!callRecord || callRecord.length === 0) {
+      console.warn(
+        `⚠️ [TWILIO PRICE] No se encontró registro de llamada para CallSid ${callSid}`
+      );
+      return;
+    }
+
+    const callDuration = parseInt(callRecord[0]?.duration || "0", 10);
+
+    // 🚫 No procesar llamadas de menos de 5 segundos
+    if (callDuration < 5) {
+      console.log(
+        `⏱️ [TWILIO PRICE] Llamada de ${callDuration} segundos (< 5s) - No se procesa precio ni se descuentan créditos para CallSid: ${callSid}`
+      );
+
+      // Marcar la llamada como no cobrable
+      await supabase
+        .from("calls")
+        .update({
+          call_price: 0,
+          call_price_unit: "USD",
+          call_price_per_minute: 0,
+          call_duration_minutes: 0,
+          call_credits_cost: 0,
+          call_pricing_id: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("call_sid", callSid);
+
+      return;
+    }
+
+    console.log(
+      `✅ [TWILIO PRICE] Llamada de ${callDuration} segundos (≥ 5s) - Procesando precio para CallSid: ${callSid}`
+    );
+  } catch (durationError) {
+    console.error(
+      `❌ [TWILIO PRICE] Error verificando duración para CallSid ${callSid}:`,
+      durationError
+    );
+    return;
+  }
+
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       console.log(
@@ -8316,6 +8457,15 @@ async function fetchCallPriceAsync(callSid, callUri) {
     }
 
     const callDuration = parseInt(callRecord[0]?.duration || "60", 10); // Mínimo 1 minuto
+
+    // 🚫 No procesar fallback para llamadas de menos de 5 segundos
+    if (callDuration < 5) {
+      console.log(
+        `⏱️ [TWILIO PRICE] Fallback - Llamada de ${callDuration} segundos (< 5s) - No se procesa fallback para CallSid: ${callSid}`
+      );
+      return;
+    }
+
     const minutesRounded = Math.max(1, Math.ceil(callDuration / 60)); // Mínimo 1 minuto
     const countryCode = callRecord[0]?.to_country || "US"; // Default a US si no hay país
 
