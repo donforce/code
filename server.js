@@ -2155,6 +2155,13 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
     });
 
     // Register the call
+    console.log(`[Queue] Worker ${workerId} - Registering call in database:`, {
+      callSid: call.sid,
+      userId: queueItem.user_id,
+      leadId: queueItem.lead_id,
+      queueId: queueItem.id,
+    });
+
     const { error: callError } = await supabase.from("calls").insert({
       lead_id: queueItem.lead_id,
       user_id: queueItem.user_id,
@@ -4244,12 +4251,39 @@ fastify.post("/twilio-status", async (request, reply) => {
     // First, let's check if the call exists in the database
     console.log(`[TWILIO STATUS] Looking for call with call_sid: ${callSid}`);
 
-    const { data: existingCall, error: checkError } = await supabase
+    // Try exact match first
+    let { data: existingCall, error: checkError } = await supabase
       .from("calls")
       .select("*")
       .eq("call_sid", callSid)
       .order("created_at", { ascending: false })
       .limit(1);
+
+    // If not found, try case-insensitive search
+    if (!existingCall || existingCall.length === 0) {
+      console.log(
+        `[TWILIO STATUS] Call not found with exact match, trying case-insensitive search`
+      );
+
+      const { data: caseInsensitiveCall, error: caseError } = await supabase
+        .from("calls")
+        .select("*")
+        .ilike("call_sid", callSid)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (caseInsensitiveCall && caseInsensitiveCall.length > 0) {
+        console.log(
+          `[TWILIO STATUS] Found call with case-insensitive search:`,
+          {
+            callSid: callSid,
+            foundCallSid: caseInsensitiveCall[0].call_sid,
+            match: callSid === caseInsensitiveCall[0].call_sid,
+          }
+        );
+        existingCall = caseInsensitiveCall;
+      }
+    }
 
     if (checkError) {
       console.error(
