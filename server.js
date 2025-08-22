@@ -2531,63 +2531,31 @@ fastify.register(async (fastifyInstance) => {
         return hash.toString();
       };
 
-      // 🆕 FUNCIÓN PARA VERIFICAR SI UN CHUNK ES DUPLICADO
+      // 🆕 FUNCIÓN SIMPLIFICADA PARA VERIFICAR SI UN CHUNK ES DUPLICADO
       const isDuplicateAudioChunk = (audioChunk) => {
-        const now = Date.now();
-        const audioHash = generateAudioHash(audioChunk);
-
-        // Verificar si ya existe en el Set
+        // Verificación simplificada para reducir latencia
         if (sentAudioChunks.has(audioChunk)) {
           return true;
         }
 
-        // Verificar si el hash es igual al anterior
+        // Solo verificar hash básico para duplicados consecutivos
+        const audioHash = generateAudioHash(audioChunk);
         if (lastAudioHash === audioHash) {
-          consecutiveDuplicates++;
-          if (consecutiveDuplicates > maxConsecutiveDuplicates) {
-            console.log(
-              `[Audio] Too many consecutive duplicates (${consecutiveDuplicates}), skipping`
-            );
-            return true;
-          }
-        } else {
-          consecutiveDuplicates = 0;
-        }
-
-        // Verificar duplicados temporales (mismo audio en ventana de tiempo)
-        const existingTimestamp = audioChunkTimestamps.get(audioHash);
-        if (
-          existingTimestamp &&
-          now - existingTimestamp < duplicateDetectionWindow
-        ) {
-          console.log(`[Audio] Temporal duplicate detected, skipping`);
           return true;
         }
 
-        // Actualizar tracking
         lastAudioHash = audioHash;
-        audioChunkTimestamps.set(audioHash, now);
-
-        // Limpiar timestamps antiguos
-        for (const [hash, timestamp] of audioChunkTimestamps.entries()) {
-          if (now - timestamp > duplicateDetectionWindow) {
-            audioChunkTimestamps.delete(hash);
-          }
-        }
-
         return false;
       };
 
-      // 🆕 FUNCIÓN PARA LIMPIAR ESTADO DE AUDIO
+      // 🆕 FUNCIÓN SIMPLIFICADA PARA LIMPIAR ESTADO DE AUDIO
       const clearAudioState = () => {
         sentAudioChunks.clear();
         audioChunkCounter = 0;
         audioBuffer = [];
         lastAudioHash = null;
-        consecutiveDuplicates = 0;
         audioSequenceId = 0;
         lastProcessedSequence = -1;
-        audioChunkTimestamps.clear();
 
         if (bufferTimeout) {
           clearTimeout(bufferTimeout);
@@ -2658,8 +2626,8 @@ fastify.register(async (fastifyInstance) => {
         }
       };
 
-      // Verificar silencios cada 2 segundos
-      const silenceCheckInterval = setInterval(checkForLongSilence, 1000); // 🚀 ULTRA RÁPIDO: Verificación cada segundo (reducido de 5000ms a 1000ms)
+      // Verificar silencios cada 5 segundos (reducido para menos interferencia)
+      const silenceCheckInterval = setInterval(checkForLongSilence, 5000);
 
       const sendClearToTwilio = (streamSid) => {
         if (streamSid) {
@@ -2679,7 +2647,7 @@ fastify.register(async (fastifyInstance) => {
           audioBuffer.length > 0 &&
           elevenLabsConnections.get(callSid)?.readyState === WebSocket.OPEN
         ) {
-          // Enviar todos los chunks del buffer
+          // Enviar todos los chunks del buffer inmediatamente
           audioBuffer.forEach((chunk) => {
             elevenLabsConnections.get(callSid)?.send(
               JSON.stringify({
@@ -2689,11 +2657,7 @@ fastify.register(async (fastifyInstance) => {
             );
           });
 
-          // console.log(
-          //   `[Audio] Sent ${audioBuffer.length} buffered chunks to ElevenLabs`
-          // );
-
-          // Limpiar buffer
+          // Limpiar buffer inmediatamente
           audioBuffer = [];
           bufferTimeout = null;
         }
@@ -2822,17 +2786,17 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                 processing_config: {
                   enable_streaming: true, // Habilitar streaming para respuestas más rápidas
                   enable_early_termination: true, // Terminación temprana para respuestas más ágiles
-                  response_delay_threshold: 0.2, // 🚀 ULTRA RÁPIDO: 0.2 segundos para respuesta inmediata
+                  response_delay_threshold: 0.1, // 🚀 ULTRA RÁPIDO: 0.1 segundos para respuesta inmediata
                   enable_realtime_processing: true, // Procesamiento en tiempo real
                   enable_instant_response: true, // Respuesta instantánea
                 },
 
                 interruption_settings: {
                   enabled: true,
-                  sensitivity: "high", // 🚀 ULTRA RÁPIDO: Alta sensibilidad para detección inmediata
-                  min_duration: 0.2, // 🚀 ULTRA RÁPIDO: 0.2 segundos para detección instantánea del fin de habla
-                  max_duration: 1.0, // 🚀 ULTRA RÁPIDO: 1 segundo máximo para respuestas ultra rápidas
-                  cooldown_period: 0.3, // 🚀 ULTRA RÁPIDO: 0.3 segundos de cooldown para reactividad máxima
+                  sensitivity: "ultra_high", // 🚀 ULTRA RÁPIDO: Sensibilidad ultra alta para detección inmediata
+                  min_duration: 0.1, // 🚀 ULTRA RÁPIDO: 0.1 segundos para detección instantánea del fin de habla
+                  max_duration: 0.5, // 🚀 ULTRA RÁPIDO: 0.5 segundos máximo para respuestas ultra rápidas
+                  cooldown_period: 0.1, // 🚀 ULTRA RÁPIDO: 0.1 segundos de cooldown para reactividad máxima
                 },
               },
               dynamic_variables: {
@@ -3059,13 +3023,16 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                       "🚨 [INTERRUPTION] Interruption event received"
                     );
                     interrupted = true;
-                    // 🆕 MEJORADO: Limpiar estado completo durante interrupciones
-                    clearAudioState();
+                    // 🆕 OPTIMIZADO: Limpieza rápida durante interrupciones
+                    audioBuffer = [];
+                    if (bufferTimeout) {
+                      clearTimeout(bufferTimeout);
+                      bufferTimeout = null;
+                    }
                     // Solo enviar clear si no estamos en modo de detección de buzón de voz
                     if (!isVoicemailDetectionMode) {
                       sendClearToTwilio(streamSid);
                       interrupted = false;
-                      // Resetear el buffer
                     }
                     break;
 
@@ -3248,7 +3215,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                           ws.close();
                         }
                       }
-                    }, 100); // Delay de 1 segundo para evitar falsos positivos
+                    }, 50); // Delay reducido a 50ms para respuesta más rápida
                     break;
 
                   case "conversation_summary":
