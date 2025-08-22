@@ -4658,6 +4658,29 @@ fastify.post("/twilio-status", async (request, reply) => {
       }
     }
 
+    // Release worker after call completion (this is the main worker release point)
+    const twilioCallInfo = globalActiveCalls.get(callSid);
+    if (twilioCallInfo && twilioCallInfo.workerId) {
+      const released = releaseWorker(
+        twilioCallInfo.workerId,
+        "twilio_status_complete"
+      );
+      if (released) {
+        globalActiveCalls.delete(callSid);
+        console.log(
+          `[Queue] ✅ Worker ${twilioCallInfo.workerId} successfully released after Twilio status update`
+        );
+      }
+    } else {
+      console.log(
+        `[Queue] ⚠️ No worker found for call ${callSid} in globalActiveCalls`,
+        {
+          globalActiveCallsKeys: Array.from(globalActiveCalls.keys()),
+          callSid: callSid,
+        }
+      );
+    }
+
     // Run async webhook/meta events after updating call status
     sendCallCompletionData(supabase, callSid);
     // Return 200 OK with empty response as Twilio expects
@@ -4875,43 +4898,57 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
 
     console.log("🎯 [ELEVENLABS] Processing post call transcription event");
 
-    // Get call data - First try to find by conversation_id, then by call_sid if needed
+    // Get call data - Only search by conversation_id if it exists
     console.log(
-      "🔍 [ELEVENLABS] Searching for call with conversation_id:",
+      "🔍 [ELEVENLABS] Processing webhook with conversation_id:",
       conversation_id
     );
 
-    let { data: call, error: callError } = await supabase
-      .from("calls")
-      .select("*, call_sid")
-      .eq("conversation_id", conversation_id)
-      .order("created_at", { ascending: false })
-      .limit(1);
+    let { data: call, error: callError } = null;
 
-    // If not found by conversation_id, try to find the most recent call in progress
-    if (!call || call.length === 0) {
+    if (conversation_id) {
+      // Only search by conversation_id if it exists (successful calls)
       console.log(
-        "🔍 [ELEVENLABS] Call not found by conversation_id, searching for recent in-progress call..."
+        "🔍 [ELEVENLABS] Searching for call with conversation_id:",
+        conversation_id
       );
 
-      // Find the most recent call that is in progress and has no conversation_id
-      const { data: recentCall, error: recentCallError } = await supabase
-        .from("calls")
-        .select("*, call_sid")
-        .eq("status", "In Progress")
-        .is("conversation_id", null)
-        .order("created_at", { ascending: false })
-        .limit(1);
+      const { data: callByConversation, error: callByConversationError } =
+        await supabase
+          .from("calls")
+          .select("*, call_sid")
+          .eq("conversation_id", conversation_id)
+          .order("created_at", { ascending: false })
+          .limit(1);
 
-      if (!recentCallError && recentCall && recentCall.length > 0) {
-        call = recentCall;
+      call = callByConversation;
+      callError = callByConversationError;
+
+      if (call && call.length > 0) {
         console.log(
-          "✅ [ELEVENLABS] Found recent in-progress call:",
-          recentCall[0].call_sid
+          "✅ [ELEVENLABS] Found call by conversation_id:",
+          conversation_id
         );
-      } else {
-        console.log("❌ [ELEVENLABS] No recent in-progress call found");
       }
+    }
+
+    // If no conversation_id or call not found, this might be a failed call that never reached ElevenLabs
+    if (!conversation_id || !call || call.length === 0) {
+      console.log(
+        "ℹ️ [ELEVENLABS] No conversation_id or call not found - this might be a failed call"
+      );
+      console.log(
+        "ℹ️ [ELEVENLABS] Skipping call processing for failed calls (line_busy, no_answer, etc.)"
+      );
+
+      // For failed calls, we don't need to process anything
+      // The worker will be released in the finally block of processQueueItemWithRetry
+      return reply.send({
+        success: true,
+        message:
+          "Webhook processed - call was likely a failure (no conversation_id)",
+        conversation_id: conversation_id,
+      });
     }
 
     console.log("🔍 [ELEVENLABS] Call search result:", {
@@ -5188,41 +5225,10 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       );
     }
 
-    // Release worker after all processing is complete (this is the final step)
-    if (call && call.call_sid) {
-      const callInfo = globalActiveCalls.get(call.call_sid);
-      if (callInfo && callInfo.workerId) {
-        const released = releaseWorker(
-          callInfo.workerId,
-          "elevenlabs_webhook_complete"
-        );
-        if (released) {
-          globalActiveCalls.delete(call.call_sid);
-          console.log(
-            `[Queue] ✅ Worker ${callInfo.workerId} successfully released after complete processing`
-          );
-        }
-      } else {
-        console.log(
-          `[Queue] ⚠️ No worker found for call ${call.call_sid} in globalActiveCalls`,
-          {
-            globalActiveCallsKeys: Array.from(globalActiveCalls.keys()),
-            call_sid: call.call_sid,
-            conversation_id: conversation_id,
-          }
-        );
-      }
-    } else {
-      console.log(
-        `[Queue] ⚠️ Cannot release worker: call or call_sid is undefined`,
-        {
-          call: call ? "exists" : "null",
-          call_sid: call?.call_sid,
-          conversation_id: conversation_id,
-          globalActiveCallsKeys: Array.from(globalActiveCalls.keys()),
-        }
-      );
-    }
+    // Note: Worker is released in Twilio status webhook, not here
+    console.log(
+      "ℹ️ [ELEVENLABS] Call processing complete - worker will be released by Twilio status webhook"
+    );
 
     return reply.send({
       success: true,
