@@ -5044,52 +5044,107 @@ fastify.post("/emergency-cleanup-user/:userId", async (request, reply) => {
 });
 
 // Twilio redirect call endpoint for purchased phone numbers
-fastify.post("/twilio/redirect-call", async (request, reply) => {
+fastify.all("/twilio/redirect-call", async (request, reply) => {
   try {
-    console.log("📞 [TWILIO REDIRECT] Redirect call webhook received");
+    const accountSid = request.body?.AccountSid;
+    const toNumber = request.body?.To;
+    const fromNumber = request.body?.From;
+    const callSid = request.body?.CallSid;
 
-    const { From, To, CallSid } = request.body;
-
-    console.log("📞 [TWILIO REDIRECT] Call details:", {
-      from: From,
-      to: To,
-      callSid: CallSid,
+    console.log("📞 [TWILIO REDIRECT] Incoming call details:", {
+      accountSid,
+      toNumber,
+      fromNumber,
+      callSid,
+      method: request.method,
+      url: request.url,
     });
 
-    // Get the phone number owner from the database
-    const { data: phoneOwner, error: ownerError } = await supabase
-      .from("users")
-      .select("id, first_name, last_name, twilio_phone_redirect_number")
-      .eq("twilio_phone_number", To)
-      .single();
-
-    if (ownerError || !phoneOwner) {
-      console.error("❌ [TWILIO REDIRECT] Phone number owner not found:", To);
-      return reply.code(404).send({ error: "Phone number owner not found" });
+    if (!accountSid || !toNumber) {
+      console.error("❌ [TWILIO REDIRECT] Missing AccountSid or To number");
+      return reply
+        .code(400)
+        .send({ error: "Missing required Twilio parameters" });
     }
 
-    if (!phoneOwner.twilio_phone_redirect_number) {
-      console.error(
-        "❌ [TWILIO REDIRECT] No redirect number configured for user:",
-        phoneOwner.id
+    // Buscar la configuración del número de teléfono en la base de datos
+    const { data: phoneConfigs, error: phoneError } = await supabase
+      .from("twilio_phone_numbers")
+      .select(
+        `
+        *,
+        users!twilio_phone_numbers_user_id_fkey(*)
+      `
+      )
+      .eq("phone_number", toNumber)
+      .eq("users.twilio_subaccount_sid", accountSid);
+
+    if (phoneError || !phoneConfigs || phoneConfigs.length === 0) {
+      console.error("❌ [TWILIO REDIRECT] Phone number not found:", {
+        toNumber,
+        accountSid,
+        error: phoneError,
+      });
+
+      // Respuesta TwiML por defecto si no se encuentra configuración
+      const defaultResponse = `<?xml version="1.0" encoding="UTF-8"?>
+        <Response>
+          <Say voice="alice" language="es-MX">
+            Lo sentimos, no pudimos procesar su llamada. Por favor intente más tarde.
+          </Say>
+        </Response>`;
+
+      return reply.type("text/xml").send(defaultResponse);
+    }
+
+    const phoneConfig = phoneConfigs[0]; // Tomar el primer resultado
+    const user = phoneConfig.users;
+
+    console.log("✅ [TWILIO REDIRECT] Found phone configuration:", {
+      phoneNumber: toNumber,
+      userId: user.id,
+      userName: `${user.first_name} ${user.last_name}`,
+      redirectEnabled: phoneConfig.redirect_enabled,
+      redirectNumber: phoneConfig.redirect_number,
+    });
+
+    // Verificar si la redirección está habilitada
+    if (!phoneConfig.redirect_enabled || !phoneConfig.redirect_number) {
+      console.log(
+        "📞 [TWILIO REDIRECT] Redirect not enabled, using default flow"
       );
-      return reply.code(400).send({ error: "No redirect number configured" });
+
+      // Si no hay redirección, usar el flujo normal (outbound-call-twiml)
+      const defaultResponse = `<?xml version="1.0" encoding="UTF-8"?>
+        <Response>
+          <Say voice="alice" language="es-MX">
+            Hola, en un momento lo atenderemos.
+          </Say>
+          <Redirect>https://${
+            process.env.RAILWAY_PUBLIC_DOMAIN || "localhost:3000"
+          }/outbound-call-twiml</Redirect>
+        </Response>`;
+
+      return reply.type("text/xml").send(defaultResponse);
     }
+
+    // Formatear el número de redirección correctamente
+    let redirectNumber = phoneConfig.redirect_number.toString();
 
     console.log("✅ [TWILIO REDIRECT] Redirecting call:", {
-      from: From,
-      to: To,
-      redirectTo: phoneOwner.twilio_phone_redirect_number,
-      owner: phoneOwner.first_name + " " + phoneOwner.last_name,
+      from: fromNumber,
+      to: toNumber,
+      redirectTo: redirectNumber,
+      owner: `${user.first_name} ${user.last_name}`,
     });
 
-    // Return TwiML to redirect the call
+    // Retornar TwiML para redirigir la llamada
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Dial>${phoneOwner.twilio_phone_redirect_number}</Dial>
+  <Dial>${redirectNumber}</Dial>
 </Response>`;
 
-    reply.type("application/xml").send(twiml);
+    reply.type("text/xml").send(twiml);
   } catch (error) {
     console.error("❌ [TWILIO REDIRECT] Error processing redirect:", error);
     reply.code(500).send({ error: "Internal server error" });
