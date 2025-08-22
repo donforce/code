@@ -648,11 +648,27 @@ async function processAllPendingQueues() {
       // Group items by user and validate credits
       const userQueues = new Map();
 
+      console.log(`[Queue] Available items by user:`, {
+        totalItems: availableItems.length,
+        uniqueUsers: userIds.length,
+        usersWithData: usersData?.length || 0,
+      });
+
       for (const item of availableItems) {
         const user = usersMap.get(item.user_id);
 
-        if (!user || user.available_call_credits < 60) {
-          continue; // Skip users with less than 60 credits
+        if (!user) {
+          console.log(
+            `[Queue] Skipping item ${item.id} - user ${item.user_id} not found in users data`
+          );
+          continue;
+        }
+
+        if (user.available_call_credits < 60) {
+          console.log(
+            `[Queue] Skipping item ${item.id} - user ${item.user_id} has insufficient credits: ${user.available_call_credits} < 60`
+          );
+          continue;
         }
 
         if (!userQueues.has(item.user_id)) {
@@ -660,6 +676,18 @@ async function processAllPendingQueues() {
         }
         userQueues.get(item.user_id).push(item);
       }
+
+      console.log(`[Queue] Users with sufficient credits:`, {
+        userQueuesSize: userQueues.size,
+        users: Array.from(userQueues.keys()).map((userId) => {
+          const user = usersMap.get(userId);
+          return {
+            userId,
+            availableCredits: user?.available_call_credits,
+            queueLength: userQueues.get(userId)?.length || 0,
+          };
+        }),
+      });
 
       // Calculate available slots
       const availableSlots =
@@ -4214,6 +4242,8 @@ fastify.post("/twilio-status", async (request, reply) => {
     const callInfo = globalActiveCalls.get(callSid);
 
     // First, let's check if the call exists in the database
+    console.log(`[TWILIO STATUS] Looking for call with call_sid: ${callSid}`);
+
     const { data: existingCall, error: checkError } = await supabase
       .from("calls")
       .select("*")
@@ -4222,13 +4252,27 @@ fastify.post("/twilio-status", async (request, reply) => {
       .limit(1);
 
     if (checkError) {
-      //console.error(
-      //  "[TWILIO STATUS] Error checking existing call:",
-      //  checkError
-      //);
+      console.error(
+        "[TWILIO STATUS] Error checking existing call:",
+        checkError
+      );
       // Return 200 OK even if call not found to avoid Twilio errors
       return reply.code(200).send();
     }
+
+    console.log(`[TWILIO STATUS] Call lookup result:`, {
+      callSid,
+      existingCall: existingCall
+        ? {
+            id: existingCall.id,
+            user_id: existingCall.user_id,
+            call_sid: existingCall.call_sid,
+            status: existingCall.status,
+            created_at: existingCall.created_at,
+          }
+        : null,
+      found: !!existingCall,
+    });
 
     // Determine the result based on Twilio status
     let result = "initiated";
@@ -4902,6 +4946,67 @@ fastify.post("/emergency-cleanup-user/:userId", async (request, reply) => {
     });
   } catch (error) {
     console.error("[EMERGENCY CLEANUP] Error:", error);
+    return reply.code(500).send({ error: "Internal server error" });
+  }
+});
+
+// Emergency endpoint to sync userActiveCalls with database
+fastify.post("/emergency-sync-user-active-calls", async (request, reply) => {
+  try {
+    console.log(
+      `[EMERGENCY SYNC] Starting sync of userActiveCalls with database`
+    );
+
+    // Get all calls that are currently "In Progress" in the database
+    const { data: activeCallsInDB, error: callsError } = await supabase
+      .from("calls")
+      .select("user_id, call_sid")
+      .eq("status", "In Progress");
+
+    if (callsError) {
+      console.error(
+        "[EMERGENCY SYNC] Error fetching active calls:",
+        callsError
+      );
+      return reply.code(500).send({ error: "Database error" });
+    }
+
+    // Count active calls per user from database
+    const userActiveCallsFromDB = new Map();
+    activeCallsInDB?.forEach((call) => {
+      if (call.user_id) {
+        userActiveCallsFromDB.set(
+          call.user_id,
+          (userActiveCallsFromDB.get(call.user_id) || 0) + 1
+        );
+      }
+    });
+
+    console.log(`[EMERGENCY SYNC] Active calls from database:`, {
+      totalActiveCalls: activeCallsInDB?.length || 0,
+      userActiveCallsFromDB: Object.fromEntries(userActiveCallsFromDB),
+      currentUserActiveCalls: Object.fromEntries(userActiveCalls),
+    });
+
+    // Update userActiveCalls to match database
+    userActiveCalls.clear();
+    userActiveCallsFromDB.forEach((count, userId) => {
+      userActiveCalls.set(userId, count);
+    });
+
+    console.log(
+      `[EMERGENCY SYNC] Sync completed. New userActiveCalls:`,
+      Object.fromEntries(userActiveCalls)
+    );
+
+    return reply.send({
+      message: "User active calls synced with database",
+      before: Object.fromEntries(userActiveCallsFromDB),
+      after: Object.fromEntries(userActiveCalls),
+      totalActiveCalls: activeCallsInDB?.length || 0,
+    });
+  } catch (error) {
+    console.error("[EMERGENCY SYNC] Error:", error);
     return reply.code(500).send({ error: "Internal server error" });
   }
 });
@@ -8420,17 +8525,17 @@ async function fetchCallPriceAsync(callSid, callUri) {
       .limit(1);
 
     if (callError) {
-      console.error(
-        `❌ [TWILIO PRICE] Error obteniendo duración para CallSid ${callSid}:`,
-        callError
-      );
+      //  console.error(
+      //   `❌ [TWILIO PRICE] Error obteniendo duración para CallSid ${callSid}:`,
+      //   callError
+      // );
       return;
     }
 
     if (!callRecord || callRecord.length === 0) {
-      console.warn(
-        `⚠️ [TWILIO PRICE] No se encontró registro de llamada para CallSid ${callSid}`
-      );
+      //console.warn(
+      //  `⚠️ [TWILIO PRICE] No se encontró registro de llamada para CallSid ${callSid}`
+      //);
       return;
     }
 
@@ -8438,9 +8543,9 @@ async function fetchCallPriceAsync(callSid, callUri) {
 
     // 🚫 No procesar llamadas de menos de 5 segundos
     if (callDuration < 5) {
-      console.log(
-        `⏱️ [TWILIO PRICE] Llamada de ${callDuration} segundos (< 5s) - No se procesa precio ni se descuentan créditos para CallSid: ${callSid}`
-      );
+      // console.log(
+      //   `⏱️ [TWILIO PRICE] Llamada de ${callDuration} segundos (< 5s) - No se procesa precio ni se descuentan créditos para CallSid: ${callSid}`
+      // );
 
       // Marcar la llamada como no cobrable
       await supabase
@@ -8459,22 +8564,22 @@ async function fetchCallPriceAsync(callSid, callUri) {
       return;
     }
 
-    console.log(
-      `✅ [TWILIO PRICE] Llamada de ${callDuration} segundos (≥ 5s) - Procesando precio para CallSid: ${callSid}`
-    );
+    //console.log(
+    //   `✅ [TWILIO PRICE] Llamada de ${callDuration} segundos (≥ 5s) - Procesando precio para CallSid: ${callSid}`
+    // );
   } catch (durationError) {
-    console.error(
-      `❌ [TWILIO PRICE] Error verificando duración para CallSid ${callSid}:`,
-      durationError
-    );
+    //console.error(
+    //  `❌ [TWILIO PRICE] Error verificando duración para CallSid ${callSid}:`,
+    //  durationError
+    //);
     return;
   }
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      console.log(
-        `�� [TWILIO PRICE] Intento ${attempt}/${MAX_RETRIES} para obtener precio de CallSid: ${callSid}`
-      );
+      //  console.log(
+      //    `�� [TWILIO PRICE] Intento ${attempt}/${MAX_RETRIES} para obtener precio de CallSid: ${callSid}`
+      //  );
 
       // Obtener datos de la llamada desde Twilio
       const twilioRecord = await twilioClient.calls(callSid).fetch();
@@ -8490,16 +8595,16 @@ async function fetchCallPriceAsync(callSid, callUri) {
       const callDuration = parseInt(twilioRecord.duration || "0", 10);
       const minutesRounded = Math.ceil(callDuration / 60); // Redondear hacia arriba
 
-      console.log(
-        `�� [TWILIO PRICE] Datos obtenidos para CallSid ${callSid}:`,
-        {
+      //  console.log(
+      //  `�� [TWILIO PRICE] Datos obtenidos para CallSid ${callSid}:`,
+      /* {
           callPrice,
           priceUnit,
           pricePerMinute,
           callDuration,
           minutesRounded,
-        }
-      );
+        }*/
+      //);
 
       // Verificar si tenemos los datos necesarios
       if (callPrice && pricePerMinute && callDuration > 0) {
@@ -8511,29 +8616,29 @@ async function fetchCallPriceAsync(callSid, callUri) {
           .limit(1);
 
         if (callError) {
-          console.error(
-            `❌ [TWILIO PRICE] Error obteniendo país para CallSid ${callSid}:`,
-            callError
-          );
+          // console.error(
+          //   `❌ [TWILIO PRICE] Error obteniendo país para CallSid ${callSid}:`,
+          //   callError
+          // );
           continue;
         }
 
         if (!callRecord || callRecord.length === 0) {
-          console.warn(
-            `⚠️ [TWILIO PRICE] No se encontró registro de llamada para CallSid ${callSid}`
-          );
+          // console.warn(
+          //   `⚠️ [TWILIO PRICE] No se encontró registro de llamada para CallSid ${callSid}`
+          // );
           continue;
         }
 
         const countryCode = callRecord[0]?.to_country;
         if (!countryCode) {
-          console.warn(
-            `⚠️ [TWILIO PRICE] No se pudo obtener país para CallSid ${callSid}`
-          );
+          // console.warn(
+          //   `⚠️ [TWILIO PRICE] No se pudo obtener país para CallSid ${callSid}`
+          // );
           continue;
         }
 
-        console.log(`🌍 [TWILIO PRICE] País de la llamada: ${countryCode}`);
+        // console.log(`🌍 [TWILIO PRICE] País de la llamada: ${countryCode}`);
 
         // Obtener tarifas de la base de datos
         const { data: pricingData, error: pricingError } = await supabase
@@ -8544,24 +8649,24 @@ async function fetchCallPriceAsync(callSid, callUri) {
           );
 
         if (pricingError) {
-          console.error(
-            `❌ [TWILIO PRICE] Error obteniendo tarifas para ${countryCode}:`,
-            pricingError
-          );
+          // console.error(
+          //   `❌ [TWILIO PRICE] Error obteniendo tarifas para ${countryCode}:`,
+          //   pricingError
+          // );
           continue;
         }
 
         if (!pricingData || pricingData.length === 0) {
-          console.warn(
-            `⚠️ [TWILIO PRICE] No se encontraron tarifas para ${countryCode}`
-          );
+          // console.warn(
+          //   `⚠️ [TWILIO PRICE] No se encontraron tarifas para ${countryCode}`
+          // );
           continue;
         }
 
-        console.log(
-          `�� [TWILIO PRICE] Tarifas encontradas para ${countryCode}:`,
-          pricingData.length
-        );
+        //console.log(
+        //  `�� [TWILIO PRICE] Tarifas encontradas para ${countryCode}:`,
+        //  pricingData.length
+        //);
 
         // Seleccionar la tarifa más apropiada
         let selectedTariff = null;
@@ -8572,15 +8677,15 @@ async function fetchCallPriceAsync(callSid, callUri) {
         );
         if (exactTariff) {
           selectedTariff = exactTariff;
-          console.log(
-            `🎯 [TWILIO PRICE] Usando tarifa exacta para ${countryCode}:`,
+          // console.log(
+          /*  `🎯 [TWILIO PRICE] Usando tarifa exacta para ${countryCode}:`,
             {
               id: exactTariff.id,
               country_code: exactTariff.country_code,
               price_per_minute: exactTariff.price_per_minute,
               price_per_credit: exactTariff.price_per_credit,
             }
-          );
+          );*/
         } else {
           // Si no hay tarifa exacta, buscar la más cercana al precio por minuto
           const baseTariff = pricingData.find(
@@ -8588,15 +8693,15 @@ async function fetchCallPriceAsync(callSid, callUri) {
           );
           if (baseTariff) {
             selectedTariff = baseTariff;
-            console.log(
-              `🎯 [TWILIO PRICE] Usando tarifa base para ${countryCode}:`,
+            //console.log(
+            /*  `🎯 [TWILIO PRICE] Usando tarifa base para ${countryCode}:`,
               {
                 id: baseTariff.id,
                 country_code: baseTariff.country_code,
                 price_per_minute: baseTariff.price_per_minute,
                 price_per_credit: baseTariff.price_per_credit,
               }
-            );
+            );*/
           } else {
             // Si no hay tarifa base, usar la más cercana al precio por minuto
             selectedTariff = pricingData.reduce((closest, current) => {
@@ -8609,8 +8714,8 @@ async function fetchCallPriceAsync(callSid, callUri) {
               return currentDiff < closestDiff ? current : closest;
             });
 
-            console.log(
-              `🎯 [TWILIO PRICE] Usando tarifa más cercana para ${countryCode}:`,
+            //console.log(
+            /*  `🎯 [TWILIO PRICE] Usando tarifa más cercana para ${countryCode}:`,
               {
                 id: selectedTariff.id,
                 country_code: selectedTariff.country_code,
@@ -8620,14 +8725,14 @@ async function fetchCallPriceAsync(callSid, callUri) {
                   selectedTariff.price_per_minute - pricePerMinute
                 ),
               }
-            );
+            );*/
           }
         }
 
         // Calcular créditos totales
         const totalCredits = selectedTariff.price_per_credit * minutesRounded;
 
-        console.log(
+        /* console.log(
           `🎯 [TWILIO PRICE] Créditos calculados para CallSid ${callSid}:`,
           {
             tarifa_id: selectedTariff.id,
@@ -8636,7 +8741,7 @@ async function fetchCallPriceAsync(callSid, callUri) {
             minutos_redondeados: minutesRounded,
             creditos_totales: totalCredits,
           }
-        );
+        );*/
 
         // Actualizar la base de datos
         const updateData = {
