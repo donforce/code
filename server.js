@@ -715,7 +715,22 @@ async function processAllPendingQueues() {
           availableSlots - itemsToProcess.length // Available slots remaining
         );
 
+        console.log(`[Queue] User ${userData.userId} slot calculation:`, {
+          userId: userData.userId,
+          userActiveCallCount,
+          currentUserSlots,
+          maxCallsPerUser: QUEUE_CONFIG.maxCallsPerUser,
+          availableCredits: userData.availableCredits,
+          creditsPerCall: Math.floor(userData.availableCredits / 60),
+          availableSlotsRemaining: availableSlots - itemsToProcess.length,
+          maxSlotsForUser,
+          canProcess: maxSlotsForUser > 0,
+        });
+
         if (maxSlotsForUser <= 0) {
+          console.log(
+            `[Queue] Skipping user ${userData.userId} - no available slots (${maxSlotsForUser})`
+          );
           continue;
         }
 
@@ -735,7 +750,24 @@ async function processAllPendingQueues() {
         }
       }
 
+      console.log(`[Queue] Processing queue - Summary:`, {
+        availableSlots,
+        itemsToProcess: itemsToProcess.length,
+        userPriority: userPriority.map((u) => ({
+          userId: u.userId,
+          hasActiveCalls: u.hasActiveCalls,
+          queueLength: u.queueLength,
+          availableCredits: u.availableCredits,
+          userActiveCallCount: userActiveCalls.get(u.userId) || 0,
+        })),
+        userActiveCalls: Object.fromEntries(userActiveCalls),
+        globalActiveCallsSize: globalActiveCalls.size,
+      });
+
       if (itemsToProcess.length === 0) {
+        console.log(
+          `[Queue] No items to process - all users at capacity or no available slots`
+        );
         return;
       }
 
@@ -783,12 +815,18 @@ async function processQueueItemWithRetry(queueItem, attempt = 1) {
       return false;
     }
 
-    if (
-      (userActiveCalls.get(queueItem.user_id) || 0) >=
-      QUEUE_CONFIG.maxCallsPerUser
-    ) {
+    const userActiveCallCount = userActiveCalls.get(queueItem.user_id) || 0;
+    console.log(`[Queue] Worker ${workerId} - Checking user limits:`, {
+      userId: queueItem.user_id,
+      userActiveCallCount,
+      maxCallsPerUser: QUEUE_CONFIG.maxCallsPerUser,
+      canProcess: userActiveCallCount < QUEUE_CONFIG.maxCallsPerUser,
+      userActiveCalls: Object.fromEntries(userActiveCalls),
+    });
+
+    if (userActiveCallCount >= QUEUE_CONFIG.maxCallsPerUser) {
       console.log(
-        `[Queue] Worker ${workerId} - Cannot process: max calls per user reached`
+        `[Queue] Worker ${workerId} - Cannot process: max calls per user reached (${userActiveCallCount}/${QUEUE_CONFIG.maxCallsPerUser})`
       );
       return false;
     }
