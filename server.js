@@ -4252,12 +4252,24 @@ fastify.post("/twilio-status", async (request, reply) => {
     console.log(`[TWILIO STATUS] Looking for call with call_sid: ${callSid}`);
 
     // Try exact match first
+    console.log(
+      `[TWILIO STATUS] Executing query: SELECT * FROM calls WHERE call_sid = '${callSid}'`
+    );
+
     let { data: existingCall, error: checkError } = await supabase
       .from("calls")
       .select("*")
       .eq("call_sid", callSid)
       .order("created_at", { ascending: false })
       .limit(1);
+
+    console.log(`[TWILIO STATUS] Query result:`, {
+      callSid: callSid,
+      data: existingCall,
+      error: checkError,
+      dataLength: existingCall?.length || 0,
+      dataType: typeof existingCall,
+    });
 
     // If not found, try case-insensitive search
     if (!existingCall || existingCall.length === 0) {
@@ -4282,6 +4294,27 @@ fastify.post("/twilio-status", async (request, reply) => {
           }
         );
         existingCall = caseInsensitiveCall;
+      } else {
+        // Debug: Let's see what call_sid values are in the database
+        console.log(
+          `[TWILIO STATUS] Call not found, checking recent calls in database`
+        );
+        const { data: recentCalls, error: recentError } = await supabase
+          .from("calls")
+          .select("call_sid, user_id, status, created_at")
+          .order("created_at", { ascending: false })
+          .limit(10);
+
+        console.log(`[TWILIO STATUS] Recent calls in database:`, {
+          callSid: callSid,
+          recentCalls:
+            recentCalls?.map((call) => ({
+              call_sid: call.call_sid,
+              user_id: call.user_id,
+              status: call.status,
+              created_at: call.created_at,
+            })) || [],
+        });
       }
     }
 
