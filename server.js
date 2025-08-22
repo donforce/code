@@ -609,23 +609,6 @@ async function processAllPendingQueues() {
         .order("queue_position", { ascending: true })
         .limit(QUEUE_CONFIG.maxConcurrentCalls * 3);
 
-      console.log(
-        `[Queue] Found ${pendingQueues?.length || 0} pending queue items`
-      );
-      if (pendingQueues && pendingQueues.length > 0) {
-        console.log(
-          `[Queue] Queue items:`,
-          pendingQueues.map((q) => ({
-            id: q.id,
-            user_id: q.user_id,
-            lead_id: q.lead_id,
-            lead_name: q.lead?.name,
-            status: q.status,
-            queue_position: q.queue_position,
-          }))
-        );
-      }
-
       if (error) {
         console.error("[Queue] ❌ Error fetching pending queues:", error);
         return;
@@ -646,7 +629,6 @@ async function processAllPendingQueues() {
 
       // Get user data in single query for all users
       const userIds = [...new Set(availableItems.map((item) => item.user_id))];
-      console.log(`[Queue] User IDs to check:`, userIds);
 
       const { data: usersData, error: usersError } = await supabase
         .from("users")
@@ -660,8 +642,6 @@ async function processAllPendingQueues() {
         return;
       }
 
-      console.log(`[Queue] Users data found:`, usersData);
-
       // Create optimized user lookup map
       const usersMap = new Map(usersData?.map((user) => [user.id, user]) || []);
 
@@ -670,16 +650,8 @@ async function processAllPendingQueues() {
 
       for (const item of availableItems) {
         const user = usersMap.get(item.user_id);
-        console.log(`[Queue] Checking user ${item.user_id}:`, {
-          userFound: !!user,
-          availableCredits: user?.available_call_credits,
-          hasEnoughCredits: user?.available_call_credits >= 60,
-        });
 
         if (!user || user.available_call_credits < 60) {
-          console.log(
-            `[Queue] Skipping user ${item.user_id} - insufficient credits or user not found`
-          );
           continue; // Skip users with less than 60 credits
         }
 
@@ -689,18 +661,11 @@ async function processAllPendingQueues() {
         userQueues.get(item.user_id).push(item);
       }
 
-      console.log(`[Queue] User queues after credit validation:`, userQueues);
-
       // Calculate available slots
       const availableSlots =
         QUEUE_CONFIG.maxConcurrentCalls - globalActiveCalls.size;
 
-      console.log(
-        `[Queue] Available slots: ${availableSlots}, maxConcurrentCalls: ${QUEUE_CONFIG.maxConcurrentCalls}, globalActiveCalls: ${globalActiveCalls.size}`
-      );
-
       if (availableSlots <= 0) {
-        console.log(`[Queue] No available slots, skipping processing`);
         return;
       }
 
@@ -774,22 +739,6 @@ async function processAllPendingQueues() {
         return;
       }
 
-      // Log the distribution
-      const userDistribution = {};
-      for (const [userId, slotCount] of userSlotCount) {
-        const user = usersMap.get(userId);
-        userDistribution[user.email] = {
-          slots: slotCount,
-          queueLength: userQueues.get(userId).length,
-          availableCredits: user.available_call_credits,
-        };
-      }
-
-      console.log(
-        `[Queue] Processing ${itemsToProcess.length} items with mixed rotation:`,
-        userDistribution
-      );
-
       // Process items concurrently
       itemsToProcess.forEach(async (item) => {
         // Mark item as being processed to prevent duplicates
@@ -807,10 +756,6 @@ async function processAllPendingQueues() {
             processingQueueItems.delete(item.id);
           });
       });
-
-      console.log(
-        `[Queue] ✅ Queue processing completed - ${itemsToProcess.length} items queued for execution`
-      );
     } catch (error) {
       console.error("[Queue] ❌ Error in queue processing:", error);
     }
@@ -832,6 +777,9 @@ async function processQueueItemWithRetry(queueItem, attempt = 1) {
 
     // Check if we can still process this item
     if (globalActiveCalls.size >= QUEUE_CONFIG.maxConcurrentCalls) {
+      console.log(
+        `[Queue] Worker ${workerId} - Cannot process: max concurrent calls reached`
+      );
       return false;
     }
 
@@ -839,6 +787,9 @@ async function processQueueItemWithRetry(queueItem, attempt = 1) {
       (userActiveCalls.get(queueItem.user_id) || 0) >=
       QUEUE_CONFIG.maxCallsPerUser
     ) {
+      console.log(
+        `[Queue] Worker ${workerId} - Cannot process: max calls per user reached`
+      );
       return false;
     }
 
@@ -921,7 +872,26 @@ async function processQueueItemWithRetry(queueItem, attempt = 1) {
     return false;
   } finally {
     // Remove from worker pool
+    const released = releaseWorker(workerId, "finally_block");
+    if (released) {
+      console.log(
+        `[Queue] 🔄 Worker ${workerId} released in finally block (fallback)`
+      );
+    }
+  }
+}
+
+// Centralized worker release function
+function releaseWorker(workerId, reason = "call_completed") {
+  if (workerPool.has(workerId)) {
     workerPool.delete(workerId);
+    console.log(
+      `[Queue] Worker ${workerId} released (${reason}). Pool size: ${workerPool.size}`
+    );
+    return true;
+  } else {
+    console.log(`[Queue] Worker ${workerId} not found in pool (${reason})`);
+    return false;
   }
 }
 
@@ -938,12 +908,11 @@ process.on("SIGTERM", () => clearInterval(queueInterval));
 process.on("SIGINT", () => clearInterval(queueInterval));
 
 // Process queues on startup
-console.log("[Queue] Starting optimized queue processing on startup");
+
 processAllPendingQueues();
 
 // Add this function at the top with other utility functions
 async function cancelPendingCalls(userId, reason) {
-  console.log("[Queue] Cancelling pending calls for user", { userId, reason });
   const { error } = await supabase
     .from("call_queue")
     .update({
@@ -958,9 +927,6 @@ async function cancelPendingCalls(userId, reason) {
     console.error("[Queue] Error cancelling pending calls:", error);
     throw error;
   }
-  console.log("[Queue] Successfully cancelled pending calls for user", {
-    userId,
-  });
 }
 
 // Función para verificar disponibilidad del calendario de Google
@@ -3351,6 +3317,21 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                           console.log(
                             `[ElevenLabs] Call ${callSid} marked as completed - timeout`
                           );
+
+                          // Release worker for timeout
+                          const callInfo = globalActiveCalls.get(callSid);
+                          if (callInfo && callInfo.workerId) {
+                            const released = releaseWorker(
+                              callInfo.workerId,
+                              "conversation_timeout"
+                            );
+                            if (released) {
+                              globalActiveCalls.delete(callSid);
+                              console.log(
+                                `[Queue] ✅ Worker ${callInfo.workerId} released due to conversation timeout`
+                              );
+                            }
+                          }
                         }
                       } catch (dbError) {
                         console.error(
@@ -3389,6 +3370,21 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                           console.log(
                             `[ElevenLabs] Call ${callSid} marked as failed - conversation failed`
                           );
+
+                          // Release worker for conversation failure
+                          const callInfo = globalActiveCalls.get(callSid);
+                          if (callInfo && callInfo.workerId) {
+                            const released = releaseWorker(
+                              callInfo.workerId,
+                              "conversation_failed"
+                            );
+                            if (released) {
+                              globalActiveCalls.delete(callSid);
+                              console.log(
+                                `[Queue] ✅ Worker ${callInfo.workerId} released due to conversation failure`
+                              );
+                            }
+                          }
                         }
                       } catch (dbError) {
                         console.error(
@@ -3426,6 +3422,21 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                           console.log(
                             `[ElevenLabs] Call ${callSid} marked as completed - no user response`
                           );
+
+                          // Release worker for no user response
+                          const callInfo = globalActiveCalls.get(callSid);
+                          if (callInfo && callInfo.workerId) {
+                            const released = releaseWorker(
+                              callInfo.workerId,
+                              "no_user_response"
+                            );
+                            if (released) {
+                              globalActiveCalls.delete(callSid);
+                              console.log(
+                                `[Queue] ✅ Worker ${callInfo.workerId} released due to no user response`
+                              );
+                            }
+                          }
                         }
                       } catch (dbError) {
                         console.error(
@@ -4669,6 +4680,59 @@ fastify.post("/queue/cleanup", async (request, reply) => {
     reply.code(500).send({ error: "Error during cleanup" });
   }
 });
+
+// Monitoring endpoint for worker pool and queue status
+fastify.get("/queue/workers", async (request, reply) => {
+  try {
+    console.log("[Queue] Worker state requested");
+
+    // Get queue statistics
+    const { data: queueStats, error: queueError } = await supabase
+      .from("call_queue")
+      .select("status");
+
+    if (queueError) {
+      console.error("[Queue] Error fetching queue stats:", queueError);
+      return reply.code(500).send({ error: "Error fetching queue stats" });
+    }
+
+    const stats = {};
+    queueStats?.forEach((item) => {
+      stats[item.status] = (stats[item.status] || 0) + 1;
+    });
+
+    const workerState = {
+      workers: {
+        size: workerPool.size,
+        maxSize: QUEUE_CONFIG.workerPoolSize,
+        workers: Array.from(workerPool),
+      },
+      queue: {
+        pending: stats.pending || 0,
+        in_progress: stats.in_progress || 0,
+        completed: stats.completed || 0,
+        failed: stats.failed || 0,
+        cancelled: stats.cancelled || 0,
+      },
+      configuration: {
+        maxConcurrentCalls: QUEUE_CONFIG.maxConcurrentCalls,
+        maxCallsPerUser: QUEUE_CONFIG.maxCallsPerUser,
+        queueCheckInterval: QUEUE_CONFIG.queueCheckInterval,
+        workerPoolSize: QUEUE_CONFIG.workerPoolSize,
+      },
+      activeCalls: {
+        global: globalActiveCalls.size,
+        userActiveCalls: Object.fromEntries(userActiveCalls),
+      },
+      timestamp: new Date().toISOString(),
+    };
+
+    reply.send(workerState);
+  } catch (error) {
+    console.error("[Queue] Error getting worker state:", error);
+    reply.code(500).send({ error: "Error getting worker state" });
+  }
+});
 // Add webhook endpoint for ElevenLabs
 // ElevenLabs webhook endpoint
 fastify.post("/webhook/elevenlabs", async (request, reply) => {
@@ -4792,6 +4856,19 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
 
     if (callError || !call) {
       console.error("❌ [ELEVENLABS] Call not found:", callError);
+
+      // Release worker if call not found
+      const callInfo = globalActiveCalls.get(call?.call_sid);
+      if (callInfo && callInfo.workerId) {
+        const released = releaseWorker(callInfo.workerId, "call_not_found");
+        if (released) {
+          globalActiveCalls.delete(call?.call_sid);
+          console.log(
+            `[Queue] ✅ Worker ${callInfo.workerId} released due to call not found`
+          );
+        }
+      }
+
       return reply.code(404).send({ error: "Call not found" });
     }
 
@@ -4841,6 +4918,19 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
 
     if (updateError) {
       console.error("❌ [ELEVENLABS] Error updating call:", updateError);
+
+      // Release worker if update fails
+      const callInfo = globalActiveCalls.get(call.call_sid);
+      if (callInfo && callInfo.workerId) {
+        const released = releaseWorker(callInfo.workerId, "update_failed");
+        if (released) {
+          globalActiveCalls.delete(call.call_sid);
+          console.log(
+            `[Queue] ✅ Worker ${callInfo.workerId} released due to update failure`
+          );
+        }
+      }
+
       return reply.code(500).send({ error: "Failed to update call" });
     }
 
@@ -5025,6 +5115,25 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       console.error(
         "❌ [CALENDAR] Error processing calendar event:",
         calendarError
+      );
+    }
+
+    // Release worker after all processing is complete (this is the final step)
+    const callInfo = globalActiveCalls.get(call.call_sid);
+    if (callInfo && callInfo.workerId) {
+      const released = releaseWorker(
+        callInfo.workerId,
+        "elevenlabs_webhook_complete"
+      );
+      if (released) {
+        globalActiveCalls.delete(call.call_sid);
+        console.log(
+          `[Queue] ✅ Worker ${callInfo.workerId} successfully released after complete processing`
+        );
+      }
+    } else {
+      console.log(
+        `[Queue] ⚠️ No worker found for call ${call.call_sid} in globalActiveCalls`
       );
     }
 
@@ -8033,7 +8142,7 @@ async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
 // 🆕 Función asíncrona para obtener precio de llamada con reintentos
 async function fetchCallPriceAsync(callSid, callUri) {
   const MAX_RETRIES = 50;
-  const RETRY_DELAY = 5000; // 5 segundos
+  const RETRY_DELAY = 10000; // 10 segundos
 
   // 🔍 Verificar duración de la llamada antes de procesar
   try {
