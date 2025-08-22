@@ -4533,13 +4533,47 @@ fastify.post("/twilio-status", async (request, reply) => {
 
     // Remove from global tracking
     globalActiveCalls.delete(callSid);
+
+    // Debug logging for userActiveCalls cleanup
+    console.log(
+      `[TWILIO STATUS] Cleaning up userActiveCalls for call ${callSid}:`,
+      {
+        existingCall: existingCall
+          ? {
+              id: existingCall.id,
+              user_id: existingCall.user_id,
+              call_sid: existingCall.call_sid,
+              status: existingCall.status,
+            }
+          : null,
+        userActiveCallsBefore: Object.fromEntries(userActiveCalls),
+        globalActiveCallsSize: globalActiveCalls.size,
+      }
+    );
+
     if (existingCall && existingCall.user_id) {
       const currentCount = userActiveCalls.get(existingCall.user_id) || 0;
+      console.log(
+        `[TWILIO STATUS] User ${existingCall.user_id} has ${currentCount} active calls`
+      );
+
       if (currentCount <= 1) {
         userActiveCalls.delete(existingCall.user_id);
+        console.log(
+          `[TWILIO STATUS] Removed user ${existingCall.user_id} from userActiveCalls`
+        );
       } else {
         userActiveCalls.set(existingCall.user_id, currentCount - 1);
+        console.log(
+          `[TWILIO STATUS] Decreased user ${
+            existingCall.user_id
+          } active calls to ${currentCount - 1}`
+        );
       }
+    } else {
+      console.log(
+        `[TWILIO STATUS] Cannot clean up userActiveCalls: existingCall is null or has no user_id`
+      );
     }
     activeCalls--;
 
@@ -4733,6 +4767,107 @@ fastify.post("/queue/cleanup", async (request, reply) => {
   }
 });
 
+// Emergency endpoint to clean stuck calls for a specific user
+fastify.post("/emergency-cleanup-user/:userId", async (request, reply) => {
+  const { userId } = request.params;
+
+  try {
+    console.log(`[EMERGENCY CLEANUP] Starting cleanup for user: ${userId}`);
+
+    // Get all calls for this user that are stuck in "In Progress" status
+    const { data: stuckCalls, error: callsError } = await supabase
+      .from("calls")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("status", "In Progress");
+
+    if (callsError) {
+      console.error(
+        "[EMERGENCY CLEANUP] Error fetching stuck calls:",
+        callsError
+      );
+      return reply.code(500).send({ error: "Database error" });
+    }
+
+    if (!stuckCalls || stuckCalls.length === 0) {
+      console.log(
+        `[EMERGENCY CLEANUP] No stuck calls found for user ${userId}`
+      );
+      return reply.send({ message: "No stuck calls found", cleaned: 0 });
+    }
+
+    console.log(
+      `[EMERGENCY CLEANUP] Found ${stuckCalls.length} stuck calls for user ${userId}`
+    );
+
+    let cleanedCount = 0;
+
+    for (const call of stuckCalls) {
+      try {
+        // Update call status to failed
+        const { error: updateError } = await supabase
+          .from("calls")
+          .update({
+            status: "failed",
+            result: "failed",
+            error_code: "EMERGENCY_CLEANUP",
+            error_message: "Call cleaned up by emergency endpoint",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", call.id);
+
+        if (updateError) {
+          console.error(
+            `[EMERGENCY CLEANUP] Error updating call ${call.id}:`,
+            updateError
+          );
+        } else {
+          console.log(
+            `[EMERGENCY CLEANUP] Successfully updated call ${call.id}`
+          );
+          cleanedCount++;
+        }
+
+        // Remove from global tracking
+        globalActiveCalls.delete(call.call_sid);
+
+        // Update queue item if exists
+        if (call.queue_id) {
+          await supabase
+            .from("call_queue")
+            .update({
+              status: "failed",
+              completed_at: new Date().toISOString(),
+            })
+            .eq("id", call.queue_id);
+        }
+      } catch (callError) {
+        console.error(
+          `[EMERGENCY CLEANUP] Error processing call ${call.id}:`,
+          callError
+        );
+      }
+    }
+
+    // Force reset userActiveCalls for this user
+    userActiveCalls.delete(userId);
+
+    console.log(
+      `[EMERGENCY CLEANUP] Cleanup completed for user ${userId}. Cleaned ${cleanedCount} calls.`
+    );
+
+    return reply.send({
+      message: "Emergency cleanup completed",
+      userId,
+      cleaned: cleanedCount,
+      userActiveCalls: Object.fromEntries(userActiveCalls),
+    });
+  } catch (error) {
+    console.error("[EMERGENCY CLEANUP] Error:", error);
+    return reply.code(500).send({ error: "Internal server error" });
+  }
+});
+
 // Monitoring endpoint for worker pool and queue status
 fastify.get("/queue/workers", async (request, reply) => {
   try {
@@ -4904,7 +5039,8 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       conversation_id
     );
 
-    let { data: call, error: callError } = null;
+    let call = null;
+    let callError = null;
 
     if (conversation_id) {
       // Only search by conversation_id if it exists (successful calls)
