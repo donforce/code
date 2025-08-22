@@ -2833,6 +2833,15 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                     console.log(
                       "🚀 [INIT] Conversation initiation metadata received"
                     );
+                    console.log("🔍 [INIT] Message data:", {
+                      callSid: callSid,
+                      conversation_id:
+                        message.conversation_initiation_metadata_event
+                          ?.conversation_id,
+                      hasEvent:
+                        !!message.conversation_initiation_metadata_event,
+                    });
+
                     // Save conversation_id to database
                     if (
                       callSid &&
@@ -2842,6 +2851,14 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                       const conversationId =
                         message.conversation_initiation_metadata_event
                           .conversation_id;
+
+                      console.log(
+                        "💾 [INIT] Saving conversation_id to database:",
+                        {
+                          call_sid: callSid,
+                          conversation_id: conversationId,
+                        }
+                      );
 
                       try {
                         const { error: updateError } = await supabase
@@ -2857,6 +2874,11 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                             "[ElevenLabs] Error saving conversation_id:",
                             updateError
                           );
+                        } else {
+                          console.log(
+                            "✅ [INIT] Successfully saved conversation_id:",
+                            conversationId
+                          );
                         }
                       } catch (dbError) {
                         console.error(
@@ -2864,6 +2886,13 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                           dbError
                         );
                       }
+                    } else {
+                      console.log("⚠️ [INIT] Cannot save conversation_id:", {
+                        hasCallSid: !!callSid,
+                        hasConversationId:
+                          !!message.conversation_initiation_metadata_event
+                            ?.conversation_id,
+                      });
                     }
                     break;
 
@@ -4846,28 +4875,63 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
 
     console.log("🎯 [ELEVENLABS] Processing post call transcription event");
 
-    // Get call data
-    const { data: call, error: callError } = await supabase
+    // Get call data - First try to find by conversation_id, then by call_sid if needed
+    console.log(
+      "🔍 [ELEVENLABS] Searching for call with conversation_id:",
+      conversation_id
+    );
+
+    let { data: call, error: callError } = await supabase
       .from("calls")
-      .select("*")
+      .select("*, call_sid")
       .eq("conversation_id", conversation_id)
       .order("created_at", { ascending: false })
       .limit(1);
+
+    // If not found by conversation_id, try to find the most recent call in progress
+    if (!call || call.length === 0) {
+      console.log(
+        "🔍 [ELEVENLABS] Call not found by conversation_id, searching for recent in-progress call..."
+      );
+
+      // Find the most recent call that is in progress and has no conversation_id
+      const { data: recentCall, error: recentCallError } = await supabase
+        .from("calls")
+        .select("*, call_sid")
+        .eq("status", "In Progress")
+        .is("conversation_id", null)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (!recentCallError && recentCall && recentCall.length > 0) {
+        call = recentCall;
+        console.log(
+          "✅ [ELEVENLABS] Found recent in-progress call:",
+          recentCall[0].call_sid
+        );
+      } else {
+        console.log("❌ [ELEVENLABS] No recent in-progress call found");
+      }
+    }
+
+    console.log("🔍 [ELEVENLABS] Call search result:", {
+      found: !!call,
+      error: callError,
+      conversation_id: conversation_id,
+    });
 
     if (callError || !call) {
       console.error("❌ [ELEVENLABS] Call not found:", callError);
 
       // Release worker if call not found
-      if (call?.call_sid) {
-        const callInfo = globalActiveCalls.get(call.call_sid);
-        if (callInfo && callInfo.workerId) {
-          const released = releaseWorker(callInfo.workerId, "call_not_found");
-          if (released) {
-            globalActiveCalls.delete(call.call_sid);
-            console.log(
-              `[Queue] ✅ Worker ${callInfo.workerId} released due to call not found`
-            );
-          }
+      const callInfo = globalActiveCalls.get(call?.call_sid);
+      if (callInfo && callInfo.workerId) {
+        const released = releaseWorker(callInfo.workerId, "call_not_found");
+        if (released) {
+          globalActiveCalls.delete(call?.call_sid);
+          console.log(
+            `[Queue] ✅ Worker ${callInfo.workerId} released due to call not found`
+          );
         }
       }
 
@@ -4877,15 +4941,19 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     console.log("📞 [ELEVENLABS] Call data:", {
       id: call.id,
       conversation_id: call.conversation_id,
+      call_sid: call.call_sid,
       status: call.status,
       duration: call.duration,
       lead_id: call.lead_id,
       user_id: call.user_id,
     });
 
+    console.log("🔍 [ELEVENLABS] Full call object keys:", Object.keys(call));
+
     // Update call with final data
     const updateData = {
       status: "completed",
+      conversation_id: conversation_id, // Add conversation_id to the call record
       end_reason: end_reason || call.end_reason,
       connection_status: connection_status || call.connection_status,
       duration: duration || call.duration,
@@ -4922,16 +4990,14 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       console.error("❌ [ELEVENLABS] Error updating call:", updateError);
 
       // Release worker if update fails
-      if (call && call.call_sid) {
-        const callInfo = globalActiveCalls.get(call.call_sid);
-        if (callInfo && callInfo.workerId) {
-          const released = releaseWorker(callInfo.workerId, "update_failed");
-          if (released) {
-            globalActiveCalls.delete(call.call_sid);
-            console.log(
-              `[Queue] ✅ Worker ${callInfo.workerId} released due to update failure`
-            );
-          }
+      const callInfo = globalActiveCalls.get(call.call_sid);
+      if (callInfo && callInfo.workerId) {
+        const released = releaseWorker(callInfo.workerId, "update_failed");
+        if (released) {
+          globalActiveCalls.delete(call.call_sid);
+          console.log(
+            `[Queue] ✅ Worker ${callInfo.workerId} released due to update failure`
+          );
         }
       }
 
@@ -5138,13 +5204,23 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
         }
       } else {
         console.log(
-          `[Queue] ⚠️ No worker found for call ${call.call_sid} in globalActiveCalls`
+          `[Queue] ⚠️ No worker found for call ${call.call_sid} in globalActiveCalls`,
+          {
+            globalActiveCallsKeys: Array.from(globalActiveCalls.keys()),
+            call_sid: call.call_sid,
+            conversation_id: conversation_id,
+          }
         );
       }
     } else {
       console.log(
         `[Queue] ⚠️ Cannot release worker: call or call_sid is undefined`,
-        { call: call ? 'exists' : 'null', call_sid: call?.call_sid }
+        {
+          call: call ? "exists" : "null",
+          call_sid: call?.call_sid,
+          conversation_id: conversation_id,
+          globalActiveCallsKeys: Array.from(globalActiveCalls.keys()),
+        }
       );
     }
 
