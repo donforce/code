@@ -4858,14 +4858,16 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       console.error("❌ [ELEVENLABS] Call not found:", callError);
 
       // Release worker if call not found
-      const callInfo = globalActiveCalls.get(call?.call_sid);
-      if (callInfo && callInfo.workerId) {
-        const released = releaseWorker(callInfo.workerId, "call_not_found");
-        if (released) {
-          globalActiveCalls.delete(call?.call_sid);
-          console.log(
-            `[Queue] ✅ Worker ${callInfo.workerId} released due to call not found`
-          );
+      if (call?.call_sid) {
+        const callInfo = globalActiveCalls.get(call.call_sid);
+        if (callInfo && callInfo.workerId) {
+          const released = releaseWorker(callInfo.workerId, "call_not_found");
+          if (released) {
+            globalActiveCalls.delete(call.call_sid);
+            console.log(
+              `[Queue] ✅ Worker ${callInfo.workerId} released due to call not found`
+            );
+          }
         }
       }
 
@@ -4920,14 +4922,16 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       console.error("❌ [ELEVENLABS] Error updating call:", updateError);
 
       // Release worker if update fails
-      const callInfo = globalActiveCalls.get(call.call_sid);
-      if (callInfo && callInfo.workerId) {
-        const released = releaseWorker(callInfo.workerId, "update_failed");
-        if (released) {
-          globalActiveCalls.delete(call.call_sid);
-          console.log(
-            `[Queue] ✅ Worker ${callInfo.workerId} released due to update failure`
-          );
+      if (call && call.call_sid) {
+        const callInfo = globalActiveCalls.get(call.call_sid);
+        if (callInfo && callInfo.workerId) {
+          const released = releaseWorker(callInfo.workerId, "update_failed");
+          if (released) {
+            globalActiveCalls.delete(call.call_sid);
+            console.log(
+              `[Queue] ✅ Worker ${callInfo.workerId} released due to update failure`
+            );
+          }
         }
       }
 
@@ -5119,21 +5123,28 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     }
 
     // Release worker after all processing is complete (this is the final step)
-    const callInfo = globalActiveCalls.get(call.call_sid);
-    if (callInfo && callInfo.workerId) {
-      const released = releaseWorker(
-        callInfo.workerId,
-        "elevenlabs_webhook_complete"
-      );
-      if (released) {
-        globalActiveCalls.delete(call.call_sid);
+    if (call && call.call_sid) {
+      const callInfo = globalActiveCalls.get(call.call_sid);
+      if (callInfo && callInfo.workerId) {
+        const released = releaseWorker(
+          callInfo.workerId,
+          "elevenlabs_webhook_complete"
+        );
+        if (released) {
+          globalActiveCalls.delete(call.call_sid);
+          console.log(
+            `[Queue] ✅ Worker ${callInfo.workerId} successfully released after complete processing`
+          );
+        }
+      } else {
         console.log(
-          `[Queue] ✅ Worker ${callInfo.workerId} successfully released after complete processing`
+          `[Queue] ⚠️ No worker found for call ${call.call_sid} in globalActiveCalls`
         );
       }
     } else {
       console.log(
-        `[Queue] ⚠️ No worker found for call ${call.call_sid} in globalActiveCalls`
+        `[Queue] ⚠️ Cannot release worker: call or call_sid is undefined`,
+        { call: call ? 'exists' : 'null', call_sid: call?.call_sid }
       );
     }
 
