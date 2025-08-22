@@ -5043,6 +5043,59 @@ fastify.post("/emergency-cleanup-user/:userId", async (request, reply) => {
   }
 });
 
+// Twilio redirect call endpoint for purchased phone numbers
+fastify.post("/twilio/redirect-call", async (request, reply) => {
+  try {
+    console.log("📞 [TWILIO REDIRECT] Redirect call webhook received");
+
+    const { From, To, CallSid } = request.body;
+
+    console.log("📞 [TWILIO REDIRECT] Call details:", {
+      from: From,
+      to: To,
+      callSid: CallSid,
+    });
+
+    // Get the phone number owner from the database
+    const { data: phoneOwner, error: ownerError } = await supabase
+      .from("users")
+      .select("id, first_name, last_name, twilio_phone_redirect_number")
+      .eq("twilio_phone_number", To)
+      .single();
+
+    if (ownerError || !phoneOwner) {
+      console.error("❌ [TWILIO REDIRECT] Phone number owner not found:", To);
+      return reply.code(404).send({ error: "Phone number owner not found" });
+    }
+
+    if (!phoneOwner.twilio_phone_redirect_number) {
+      console.error(
+        "❌ [TWILIO REDIRECT] No redirect number configured for user:",
+        phoneOwner.id
+      );
+      return reply.code(400).send({ error: "No redirect number configured" });
+    }
+
+    console.log("✅ [TWILIO REDIRECT] Redirecting call:", {
+      from: From,
+      to: To,
+      redirectTo: phoneOwner.twilio_phone_redirect_number,
+      owner: phoneOwner.first_name + " " + phoneOwner.last_name,
+    });
+
+    // Return TwiML to redirect the call
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Dial>${phoneOwner.twilio_phone_redirect_number}</Dial>
+</Response>`;
+
+    reply.type("application/xml").send(twiml);
+  } catch (error) {
+    console.error("❌ [TWILIO REDIRECT] Error processing redirect:", error);
+    reply.code(500).send({ error: "Internal server error" });
+  }
+});
+
 // Emergency endpoint to sync userActiveCalls with database
 fastify.post("/emergency-sync-user-active-calls", async (request, reply) => {
   try {
@@ -8657,9 +8710,9 @@ async function fetchCallPriceAsync(callSid, callUri) {
       return;
     }
 
-    //console.log(
-    //   `✅ [TWILIO PRICE] Llamada de ${callDuration} segundos (≥ 5s) - Procesando precio para CallSid: ${callSid}`
-    // );
+    console.log(
+      `✅ [TWILIO PRICE] Llamada de ${callDuration} segundos (≥ 5s) - Procesando precio para CallSid: ${callSid}`
+    );
   } catch (durationError) {
     //console.error(
     //  `❌ [TWILIO PRICE] Error verificando duración para CallSid ${callSid}:`,
