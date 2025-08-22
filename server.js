@@ -2008,6 +2008,16 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
 `;
       }
 
+      console.log(
+        `[Queue] Worker ${workerId} - Creating Twilio call with params:`,
+        {
+          from: fromPhoneNumber,
+          to: queueItem.lead.phone,
+          userId: queueItem.user_id,
+          leadId: queueItem.lead_id,
+        }
+      );
+
       call = await twilioClientToUse.calls.create({
         from: fromPhoneNumber,
         to: queueItem.lead.phone,
@@ -2043,6 +2053,16 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
         recordingChannels: "dual",
         recordingStatusCallbackEvent: ["completed"],
       });
+
+      console.log(
+        `[Queue] Worker ${workerId} - Twilio call created successfully:`,
+        {
+          callSid: call.sid,
+          callStatus: call.status,
+          userId: queueItem.user_id,
+          leadId: queueItem.lead_id,
+        }
+      );
     } catch (twilioError) {
       console.error(
         `[Queue] Worker ${workerId} - Twilio call creation failed:`,
@@ -4329,16 +4349,18 @@ fastify.post("/twilio-status", async (request, reply) => {
 
     console.log(`[TWILIO STATUS] Call lookup result:`, {
       callSid,
-      existingCall: existingCall
-        ? {
-            id: existingCall.id,
-            user_id: existingCall.user_id,
-            call_sid: existingCall.call_sid,
-            status: existingCall.status,
-            created_at: existingCall.created_at,
-          }
-        : null,
-      found: !!existingCall,
+      existingCall:
+        existingCall && existingCall.length > 0
+          ? {
+              id: existingCall[0].id,
+              user_id: existingCall[0].user_id,
+              call_sid: existingCall[0].call_sid,
+              status: existingCall[0].status,
+              created_at: existingCall[0].created_at,
+            }
+          : null,
+      found: !!(existingCall && existingCall.length > 0),
+      dataLength: existingCall?.length || 0,
     });
 
     // Determine the result based on Twilio status
@@ -4413,11 +4435,15 @@ fastify.post("/twilio-status", async (request, reply) => {
         // Get user data to determine which Twilio client to use
         let twilioClientToUse = twilioClient; // Default to main account
 
-        if (existingCall && existingCall.user_id) {
+        if (
+          existingCall &&
+          existingCall.length > 0 &&
+          existingCall[0].user_id
+        ) {
           const { data: userData, error: userError } = await supabase
             .from("users")
             .select("twilio_subaccount_sid, twilio_auth_token")
-            .eq("id", existingCall.user_id)
+            .eq("id", existingCall[0].user_id)
 
             .order("created_at", { ascending: false })
             .limit(1);
@@ -4690,7 +4716,7 @@ fastify.post("/twilio-status", async (request, reply) => {
         existingCall: existingCall
           ? {
               id: existingCall.id,
-              user_id: existingCall.user_id,
+              user_id: existingCall[0].user_id,
               call_sid: existingCall.call_sid,
               status: existingCall.status,
             }
@@ -4700,22 +4726,22 @@ fastify.post("/twilio-status", async (request, reply) => {
       }
     );
 
-    if (existingCall && existingCall.user_id) {
-      const currentCount = userActiveCalls.get(existingCall.user_id) || 0;
+    if (existingCall && existingCall[0].user_id) {
+      const currentCount = userActiveCalls.get(existingCall[0].user_id) || 0;
       console.log(
-        `[TWILIO STATUS] User ${existingCall.user_id} has ${currentCount} active calls`
+        `[TWILIO STATUS] User ${existingCall[0].user_id} has ${currentCount} active calls`
       );
 
       if (currentCount <= 1) {
-        userActiveCalls.delete(existingCall.user_id);
+        userActiveCalls.delete(existingCall[0].user_id);
         console.log(
-          `[TWILIO STATUS] Removed user ${existingCall.user_id} from userActiveCalls`
+          `[TWILIO STATUS] Removed user ${existingCall[0].user_id} from userActiveCalls`
         );
       } else {
-        userActiveCalls.set(existingCall.user_id, currentCount - 1);
+        userActiveCalls.set(existingCall[0].user_id, currentCount - 1);
         console.log(
           `[TWILIO STATUS] Decreased user ${
-            existingCall.user_id
+            existingCall[0].user_id
           } active calls to ${currentCount - 1}`
         );
       }
@@ -4733,20 +4759,20 @@ fastify.post("/twilio-status", async (request, reply) => {
     // Deduct minutes from user's available time if call was successful
     if (
       existingCall &&
-      existingCall.user_id &&
+      existingCall[0].user_id &&
       callDuration > 0 &&
       result === "success"
     ) {
       try {
         console.log(
-          `[TWILIO STATUS] Deducting ${callDuration} seconds from user ${existingCall.user_id}`
+          `[TWILIO STATUS] Deducting ${callDuration} seconds from user ${existingCall[0].user_id}`
         );
 
         // Get current user data
         const { data: userData, error: userError } = await supabase
           .from("users")
           .select("available_minutes")
-          .eq("id", existingCall.user_id)
+          .eq("id", existingCall[0].user_id)
 
           .order("created_at", { ascending: false })
           .limit(1);
@@ -4782,7 +4808,7 @@ fastify.post("/twilio-status", async (request, reply) => {
               available_minutes: remainingSeconds,
               updated_at: new Date().toISOString(),
             })
-            .eq("id", existingCall.user_id);
+            .eq("id", existingCall[0].user_id);
 
           if (updateError) {
             console.error(
@@ -4791,7 +4817,7 @@ fastify.post("/twilio-status", async (request, reply) => {
             );
           } else {
             console.log(
-              `[TWILIO STATUS] Successfully deducted ${callDuration} seconds from user ${existingCall.user_id}`
+              `[TWILIO STATUS] Successfully deducted ${callDuration} seconds from user ${existingCall[0].user_id}`
             );
           }
         }
