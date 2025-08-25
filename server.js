@@ -4499,12 +4499,11 @@ fastify.post("/twilio-status", async (request, reply) => {
           .update(enrichUpdate)
           .eq("call_sid", callSid);
         // �� Iniciar proceso asíncrono para obtener precio si no está disponible
-        if (!callPrice && callUri) {
-          console.log(
-            "�� [TWILIO STATUS] Iniciando proceso asíncrono para obtener precio de llamada"
-          );
-          fetchCallPriceAsync(callSid, callUri);
-        }
+        // 🔄 Siempre calcular créditos basándose en duración/
+        console.log(
+          "�� [TWILIO STATUS] Iniciando proceso asíncrono para obtener precio de llamada"
+        );
+        fetchCallPriceAsync(callSid, callUri, twilioClientToUse);
       } catch (err) {
         console.warn(
           "⚠️ [TWILIO STATUS] Error fetching Twilio call record for pricing:",
@@ -8713,7 +8712,7 @@ async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
   }
 }
 // 🆕 Función asíncrona para obtener precio de llamada con reintentos
-async function fetchCallPriceAsync(callSid, callUri) {
+async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
   const MAX_RETRIES = 50;
   const RETRY_DELAY = 10000; // 10 segundos
 
