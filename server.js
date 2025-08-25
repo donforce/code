@@ -8807,15 +8807,23 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
         if (tariffsWithPrefixes.length > 0) {
           // Buscar el prefijo más específico (más largo) que coincida
           const matchingPrefixes = [];
+          const cleanNumber = toNumber.replace(/\D/g, "");
+
+          console.log(`🔍 [CREDITS] Buscando coincidencias para número: ${toNumber} (limpio: ${cleanNumber})`);
 
           for (const tariff of tariffsWithPrefixes) {
             const prefixList = tariff.prefixes.split(",").map((p) => p.trim());
+            console.log(`🔍 [CREDITS] Tarifa ${tariff.country_code} tiene prefijos: ${prefixList.join(', ')}`);
+            
             for (const prefix of prefixList) {
-              if (phonePrefix.startsWith(prefix)) {
+              if (cleanNumber.startsWith(prefix)) {
+                console.log(`✅ [CREDITS] ¡Coincidencia encontrada! Prefijo ${prefix} coincide con ${cleanNumber}`);
                 matchingPrefixes.push({
                   ...tariff,
                   matchedPrefix: prefix,
                 });
+              } else {
+                console.log(`❌ [CREDITS] Prefijo ${prefix} NO coincide con ${cleanNumber}`);
               }
             }
           }
@@ -8834,6 +8842,7 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
                 country: selectedTariff.country_code,
                 prefix: selectedTariff.matchedPrefix,
                 price_per_credit: selectedTariff.price_per_credit,
+                number: toNumber,
               }
             );
           }
@@ -8914,6 +8923,7 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
       call_duration_minutes: minutesRounded,
       call_credits_cost: totalCredits,
       call_pricing_id: selectedTariff.id,
+      call_pricing_search_method: searchMethod, // Guardar el método de búsqueda usado
       updated_at: new Date().toISOString(),
     };
 
@@ -9025,20 +9035,13 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
   }
 }
 
-// 🆕 Función auxiliar para extraer prefijo de teléfono
+// 🆕 Función auxiliar para extraer prefijo de teléfono (simplificada)
 function extractPhonePrefix(phoneNumber) {
   if (!phoneNumber) return "";
 
-  // Remover caracteres no numéricos
-  const cleanNumber = phoneNumber.replace(/\D/g, "");
-
-  // Si empieza con +, removerlo
-  const numberWithoutPlus = cleanNumber.startsWith("+")
-    ? cleanNumber.slice(1)
-    : cleanNumber;
-
-  // Retornar el número completo como prefijo (para búsqueda más específica)
-  return numberWithoutPlus;
+  // Remover caracteres no numéricos y retornar el número completo
+  // La lógica de búsqueda de prefijos se hace directamente en el código principal
+  return phoneNumber.replace(/\D/g, "");
 }
 async function getPlanCredits(stripePriceId) {
   if (!stripePriceId) return 0;
