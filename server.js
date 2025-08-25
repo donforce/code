@@ -8802,22 +8802,37 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
         );
 
         // Filtrar tarifas que tengan prefijos de teléfono
-        const tariffsWithPrefixes = pricingData.filter((t) => t.phone_prefix);
+        const tariffsWithPrefixes = pricingData.filter((t) => t.prefixes);
 
         if (tariffsWithPrefixes.length > 0) {
           // Buscar el prefijo más específico (más largo) que coincida
-          const matchingPrefixes = tariffsWithPrefixes
-            .filter((t) => phonePrefix.startsWith(t.phone_prefix))
-            .sort((a, b) => b.phone_prefix.length - a.phone_prefix.length);
+          const matchingPrefixes = [];
+
+          for (const tariff of tariffsWithPrefixes) {
+            const prefixList = tariff.prefixes.split(",").map((p) => p.trim());
+            for (const prefix of prefixList) {
+              if (phonePrefix.startsWith(prefix)) {
+                matchingPrefixes.push({
+                  ...tariff,
+                  matchedPrefix: prefix,
+                });
+              }
+            }
+          }
+
+          // Ordenar por longitud del prefijo (más específico primero)
+          matchingPrefixes.sort(
+            (a, b) => b.matchedPrefix.length - a.matchedPrefix.length
+          );
 
           if (matchingPrefixes.length > 0) {
             selectedTariff = matchingPrefixes[0];
-            searchMethod = `prefijo_específico_${selectedTariff.phone_prefix}`;
+            searchMethod = `prefijo_específico_${selectedTariff.matchedPrefix}`;
             console.log(
               `🎯 [CREDITS] Tarifa encontrada por prefijo específico:`,
               {
                 country: selectedTariff.country_code,
-                prefix: selectedTariff.phone_prefix,
+                prefix: selectedTariff.matchedPrefix,
                 price_per_credit: selectedTariff.price_per_credit,
               }
             );
