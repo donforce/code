@@ -2567,105 +2567,116 @@ fastify.register(async (fastifyInstance) => {
           if (message.event === "start") {
             streamSid = message.start.streamSid;
             callSid = message.start.callSid;
-            agentId =
-              message.start.customParameters?.agent_id ||
-              "agent_9001k3m4b0y4fhyvwc9car16yqw2";
+            const fromNumber =
+              message.start.customParameters?.fromNumber || "unknown";
 
             console.log("📞 [INCOMING] Stream started:", {
               streamSid,
               callSid,
-              agentId,
+              fromNumber,
             });
 
-            // 🔗 Conectar WS a ElevenLabs Conversational AI (NO usar fetch HTTP)
-            const elevenWsUrl = `wss://api.elevenlabs.io/v1/convai/agent/stream?agent_id=${encodeURIComponent(
-              agentId
-            )}`;
+            // 🔗 Conectar WS a ElevenLabs usando getSignedUrl() como outbound
+            try {
+              const signedUrl = await getSignedUrl();
+              console.log(
+                "🔍 [ELEVENLABS] Connecting to signed URL:",
+                signedUrl
+              );
 
-            console.log(
-              "🔍 [ELEVENLABS] Connecting to WebSocket:",
-              elevenWsUrl
-            );
+              elevenLabsWs = new WebSocket(signedUrl);
 
-            elevenLabsWs = new WebSocket(elevenWsUrl, {
-              headers: { "xi-api-key": ELEVENLABS_API_KEY },
-            });
+              elevenLabsWs.on("open", () => {
+                console.log("✅ [ELEVENLABS] WS connected");
 
-            elevenLabsWs.on("open", () => {
-              console.log("✅ [ELEVENLABS] WS connected");
+                // Configuración simple para incoming calls
+                const initialConfig = {
+                  type: "conversation_initiation_client_data",
+                  conversation_config_override: {
+                    agent: {
+                      language: "es",
+                      first_message:
+                        "Hola, soy tu asistente virtual. ¿En qué puedo ayudarte?",
+                    },
+                    tts: {
+                      voice_id: "",
+                    },
+                    keep_alive: true,
+                  },
+                  dynamic_variables: {
+                    client_name: "Usuario",
+                    client_phone: fromNumber || "",
+                    client_email: "",
+                    client_id: "",
+                  },
+                  usage: {
+                    no_ip_reason: "user_ip_not_collected",
+                  },
+                };
 
-              // 📣 1) Session init / configuración (ajusta campos si tu versión difiere)
-              const sessionInit = {
-                type: "session.update",
-                // Opciones típicas (ajusta a lo que soporte tu release del WS de Eleven):
-                input_audio_format: "mulaw",
-                output_audio_format: "mulaw",
-                sample_rate: 8000,
-                enable_interruptions: true,
-              };
-              elevenLabsWs.send(JSON.stringify(sessionInit));
+                elevenLabsWs.send(JSON.stringify(initialConfig));
+              });
 
-              // (Opcional) Si debes enviar un "start" explícito:
-              // elevenLabsWs.send(JSON.stringify({ type: "session.start" }));
-            });
+              elevenLabsWs.on("message", (raw) => {
+                let evt;
+                try {
+                  evt = JSON.parse(raw.toString());
+                } catch {
+                  /* puede venir binario en releases muy viejas */
+                }
 
-            elevenLabsWs.on("message", (raw) => {
-              let evt;
-              try {
-                evt = JSON.parse(raw.toString());
-              } catch {
-                /* puede venir binario en releases muy viejas */
-              }
-
-              // ⚠️ Maneja eventos del agente:
-              // Espera tipos como: "audio", "agent_response", "user_transcript", "error", etc.
-              if (evt && evt.type === "audio" && evt.audio_base64) {
-                // 🔊 Reenviar audio del agente -> de vuelta a Twilio (mulaw base64)
-                ws.send(
-                  JSON.stringify({
-                    event: "media",
-                    streamSid,
-                    media: { payload: evt.audio_base64 },
-                  })
-                );
-              } else if (evt && evt.type === "agent_response") {
-                console.log("🗣️ [ELEVENLABS] agent_response:", evt.text);
-              } else if (evt && evt.type === "user_transcript") {
-                console.log("👤 [USER] transcript:", evt.text);
-              } else if (evt && evt.type === "error") {
-                console.error("❌ [ELEVENLABS] error:", evt.message || evt);
-              } else {
-                // Si ElevenLabs manda audio crudo (raro), intenta fallback:
-                if (!evt && Buffer.isBuffer(raw)) {
-                  const base64 = raw.toString("base64");
+                // ⚠️ Maneja eventos del agente:
+                // Espera tipos como: "audio", "agent_response", "user_transcript", "error", etc.
+                if (evt && evt.type === "audio" && evt.audio_base64) {
+                  // 🔊 Reenviar audio del agente -> de vuelta a Twilio (mulaw base64)
                   ws.send(
                     JSON.stringify({
                       event: "media",
                       streamSid,
-                      media: { payload: base64 },
+                      media: { payload: evt.audio_base64 },
                     })
                   );
+                } else if (evt && evt.type === "agent_response") {
+                  console.log("🗣️ [ELEVENLABS] agent_response:", evt.text);
+                } else if (evt && evt.type === "user_transcript") {
+                  console.log("👤 [USER] transcript:", evt.text);
+                } else if (evt && evt.type === "error") {
+                  console.error("❌ [ELEVENLABS] error:", evt.message || evt);
+                } else {
+                  // Si ElevenLabs manda audio crudo (raro), intenta fallback:
+                  if (!evt && Buffer.isBuffer(raw)) {
+                    const base64 = raw.toString("base64");
+                    ws.send(
+                      JSON.stringify({
+                        event: "media",
+                        streamSid,
+                        media: { payload: base64 },
+                      })
+                    );
+                  }
                 }
-              }
-            });
+              });
 
-            elevenLabsWs.on("error", (error) => {
-              console.error("❌ [ELEVENLABS] WS error:", error);
-            });
+              elevenLabsWs.on("error", (error) => {
+                console.error("❌ [ELEVENLABS] WS error:", error);
+              });
 
-            elevenLabsWs.on("close", () => {
-              console.log("📞 [ELEVENLABS] WS closed");
-            });
+              elevenLabsWs.on("close", () => {
+                console.log("📞 [ELEVENLABS] WS closed");
+              });
+            } catch (error) {
+              console.error(
+                "❌ [ELEVENLABS] Error connecting to agent:",
+                error
+              );
+            }
           } else if (message.event === "media") {
             // 🎙️ Audio del llamante -> enviar a ElevenLabs
             if (elevenLabsWs && elevenLabsWs.readyState === WebSocket.OPEN) {
               // Twilio te entrega media.payload en base64 mulaw 8kHz mono
               const frame = {
-                type: "input_audio_buffer.append",
-                // Ajusta el nombre del campo si tu release usa otro:
-                audio_base64: message.media.payload,
-                // sample_rate: 8000, // a veces no es necesario repetir si ya lo seteaste en session.update
-                // encoding: "mulaw", // idem
+                type: "user_audio_chunk",
+                user_audio_chunk: message.media.payload,
               };
               elevenLabsWs.send(JSON.stringify(frame));
             }
@@ -5196,12 +5207,11 @@ fastify.all("/twilio/incoming-call", async (request, reply) => {
       callSid,
     });
 
-    // Retornar TwiML para conectar directamente con ElevenLabs Agent
+    // Retornar TwiML para conectar con ElevenLabs Agent
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
     <Stream url="wss://${RAILWAY_PUBLIC_DOMAIN}/incoming-media-stream" interruptible="true">
-      <Parameter name="agent_id" value="agent_9001k3m4b0y4fhyvwc9car16yqw2"/>
       <Parameter name="callSid" value="${callSid || "unknown"}"/>
       <Parameter name="fromNumber" value="${fromNumber || "unknown"}"/>
       <Parameter name="toNumber" value="${toNumber || "unknown"}"/>
@@ -5210,7 +5220,6 @@ fastify.all("/twilio/incoming-call", async (request, reply) => {
 </Response>`;
 
     console.log("✅ [TWILIO INCOMING] Connecting to ElevenLabs Agent:", {
-      agent_id: "agent_9001k3m4b0y4fhyvwc9car16yqw2",
       toNumber,
       fromNumber,
       callSid,
