@@ -2242,9 +2242,10 @@ fastify.get("/", async (_, reply) => {
 
 const twilioClient = new Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-async function getSignedUrl() {
+async function getSignedUrl(options = {}) {
+  const { agentId = ELEVENLABS_AGENT_ID } = options;
   const response = await fetch(
-    `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${ELEVENLABS_AGENT_ID}`,
+    `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${agentId}`,
     {
       method: "GET",
       headers: {
@@ -2576,12 +2577,14 @@ fastify.register(async (fastifyInstance) => {
               fromNumber,
             });
 
-            // 🔗 Conectar WS a ElevenLabs usando getSignedUrl() como outbound
+            // 🔗 Conectar WS a ElevenLabs con el agente específico para incoming calls
             try {
-              const signedUrl = await getSignedUrl();
+              const agentId = "agent_9001k3m4b0y4fhyvwc9car16yqw2";
+              const signedUrl = await getSignedUrl({ agentId });
+
               console.log(
-                "🔍 [ELEVENLABS] Connecting to signed URL:",
-                signedUrl
+                "🔍 [ELEVENLABS] Connecting to signed URL for agent:",
+                agentId
               );
 
               elevenLabsWs = new WebSocket(signedUrl);
