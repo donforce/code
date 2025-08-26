@@ -2580,6 +2580,25 @@ fastify.register(async (fastifyInstance) => {
 
             // Connect to ElevenLabs Agent
             try {
+              console.log("🔍 [ELEVENLABS] Attempting to connect to agent:", {
+                agentId,
+                apiKeyLength: ELEVENLABS_API_KEY
+                  ? ELEVENLABS_API_KEY.length
+                  : 0,
+                apiKeyPrefix: ELEVENLABS_API_KEY
+                  ? ELEVENLABS_API_KEY.substring(0, 10) + "..."
+                  : "NOT_SET",
+              });
+
+              const requestBody = {
+                input_audio_format: "mulaw",
+                output_audio_format: "mulaw",
+                sample_rate: 8000,
+                enable_interruptions: true,
+              };
+
+              console.log("🔍 [ELEVENLABS] Request body:", requestBody);
+
               const response = await fetch(
                 `https://api.elevenlabs.io/v1/agents/${agentId}/stream`,
                 {
@@ -2588,14 +2607,17 @@ fastify.register(async (fastifyInstance) => {
                     "xi-api-key": ELEVENLABS_API_KEY,
                     "Content-Type": "application/json",
                   },
-                  body: JSON.stringify({
-                    input_audio_format: "mulaw",
-                    output_audio_format: "mulaw",
-                    sample_rate: 8000,
-                    enable_interruptions: true,
-                  }),
+                  body: JSON.stringify(requestBody),
                 }
               );
+
+              console.log("🔍 [ELEVENLABS] Response details:", {
+                status: response.status,
+                statusText: response.statusText,
+                ok: response.ok,
+                url: response.url,
+                headers: Object.fromEntries(response.headers.entries()),
+              });
 
               if (response.ok) {
                 elevenLabsWs = new WebSocket(response.url);
@@ -2625,10 +2647,14 @@ fastify.register(async (fastifyInstance) => {
                   console.log("📞 [ELEVENLABS] WebSocket connection closed");
                 });
               } else {
-                console.error(
-                  "❌ [ELEVENLABS] Failed to connect to agent:",
-                  response.status
-                );
+                const errorText = await response.text();
+                console.error("❌ [ELEVENLABS] Failed to connect to agent:", {
+                  status: response.status,
+                  statusText: response.statusText,
+                  errorText: errorText,
+                  url: response.url,
+                  agentId: agentId,
+                });
               }
             } catch (error) {
               console.error(
