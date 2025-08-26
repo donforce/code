@@ -8619,6 +8619,8 @@ async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
         {
           userId: callData.user_id,
           subaccountSid: accountSid,
+          hasAuthToken: !!authToken,
+          authTokenLength: authToken ? authToken.length : 0,
         }
       );
     } else {
@@ -8630,10 +8632,31 @@ async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
     // Usar el cliente correcto para obtener la grabación con autenticación
     const recording = await twilioClientToUse.recordings(recordingSid).fetch();
     const extension = recording.mediaFormat || "wav"; // fallback
+
+    console.log(`🎙️ [RECORDING DOWNLOAD] Recording info for ${callSid}:`, {
+      recordingSid,
+      accountSid,
+      recordingUri: recording.uri,
+      mediaFormat: recording.mediaFormat,
+      extension,
+    });
+
+    // Usar la URL original que viene de Twilio
     const actualRecordingUrl = `https://api.twilio.com${recording.uri.replace(
       ".json",
       `.${extension}`
     )}`;
+
+    console.log(`🎙️ [RECORDING DOWNLOAD] Using URL: ${actualRecordingUrl}`);
+
+    console.log(
+      `🎙️ [RECORDING DOWNLOAD] Attempting download with credentials:`,
+      {
+        accountSid: accountSid.substring(0, 10) + "...",
+        authTokenLength: authToken.length,
+        url: actualRecordingUrl,
+      }
+    );
 
     const response = await fetch(actualRecordingUrl, {
       headers: {
@@ -8641,6 +8664,12 @@ async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
           "Basic " +
           Buffer.from(`${accountSid}:${authToken}`).toString("base64"),
       },
+    });
+
+    console.log(`🎙️ [RECORDING DOWNLOAD] Download response:`, {
+      status: response.status,
+      statusText: response.statusText,
+      ok: response.ok,
     });
 
     if (!response.ok) {
@@ -8809,21 +8838,31 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
           const matchingPrefixes = [];
           const cleanNumber = toNumber.replace(/\D/g, "");
 
-          console.log(`🔍 [CREDITS] Buscando coincidencias para número: ${toNumber} (limpio: ${cleanNumber})`);
+          console.log(
+            `🔍 [CREDITS] Buscando coincidencias para número: ${toNumber} (limpio: ${cleanNumber})`
+          );
 
           for (const tariff of tariffsWithPrefixes) {
             const prefixList = tariff.prefixes.split(",").map((p) => p.trim());
-            console.log(`🔍 [CREDITS] Tarifa ${tariff.country_code} tiene prefijos: ${prefixList.join(', ')}`);
-            
+            console.log(
+              `🔍 [CREDITS] Tarifa ${
+                tariff.country_code
+              } tiene prefijos: ${prefixList.join(", ")}`
+            );
+
             for (const prefix of prefixList) {
               if (cleanNumber.startsWith(prefix)) {
-                console.log(`✅ [CREDITS] ¡Coincidencia encontrada! Prefijo ${prefix} coincide con ${cleanNumber}`);
+                console.log(
+                  `✅ [CREDITS] ¡Coincidencia encontrada! Prefijo ${prefix} coincide con ${cleanNumber}`
+                );
                 matchingPrefixes.push({
                   ...tariff,
                   matchedPrefix: prefix,
                 });
               } else {
-                console.log(`❌ [CREDITS] Prefijo ${prefix} NO coincide con ${cleanNumber}`);
+                console.log(
+                  `❌ [CREDITS] Prefijo ${prefix} NO coincide con ${cleanNumber}`
+                );
               }
             }
           }
