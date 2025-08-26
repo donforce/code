@@ -2560,7 +2560,6 @@ fastify.register(async (fastifyInstance) => {
 
       ws.on("error", console.error);
 
-      // Handle WebSocket messages
       ws.on("message", async (data) => {
         try {
           const message = JSON.parse(data.toString());
@@ -2578,101 +2577,103 @@ fastify.register(async (fastifyInstance) => {
               agentId,
             });
 
-            // Connect to ElevenLabs Agent
-            try {
-              console.log("🔍 [ELEVENLABS] Attempting to connect to agent:", {
-                agentId,
-                apiKeyLength: ELEVENLABS_API_KEY
-                  ? ELEVENLABS_API_KEY.length
-                  : 0,
-                apiKeyPrefix: ELEVENLABS_API_KEY
-                  ? ELEVENLABS_API_KEY.substring(0, 10) + "..."
-                  : "NOT_SET",
-              });
+            // 🔗 Conectar WS a ElevenLabs Conversational AI (NO usar fetch HTTP)
+            const elevenWsUrl = `wss://api.elevenlabs.io/v1/convai/agent/stream?agent_id=${encodeURIComponent(
+              agentId
+            )}`;
 
-              const requestBody = {
+            console.log(
+              "🔍 [ELEVENLABS] Connecting to WebSocket:",
+              elevenWsUrl
+            );
+
+            elevenLabsWs = new WebSocket(elevenWsUrl, {
+              headers: { "xi-api-key": ELEVENLABS_API_KEY },
+            });
+
+            elevenLabsWs.on("open", () => {
+              console.log("✅ [ELEVENLABS] WS connected");
+
+              // 📣 1) Session init / configuración (ajusta campos si tu versión difiere)
+              const sessionInit = {
+                type: "session.update",
+                // Opciones típicas (ajusta a lo que soporte tu release del WS de Eleven):
                 input_audio_format: "mulaw",
                 output_audio_format: "mulaw",
                 sample_rate: 8000,
                 enable_interruptions: true,
               };
+              elevenLabsWs.send(JSON.stringify(sessionInit));
 
-              console.log("🔍 [ELEVENLABS] Request body:", requestBody);
+              // (Opcional) Si debes enviar un "start" explícito:
+              // elevenLabsWs.send(JSON.stringify({ type: "session.start" }));
+            });
 
-              const response = await fetch(
-                `https://api.elevenlabs.io/v1/agents/${agentId}/stream`,
-                {
-                  method: "POST",
-                  headers: {
-                    "xi-api-key": ELEVENLABS_API_KEY,
-                    "Content-Type": "application/json",
-                  },
-                  body: JSON.stringify(requestBody),
-                }
-              );
+            elevenLabsWs.on("message", (raw) => {
+              let evt;
+              try {
+                evt = JSON.parse(raw.toString());
+              } catch {
+                /* puede venir binario en releases muy viejas */
+              }
 
-              console.log("🔍 [ELEVENLABS] Response details:", {
-                status: response.status,
-                statusText: response.statusText,
-                ok: response.ok,
-                url: response.url,
-                headers: Object.fromEntries(response.headers.entries()),
-              });
-
-              if (response.ok) {
-                elevenLabsWs = new WebSocket(response.url);
-
-                elevenLabsWs.on("open", () => {
-                  console.log("✅ [ELEVENLABS] Connected to agent stream");
-                });
-
-                elevenLabsWs.on("message", (data) => {
-                  // Forward ElevenLabs audio to Twilio
+              // ⚠️ Maneja eventos del agente:
+              // Espera tipos como: "audio", "agent_response", "user_transcript", "error", etc.
+              if (evt && evt.type === "audio" && evt.audio_base64) {
+                // 🔊 Reenviar audio del agente -> de vuelta a Twilio (mulaw base64)
+                ws.send(
+                  JSON.stringify({
+                    event: "media",
+                    streamSid,
+                    media: { payload: evt.audio_base64 },
+                  })
+                );
+              } else if (evt && evt.type === "agent_response") {
+                console.log("🗣️ [ELEVENLABS] agent_response:", evt.text);
+              } else if (evt && evt.type === "user_transcript") {
+                console.log("👤 [USER] transcript:", evt.text);
+              } else if (evt && evt.type === "error") {
+                console.error("❌ [ELEVENLABS] error:", evt.message || evt);
+              } else {
+                // Si ElevenLabs manda audio crudo (raro), intenta fallback:
+                if (!evt && Buffer.isBuffer(raw)) {
+                  const base64 = raw.toString("base64");
                   ws.send(
                     JSON.stringify({
                       event: "media",
-                      streamSid: streamSid,
-                      media: {
-                        payload: data.toString("base64"),
-                      },
+                      streamSid,
+                      media: { payload: base64 },
                     })
                   );
-                });
-
-                elevenLabsWs.on("error", (error) => {
-                  console.error("❌ [ELEVENLABS] WebSocket error:", error);
-                });
-
-                elevenLabsWs.on("close", () => {
-                  console.log("📞 [ELEVENLABS] WebSocket connection closed");
-                });
-              } else {
-                const errorText = await response.text();
-                console.error("❌ [ELEVENLABS] Failed to connect to agent:", {
-                  status: response.status,
-                  statusText: response.statusText,
-                  errorText: errorText,
-                  url: response.url,
-                  agentId: agentId,
-                });
+                }
               }
-            } catch (error) {
-              console.error(
-                "❌ [ELEVENLABS] Error connecting to agent:",
-                error
-              );
-            }
+            });
+
+            elevenLabsWs.on("error", (error) => {
+              console.error("❌ [ELEVENLABS] WS error:", error);
+            });
+
+            elevenLabsWs.on("close", () => {
+              console.log("📞 [ELEVENLABS] WS closed");
+            });
           } else if (message.event === "media") {
-            // Forward Twilio audio to ElevenLabs
+            // 🎙️ Audio del llamante -> enviar a ElevenLabs
             if (elevenLabsWs && elevenLabsWs.readyState === WebSocket.OPEN) {
-              const audioData = Buffer.from(message.media.payload, "base64");
-              elevenLabsWs.send(audioData);
+              // Twilio te entrega media.payload en base64 mulaw 8kHz mono
+              const frame = {
+                type: "input_audio_buffer.append",
+                // Ajusta el nombre del campo si tu release usa otro:
+                audio_base64: message.media.payload,
+                // sample_rate: 8000, // a veces no es necesario repetir si ya lo seteaste en session.update
+                // encoding: "mulaw", // idem
+              };
+              elevenLabsWs.send(JSON.stringify(frame));
             }
+          } else if (message.event === "mark") {
+            // opcional: marks de Twilio
           } else if (message.event === "stop") {
             console.log("📞 [INCOMING] Stream stopped");
-            if (elevenLabsWs) {
-              elevenLabsWs.close();
-            }
+            if (elevenLabsWs) elevenLabsWs.close();
           }
         } catch (error) {
           console.error("❌ [INCOMING] Error processing message:", error);
@@ -2681,9 +2682,7 @@ fastify.register(async (fastifyInstance) => {
 
       ws.on("close", () => {
         console.log("📞 [INCOMING] WebSocket connection closed");
-        if (elevenLabsWs) {
-          elevenLabsWs.close();
-        }
+        if (elevenLabsWs) elevenLabsWs.close();
       });
     }
   );
