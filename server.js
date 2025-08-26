@@ -2618,11 +2618,28 @@ fastify.register(async (fastifyInstance) => {
                 // Espera tipos como: "audio", "agent_response", "user_transcript", "error", etc.
                 if (evt && evt.type === "audio" && evt.audio_base64) {
                   // 🔊 Reenviar audio del agente -> de vuelta a Twilio (mulaw base64)
+                  console.log(
+                    "🔊 [ELEVENLABS] Sending audio to Twilio, length:",
+                    evt.audio_base64.length
+                  );
                   ws.send(
                     JSON.stringify({
                       event: "media",
                       streamSid,
                       media: { payload: evt.audio_base64 },
+                    })
+                  );
+                } else if (evt && evt.type === "audio" && evt.audio) {
+                  // Formato alternativo de audio
+                  console.log(
+                    "🔊 [ELEVENLABS] Sending audio (alt format) to Twilio, length:",
+                    evt.audio.length
+                  );
+                  ws.send(
+                    JSON.stringify({
+                      event: "media",
+                      streamSid,
+                      media: { payload: evt.audio },
                     })
                   );
                 } else if (evt && evt.type === "agent_response") {
@@ -2632,9 +2649,17 @@ fastify.register(async (fastifyInstance) => {
                 } else if (evt && evt.type === "error") {
                   console.error("❌ [ELEVENLABS] error:", evt.message || evt);
                 } else {
+                  console.log(
+                    "🔍 [ELEVENLABS] Received event:",
+                    evt?.type || "unknown"
+                  );
                   // Si ElevenLabs manda audio crudo (raro), intenta fallback:
                   if (!evt && Buffer.isBuffer(raw)) {
                     const base64 = raw.toString("base64");
+                    console.log(
+                      "🔊 [ELEVENLABS] Sending raw audio to Twilio, length:",
+                      base64.length
+                    );
                     ws.send(
                       JSON.stringify({
                         event: "media",
@@ -2662,12 +2687,21 @@ fastify.register(async (fastifyInstance) => {
           } else if (message.event === "media") {
             // 🎙️ Audio del llamante -> enviar a ElevenLabs
             if (elevenLabsWs && elevenLabsWs.readyState === WebSocket.OPEN) {
+              console.log(
+                "🎙️ [TWILIO] Received audio from caller, length:",
+                message.media.payload.length
+              );
               // Twilio te entrega media.payload en base64 mulaw 8kHz mono
               const frame = {
                 type: "user_audio_chunk",
                 user_audio_chunk: message.media.payload,
               };
               elevenLabsWs.send(JSON.stringify(frame));
+            } else {
+              console.log(
+                "⚠️ [TWILIO] ElevenLabs WebSocket not ready, state:",
+                elevenLabsWs?.readyState
+              );
             }
           } else if (message.event === "mark") {
             // opcional: marks de Twilio
