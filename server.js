@@ -2595,20 +2595,7 @@ fastify.register(async (fastifyInstance) => {
                 // Configuración simple para incoming calls
                 const initialConfig = {
                   type: "conversation_initiation_client_data",
-                  conversation_config_override: {
-                    agent: {
-                      language: "es",
-                      first_message:
-                        "Hola, soy tu asistente virtual. ¿En qué puedo ayudarte?",
-                    },
-                    keep_alive: true,
-                  },
-                  dynamic_variables: {
-                    client_name: "Usuario",
-                    client_phone: fromNumber || "",
-                    client_email: "",
-                    client_id: "",
-                  },
+
                   usage: {
                     no_ip_reason: "user_ip_not_collected",
                   },
