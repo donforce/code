@@ -2595,7 +2595,9 @@ fastify.register(async (fastifyInstance) => {
                 // Configuración simple para incoming calls
                 const initialConfig = {
                   type: "conversation_initiation_client_data",
-
+                  conversation_config_override: {
+                    keep_alive: true,
+                  },
                   usage: {
                     no_ip_reason: "user_ip_not_collected",
                   },
