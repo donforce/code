@@ -2601,9 +2601,6 @@ fastify.register(async (fastifyInstance) => {
                       first_message:
                         "Hola, soy tu asistente virtual. ¿En qué puedo ayudarte?",
                     },
-                    tts: {
-                      voice_id: "",
-                    },
                     keep_alive: true,
                   },
                   dynamic_variables: {
