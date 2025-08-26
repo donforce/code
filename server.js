@@ -2616,32 +2616,31 @@ fastify.register(async (fastifyInstance) => {
 
                 // ⚠️ Maneja eventos del agente:
                 // Espera tipos como: "audio", "agent_response", "user_transcript", "error", etc.
-                if (evt && evt.type === "audio" && evt.audio_base64) {
-                  // 🔊 Reenviar audio del agente -> de vuelta a Twilio (mulaw base64)
-                  console.log(
-                    "🔊 [ELEVENLABS] Sending audio to Twilio, length:",
-                    evt.audio_base64.length
-                  );
-                  ws.send(
-                    JSON.stringify({
-                      event: "media",
-                      streamSid,
-                      media: { payload: evt.audio_base64 },
-                    })
-                  );
-                } else if (evt && evt.type === "audio" && evt.audio) {
-                  // Formato alternativo de audio
-                  console.log(
-                    "🔊 [ELEVENLABS] Sending audio (alt format) to Twilio, length:",
-                    evt.audio.length
-                  );
-                  ws.send(
-                    JSON.stringify({
-                      event: "media",
-                      streamSid,
-                      media: { payload: evt.audio },
-                    })
-                  );
+                if (evt && evt.type === "audio") {
+                  const audioPayload =
+                    evt.audio?.chunk ||
+                    evt.audio_event?.audio_base_64 ||
+                    evt.audio_base64;
+
+                  if (audioPayload) {
+                    // 🔊 Reenviar audio del agente -> de vuelta a Twilio (mulaw base64)
+                    console.log(
+                      "🔊 [ELEVENLABS] Sending audio to Twilio, length:",
+                      audioPayload.length
+                    );
+                    ws.send(
+                      JSON.stringify({
+                        event: "media",
+                        streamSid,
+                        media: { payload: audioPayload },
+                      })
+                    );
+                  } else {
+                    console.log(
+                      "⚠️ [ELEVENLABS] Audio event received but no payload found:",
+                      evt
+                    );
+                  }
                 } else if (evt && evt.type === "agent_response") {
                   console.log("🗣️ [ELEVENLABS] agent_response:", evt.text);
                 } else if (evt && evt.type === "user_transcript") {
