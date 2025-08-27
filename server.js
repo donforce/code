@@ -7991,6 +7991,33 @@ async function handleCheckoutSessionCompleted(session, stripe) {
       }
       // Resetear créditos del usuario según el plan
       const planCredits = await getPlanCredits(stripePriceId);
+      // Obtener el precio de la suscripción de Stripe
+      let subscriptionPrice = 159.2; // Valor por defecto
+      if (subscription?.items?.data?.[0]?.price?.unit_amount) {
+        subscriptionPrice = subscription.items.data[0].price.unit_amount / 100; // Convertir de centavos a dólares
+      } else if (subscription?.items?.data?.[0]?.price?.unit_amount_decimal) {
+        subscriptionPrice =
+          parseFloat(subscription.items.data[0].price.unit_amount_decimal) /
+          100; // Convertir de centavos a dólares
+      }
+
+      // Obtener fechas del período actual
+      const currentPeriodStart = subscription?.current_period_start
+        ? new Date(subscription.current_period_start * 1000).toISOString()
+        : new Date().toISOString();
+      const currentPeriodEnd = subscription?.current_period_end
+        ? new Date(subscription.current_period_end * 1000).toISOString()
+        : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 días por defecto
+
+      console.log("💰 [STRIPE] Guardando precio de suscripción:", {
+        userId: user.id,
+        subscriptionPrice,
+        stripePriceId,
+        planCredits,
+        currentPeriodStart,
+        currentPeriodEnd,
+      });
+
       await supabase.from("user_subscriptions").upsert(
         {
           user_id: user.id,
@@ -7998,8 +8025,10 @@ async function handleCheckoutSessionCompleted(session, stripe) {
           plan_id: planUuid,
           status: subscription.status,
           stripe_customer_id: user.stripe_customer_id || session.customer,
-          credits_per_month: planCredits, // <-- aquí
-          // ...otros campos relevantes
+          credits_per_month: planCredits,
+          price_per_month: subscriptionPrice, // <-- Agregar precio mensual
+          current_period_start: currentPeriodStart,
+          current_period_end: currentPeriodEnd,
         },
         { onConflict: "user_id" }
       );
@@ -8148,6 +8177,25 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
     // 5. Upsert en user_subscriptions (solo si hay user y planUuid)
     if (user && planUuid) {
       const planCredits = await getPlanCredits(stripePriceId);
+
+      // Obtener el precio de la suscripción de Stripe
+      let subscriptionPrice = 159.2; // Valor por defecto
+      if (subscription?.items?.data?.[0]?.price?.unit_amount) {
+        subscriptionPrice = subscription.items.data[0].price.unit_amount / 100; // Convertir de centavos a dólares
+      } else if (subscription?.items?.data?.[0]?.price?.unit_amount_decimal) {
+        subscriptionPrice =
+          parseFloat(subscription.items.data[0].price.unit_amount_decimal) /
+          100; // Convertir de centavos a dólares
+      }
+
+      // Obtener fechas del período actual
+      const currentPeriodStart = subscription?.current_period_start
+        ? new Date(subscription.current_period_start * 1000).toISOString()
+        : new Date().toISOString();
+      const currentPeriodEnd = subscription?.current_period_end
+        ? new Date(subscription.current_period_end * 1000).toISOString()
+        : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 días por defecto
+
       const { data: upsertData, error: upsertError } = await supabase
         .from("user_subscriptions")
         .upsert(
@@ -8157,8 +8205,10 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
             plan_id: planUuid,
             status: subscription?.status || null,
             stripe_customer_id: user.stripe_customer_id || invoice.customer,
-            credits_per_month: planCredits, // <-- aquí
-            // ... otros campos relevantes
+            credits_per_month: planCredits,
+            price_per_month: subscriptionPrice, // <-- Agregar precio mensual
+            current_period_start: currentPeriodStart,
+            current_period_end: currentPeriodEnd,
           },
           { onConflict: "user_id" }
         );
