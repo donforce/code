@@ -3465,9 +3465,24 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
 
                         if (callSid) {
                           try {
-                            await twilioClient
+                            // Get call data to find the user
+                            const { data: callData, error: callError } =
+                              await supabase
+                                .from("calls")
+                                .select("user_id")
+                                .eq("call_sid", callSid)
+                                .single();
+
+                            // Get the correct Twilio client
+                            const { client: twilioClientToUse, accountInfo } =
+                              await getTwilioClientForUser(callData?.user_id);
+
+                            await twilioClientToUse
                               .calls(callSid)
                               .update({ status: "completed" });
+                            console.log(
+                              `[Twilio] Call ${callSid} ended using ${accountInfo}.`
+                            );
                           } catch (err) {
                             console.error("[Twilio] Error ending call:", err);
                           }
@@ -3916,11 +3931,22 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
 
               if (callSid) {
                 try {
-                  await twilioClient
+                  // Get call data to find the user
+                  const { data: callData, error: callError } = await supabase
+                    .from("calls")
+                    .select("user_id")
+                    .eq("call_sid", callSid)
+                    .single();
+
+                  // Get the correct Twilio client
+                  const { client: twilioClientToUse, accountInfo } =
+                    await getTwilioClientForUser(callData?.user_id);
+
+                  await twilioClientToUse
                     .calls(callSid)
                     .update({ status: "completed" });
                   console.log(
-                    `[Twilio] Call ${callSid} ended due to ElevenLabs disconnection.`
+                    `[Twilio] Call ${callSid} ended due to ElevenLabs disconnection using ${accountInfo}.`
                   );
                 } catch (err) {
                   console.error("[Twilio] Error ending call:", err);
@@ -4138,8 +4164,12 @@ async function cleanupStuckCalls() {
 
     for (const call of stuckCalls) {
       try {
+        // Get the correct Twilio client for this call
+        const { client: twilioClientToUse, accountInfo } =
+          await getTwilioClientForUser(call.user_id);
+
         // Get the actual call status from Twilio
-        const twilioCall = await twilioClient.calls(call.call_sid).fetch();
+        const twilioCall = await twilioClientToUse.calls(call.call_sid).fetch();
 
         console.log(
           `[CLEANUP] Call ${call.call_sid} status in Twilio: ${twilioCall.status}`
@@ -4221,8 +4251,8 @@ async function cleanupStuckCalls() {
             );
 
             try {
-              // Hang up the call
-              await twilioClient
+              // Hang up the call using the correct client
+              await twilioClientToUse
                 .calls(call.call_sid)
                 .update({ status: "completed" });
 
@@ -4686,7 +4716,25 @@ fastify.post("/twilio-status", async (request, reply) => {
 
         // Fallback: try to save at least the call_uri if we can construct it
         try {
-          const fallbackCallUri = `/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Calls/${callSid}.json`;
+          // Get user data to determine the correct account SID
+          let accountSidToUse = process.env.TWILIO_ACCOUNT_SID; // Default to main account
+
+          if (existingCall && existingCall.user_id) {
+            const { data: userData, error: userError } = await supabase
+              .from("users")
+              .select("twilio_subaccount_sid")
+              .eq("id", existingCall.user_id)
+              .single();
+
+            if (!userError && userData?.twilio_subaccount_sid) {
+              accountSidToUse = userData.twilio_subaccount_sid;
+              console.log(
+                `🔍 [TWILIO STATUS] Using subaccount for fallback call_uri: ${accountSidToUse}`
+              );
+            }
+          }
+
+          const fallbackCallUri = `/2010-04-01/Accounts/${accountSidToUse}/Calls/${callSid}.json`;
           console.log(
             "🔄 [TWILIO STATUS] Using fallback call_uri:",
             fallbackCallUri
@@ -4709,7 +4757,25 @@ fastify.post("/twilio-status", async (request, reply) => {
     } else {
       // For non-completed calls, still try to save call_uri if we can construct it
       try {
-        const fallbackCallUri = `/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Calls/${callSid}.json`;
+        // Get user data to determine the correct account SID
+        let accountSidToUse = process.env.TWILIO_ACCOUNT_SID; // Default to main account
+
+        if (existingCall && existingCall.user_id) {
+          const { data: userData, error: userError } = await supabase
+            .from("users")
+            .select("twilio_subaccount_sid")
+            .eq("id", existingCall.user_id)
+            .single();
+
+          if (!userError && userData?.twilio_subaccount_sid) {
+            accountSidToUse = userData.twilio_subaccount_sid;
+            console.log(
+              `🔍 [TWILIO STATUS] Using subaccount for non-completed call_uri: ${accountSidToUse}`
+            );
+          }
+        }
+
+        const fallbackCallUri = `/2010-04-01/Accounts/${accountSidToUse}/Calls/${callSid}.json`;
         console.log(
           "🔄 [TWILIO STATUS] Saving call_uri for non-completed call:",
           fallbackCallUri
@@ -7415,16 +7481,77 @@ async function createCalendarEvent(scheduledCallInfo, call) {
   }
 }
 
+// Función auxiliar para obtener el cliente de Twilio correcto para un usuario
+async function getTwilioClientForUser(userId) {
+  try {
+    if (!userId) {
+      console.log("🔍 [TWILIO CLIENT] No user ID provided, using main account");
+      return { client: twilioClient, accountInfo: "Main account" };
+    }
+
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select("twilio_subaccount_sid, twilio_auth_token")
+      .eq("id", userId)
+      .single();
+
+    if (
+      userError ||
+      !userData?.twilio_subaccount_sid ||
+      !userData?.twilio_auth_token
+    ) {
+      console.log(
+        `🔍 [TWILIO CLIENT] No subaccount for user ${userId}, using main account`
+      );
+      return { client: twilioClient, accountInfo: "Main account" };
+    }
+
+    // Use subaccount client
+    const userClient = new Twilio(
+      userData.twilio_subaccount_sid,
+      userData.twilio_auth_token
+    );
+
+    console.log(
+      `🔍 [TWILIO CLIENT] Using subaccount for user ${userId}: ${userData.twilio_subaccount_sid}`
+    );
+
+    return {
+      client: userClient,
+      accountInfo: `Subaccount: ${userData.twilio_subaccount_sid}`,
+    };
+  } catch (error) {
+    console.error(
+      `❌ [TWILIO CLIENT] Error getting client for user ${userId}:`,
+      error
+    );
+    return { client: twilioClient, accountInfo: "Main account (fallback)" };
+  }
+}
+
 // Función para reanudar la llamada después de pausa
 const resumeTwilioCall = async (callSid, delayMs = 1000) => {
   if (!callSid) return;
   setTimeout(async () => {
     try {
-      await twilioClient.calls(callSid).update({
+      // Get call data to find the user
+      const { data: callData, error: callError } = await supabase
+        .from("calls")
+        .select("user_id")
+        .eq("call_sid", callSid)
+        .single();
+
+      // Get the correct Twilio client
+      const { client: twilioClientToUse, accountInfo } =
+        await getTwilioClientForUser(callData?.user_id);
+
+      await twilioClientToUse.calls(callSid).update({
         url: `https://${RAILWAY_PUBLIC_DOMAIN}/twiml/resume`,
         method: "POST",
       });
-      console.log(`🔄 [TWILIO] Llamada reanudada para callSid: ${callSid}`);
+      console.log(
+        `🔄 [TWILIO] Llamada reanudada para callSid: ${callSid} usando ${accountInfo}`
+      );
     } catch (err) {
       console.error("❌ [TWILIO] Error reanudando llamada:", err);
     }
