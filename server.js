@@ -8947,19 +8947,39 @@ async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
     let accountSid = TWILIO_ACCOUNT_SID;
     let authToken = TWILIO_AUTH_TOKEN;
 
-    if (
-      callData.users?.twilio_subaccount_sid &&
-      callData.users?.twilio_auth_token
-    ) {
+    // callData es un array, tomar el primer elemento
+    const call = callData && callData.length > 0 ? callData[0] : null;
+
+    console.log(`🎙️ [RECORDING DOWNLOAD] Call data from DB for ${callSid}:`, {
+      callDataLength: callData ? callData.length : 0,
+      call: call
+        ? {
+            user_id: call.user_id,
+            users: call.users
+              ? {
+                  twilio_subaccount_sid: call.users.twilio_subaccount_sid
+                    ? call.users.twilio_subaccount_sid.substring(0, 10) + "..."
+                    : null,
+                  has_twilio_auth_token: !!call.users.twilio_auth_token,
+                  auth_token_length: call.users.twilio_auth_token
+                    ? call.users.twilio_auth_token.length
+                    : 0,
+                }
+              : null,
+          }
+        : null,
+    });
+
+    if (call?.users?.twilio_subaccount_sid && call?.users?.twilio_auth_token) {
       // Usar las credenciales de la subcuenta del usuario
-      accountSid = callData.users.twilio_subaccount_sid;
-      authToken = callData.users.twilio_auth_token;
+      accountSid = call.users.twilio_subaccount_sid;
+      authToken = call.users.twilio_auth_token;
       twilioClientToUse = new Twilio(accountSid, authToken);
 
       console.log(
         `🎙️ [RECORDING DOWNLOAD] Using user's subaccount for call ${callSid}:`,
         {
-          userId: callData.user_id,
+          userId: call.user_id,
           subaccountSid: accountSid,
           hasAuthToken: !!authToken,
           authTokenLength: authToken ? authToken.length : 0,
