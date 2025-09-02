@@ -5129,8 +5129,7 @@ fastify.post("/twilio-status", async (request, reply) => {
       );
     }
 
-    // Run async webhook/meta events after updating call status
-    sendCallCompletionData(supabase, callSid);
+    // Note: Webhook will be sent from ElevenLabs webhook after transcript processing
     // Return 200 OK with empty response as Twilio expects
     reply.code(200).send();
   } catch (error) {
@@ -5989,6 +5988,12 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     console.log(
       "ℹ️ [ELEVENLABS] Call processing complete - worker will be released by Twilio status webhook"
     );
+
+    // 🆕 ENVIAR WEBHOOK DESPUÉS DE PROCESAR TODO EL TRANSCRIPT Y ANÁLISIS
+    console.log(
+      "📤 [ELEVENLABS] Sending webhook with complete data including transcript_summary_es"
+    );
+    sendCallCompletionData(supabase, call.call_sid);
 
     return reply.send({
       success: true,
