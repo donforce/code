@@ -63,8 +63,12 @@ async function handleWhatsAppMessage(supabase, request, reply) {
       });
     }
 
+    // Twilio envía los datos como parámetros de query string (form-encoded)
+    // Los datos vienen en request.body cuando Fastify los parsea
     const body = request.body;
     console.log("📱 [WHATSAPP] Body del mensaje:", body);
+    console.log("📱 [WHATSAPP] Headers:", request.headers);
+    console.log("📱 [WHATSAPP] Query params:", request.query);
 
     // Verificar que sea un mensaje de WhatsApp
     if (body.From && body.Body && body.To) {
