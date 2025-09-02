@@ -75,6 +75,17 @@ const fastify = Fastify({
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
+// Configurar parser específico para webhooks de WhatsApp
+fastify.addContentTypeParser(
+  "application/x-www-form-urlencoded",
+  { parseAs: "string" },
+  (req, body, done) => {
+    console.log("🔧 [PARSER] Parsing form data for WhatsApp");
+    console.log("🔧 [PARSER] Raw body:", body);
+    done(null, body);
+  }
+);
+
 fastify.addContentTypeParser(
   "application/json",
   { parseAs: "buffer" },
@@ -8888,6 +8899,8 @@ fastify.post("/twilio-recording-status", async (request, reply) => {
 // Endpoint para limpiar grabaciones antiguas manualmente
 // ===== RUTA DE WHATSAPP =====
 fastify.post("/webhook/whatsapp", async (request, reply) => {
+  console.log("🚀 [SERVER] Webhook de WhatsApp recibido en POST");
+  console.log("🚀 [SERVER] Headers:", request.headers);
   return await handleWhatsAppMessage(supabase, request, reply);
 });
 

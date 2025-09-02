@@ -49,6 +49,9 @@ function validateTwilioWebhook(request, webhookUrl) {
 // Función para procesar mensajes entrantes de WhatsApp
 async function handleWhatsAppMessage(supabase, request, reply) {
   try {
+    console.log("📱 [WHATSAPP] ===== INICIO DE PROCESAMIENTO =====");
+    console.log("📱 [WHATSAPP] URL:", request.url);
+    console.log("📱 [WHATSAPP] Método:", request.method);
     console.log("📱 [WHATSAPP] Mensaje recibido");
 
     // Validar webhook de Twilio (opcional pero recomendado)
@@ -63,15 +66,21 @@ async function handleWhatsAppMessage(supabase, request, reply) {
       });
     }
 
-    // Twilio envía los datos como parámetros de query string (form-encoded)
-    // Los datos vienen en request.body cuando Fastify los parsea
-    const body = request.body;
+    // Twilio puede enviar datos como body (POST) o query params (GET)
+    // Priorizar body, pero también verificar query params
+    const body = request.body || {};
+    const query = request.query || {};
+
+    // Combinar datos del body y query params
+    const messageData = { ...query, ...body };
+
     console.log("📱 [WHATSAPP] Body del mensaje:", body);
+    console.log("📱 [WHATSAPP] Query params:", query);
+    console.log("📱 [WHATSAPP] Datos combinados:", messageData);
     console.log("📱 [WHATSAPP] Headers:", request.headers);
-    console.log("📱 [WHATSAPP] Query params:", request.query);
 
     // Verificar que sea un mensaje de WhatsApp
-    if (body.From && body.Body && body.To) {
+    if (messageData.From && messageData.Body && messageData.To) {
       const fromNumber = body.From.replace("whatsapp:", "");
       const toNumber = body.To.replace("whatsapp:", "");
       const messageBody = body.Body;
