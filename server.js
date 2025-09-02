@@ -9,6 +9,7 @@ import os from "os";
 import { performance } from "perf_hooks";
 import crypto from "crypto";
 import { sendCallCompletionData } from "./webhook-handlers.js";
+import { handleWhatsAppMessage } from "./whatsapp-handler.cjs";
 
 dotenv.config();
 
@@ -7829,10 +7830,7 @@ fastify.post("/webhook/stripe", async (request, reply) => {
     const rawBodyString = request.rawBody
       ? request.rawBody.toString("utf8")
       : "";
-    console.log(
-      "📋 [STRIPE] Request body preview:",
-      rawBodyString.substring(0, 200) + "..."
-    );
+    console.log("📋 [STRIPE] Request body COMPLETO:", rawBodyString);
 
     const rawBody = request.rawBody;
     const signature = request.headers["stripe-signature"];
@@ -8888,6 +8886,11 @@ fastify.post("/twilio-recording-status", async (request, reply) => {
 // NOTA: Esta función se ha movido a Supabase para mejor rendimiento
 // Ver: supabase/migrations/20250106_add_recording_cleanup.sql
 // Endpoint para limpiar grabaciones antiguas manualmente
+// ===== RUTA DE WHATSAPP =====
+fastify.post("/webhook/whatsapp", async (request, reply) => {
+  return await handleWhatsAppMessage(request, reply);
+});
+
 fastify.post("/api/admin/cleanup-recordings", async (request, reply) => {
   try {
     console.log("🧹 [ADMIN] Manual recording cleanup requested");
@@ -8987,6 +8990,7 @@ async function initializeRecordingBucket() {
     return false;
   }
 }
+
 // Función para descargar grabación de Twilio y guardarla en Supabase Storage
 async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
   try {

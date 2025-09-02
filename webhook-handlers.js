@@ -31,7 +31,7 @@ async function sendWebhookData(supabase, callData, leadData, userData) {
         call_sid: callData.call_sid,
         status: callData.status,
         duration: callData.duration,
-        result: callData.result,
+        result: callData.detailed_result || callData.result,
         connection_status: callData.connection_status,
         connection_failure_reason: callData.connection_failure_reason,
         created_at: callData.created_at,
