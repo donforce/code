@@ -5929,6 +5929,31 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
                 `"${detailedResult.trim()}"`
               );
             }
+
+            // 🆕 ENVIAR WEBHOOK DESPUÉS DE GUARDAR EL ANÁLISIS COMPLETO
+            console.log(
+              "📤 [ANALYSIS] Sending webhook with complete data including transcript_summary_es"
+            );
+
+            // Obtener call_sid para enviar el webhook
+            const { data: callForWebhook, error: webhookError } = await supabase
+              .from("calls")
+              .select("call_sid")
+              .eq("conversation_id", conversation_id)
+              .single();
+
+            if (callForWebhook && callForWebhook.call_sid) {
+              console.log(
+                "📤 [ANALYSIS] Call SID found:",
+                callForWebhook.call_sid
+              );
+              sendCallCompletionData(supabase, callForWebhook.call_sid);
+            } else {
+              console.warn("⚠️ [ANALYSIS] Call SID not found for webhook");
+              if (webhookError) {
+                console.error("❌ [ANALYSIS] Webhook error:", webhookError);
+              }
+            }
           }
         }
       } else {
@@ -5989,11 +6014,7 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       "ℹ️ [ELEVENLABS] Call processing complete - worker will be released by Twilio status webhook"
     );
 
-    // 🆕 ENVIAR WEBHOOK DESPUÉS DE PROCESAR TODO EL TRANSCRIPT Y ANÁLISIS
-    console.log(
-      "📤 [ELEVENLABS] Sending webhook with complete data including transcript_summary_es"
-    );
-    sendCallCompletionData(supabase, call.call_sid);
+    // Webhook ya enviado después de guardar el análisis completo
 
     return reply.send({
       success: true,
