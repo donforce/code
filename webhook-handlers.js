@@ -38,6 +38,7 @@ async function sendWebhookData(supabase, callData, leadData, userData) {
         updated_at: callData.updated_at,
         error_code: callData.error_code,
         error_message: callData.error_message,
+        transcript_summary_es: callData.transcript_summary_es, // 🆕 Resumen de IA en español
       },
       lead: {
         id: leadData.id,
