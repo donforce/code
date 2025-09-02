@@ -75,16 +75,8 @@ const fastify = Fastify({
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
-// Configurar parser específico para webhooks de WhatsApp
-fastify.addContentTypeParser(
-  "application/x-www-form-urlencoded",
-  { parseAs: "string" },
-  (req, body, done) => {
-    console.log("🔧 [PARSER] Parsing form data for WhatsApp");
-    console.log("🔧 [PARSER] Raw body:", body);
-    done(null, body);
-  }
-);
+// fastifyFormBody ya registra un parser para application/x-www-form-urlencoded
+// No podemos agregar otro parser para el mismo content-type
 
 fastify.addContentTypeParser(
   "application/json",
