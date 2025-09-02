@@ -8888,7 +8888,7 @@ fastify.post("/twilio-recording-status", async (request, reply) => {
 // Endpoint para limpiar grabaciones antiguas manualmente
 // ===== RUTA DE WHATSAPP =====
 fastify.post("/webhook/whatsapp", async (request, reply) => {
-  return await handleWhatsAppMessage(request, reply);
+  return await handleWhatsAppMessage(supabase, request, reply);
 });
 
 fastify.post("/api/admin/cleanup-recordings", async (request, reply) => {

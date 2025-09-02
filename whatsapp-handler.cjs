@@ -9,11 +9,7 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Configuración de Supabase
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-);
+// El cliente de Supabase se pasa como parámetro desde server.js (mismo patrón que webhook-handlers.js)
 
 // Find your Account SID and Auth Token at twilio.com/console
 // and set the environment variables. See http://twil.io/secure
@@ -51,7 +47,7 @@ function validateTwilioWebhook(request, webhookUrl) {
 }
 
 // Función para procesar mensajes entrantes de WhatsApp
-async function handleWhatsAppMessage(request, reply) {
+async function handleWhatsAppMessage(supabase, request, reply) {
   try {
     console.log("📱 [WHATSAPP] Mensaje recibido");
 
@@ -89,16 +85,22 @@ async function handleWhatsAppMessage(request, reply) {
 
       // Buscar o crear conversación en la base de datos
       const conversation = await getOrCreateConversation(
+        supabase,
         fromNumber,
         toNumber,
         userId
       );
 
       // Generar respuesta con OpenAI
-      const aiResponse = await generateAIResponse(messageBody, conversation);
+      const aiResponse = await generateAIResponse(
+        supabase,
+        messageBody,
+        conversation
+      );
 
       // Guardar mensaje entrante en la base de datos
       await saveMessage(
+        supabase,
         conversation.id,
         fromNumber,
         messageBody,
@@ -112,6 +114,7 @@ async function handleWhatsAppMessage(request, reply) {
 
         // Guardar respuesta de IA en la base de datos
         await saveMessage(
+          supabase,
           conversation.id,
           toNumber,
           aiResponse,
@@ -120,7 +123,7 @@ async function handleWhatsAppMessage(request, reply) {
         );
 
         // Actualizar conversación
-        await updateConversation(conversation.id, aiResponse);
+        await updateConversation(supabase, conversation.id, aiResponse);
 
         console.log("✅ [WHATSAPP] Respuesta enviada y guardada exitosamente");
       } catch (sendError) {
@@ -167,7 +170,12 @@ async function handleWhatsAppMessage(request, reply) {
 }
 
 // Función para obtener o crear una conversación
-async function getOrCreateConversation(fromNumber, toNumber, userId = null) {
+async function getOrCreateConversation(
+  supabase,
+  fromNumber,
+  toNumber,
+  userId = null
+) {
   try {
     // Buscar conversación existente
     const { data: existingConversation, error: searchError } = await supabase
@@ -217,7 +225,7 @@ async function getOrCreateConversation(fromNumber, toNumber, userId = null) {
 }
 
 // Función para generar respuesta con OpenAI
-async function generateAIResponse(userMessage, conversation) {
+async function generateAIResponse(supabase, userMessage, conversation) {
   try {
     console.log(
       "🤖 [OPENAI] Generando respuesta para:",
@@ -301,6 +309,7 @@ async function sendWhatsAppMessage(toNumber, fromNumber, message) {
 
 // Función para guardar mensaje en la base de datos
 async function saveMessage(
+  supabase,
   conversationId,
   phoneNumber,
   messageContent,
@@ -334,7 +343,7 @@ async function saveMessage(
 }
 
 // Función para actualizar conversación
-async function updateConversation(conversationId, lastMessage) {
+async function updateConversation(supabase, conversationId, lastMessage) {
   try {
     const { error: updateError } = await supabase
       .from("whatsapp_conversations")
