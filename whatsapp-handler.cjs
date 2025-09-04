@@ -49,16 +49,7 @@ function validateTwilioWebhook(request, webhookUrl) {
 // Función para procesar mensajes entrantes de WhatsApp
 async function handleWhatsAppMessage(supabase, request, reply) {
   try {
-    console.log("📱 [WHATSAPP] ===== INICIO DE PROCESAMIENTO =====");
-    console.log("📱 [WHATSAPP] URL:", request.url);
-    console.log("📱 [WHATSAPP] Método:", request.method);
-    console.log("📱 [WHATSAPP] Mensaje recibido");
-    console.log("📱 [WHATSAPP] Supabase client type:", typeof supabase);
-    console.log(
-      "📱 [WHATSAPP] Supabase client keys:",
-      Object.keys(supabase || {})
-    );
-    console.log("📱 [WHATSAPP] Supabase client:", supabase);
+    console.log("📱 [WHATSAPP] Mensaje recibido de WhatsApp");
 
     // Validar webhook de Twilio (opcional pero recomendado)
     const webhookUrl = `${request.protocol}://${request.hostname}${request.url}`;
@@ -80,10 +71,7 @@ async function handleWhatsAppMessage(supabase, request, reply) {
     // Combinar datos del body y query params
     const messageData = { ...query, ...body };
 
-    console.log("📱 [WHATSAPP] Body del mensaje:", body);
-    console.log("📱 [WHATSAPP] Query params:", query);
-    console.log("📱 [WHATSAPP] Datos combinados:", messageData);
-    console.log("📱 [WHATSAPP] Headers:", request.headers);
+    // Logs de debug removidos para producción
 
     // Verificar que sea un mensaje de WhatsApp
     if (messageData.From && messageData.Body && messageData.To) {
@@ -505,25 +493,36 @@ usa las herramientas disponibles para obtener información actualizada y persona
           let result;
           switch (functionName) {
             case "getUserInfo":
-              result = await tools.getUserInfo(functionArgs.userId);
+              result = await tools.getUserInfo(supabase, functionArgs.userId);
               break;
             case "getUserLeadsStats":
               result = await tools.getUserLeadsStats(
+                supabase,
                 functionArgs.userId,
                 functionArgs.period
               );
               break;
             case "getPricingInfo":
-              result = await tools.getPricingInfo(functionArgs.country);
+              result = await tools.getPricingInfo(
+                supabase,
+                functionArgs.country
+              );
               break;
             case "getCallQueueStatus":
-              result = await tools.getCallQueueStatus(functionArgs.userId);
+              result = await tools.getCallQueueStatus(
+                supabase,
+                functionArgs.userId
+              );
               break;
             case "getUserBillingInfo":
-              result = await tools.getUserBillingInfo(functionArgs.userId);
+              result = await tools.getUserBillingInfo(
+                supabase,
+                functionArgs.userId
+              );
               break;
             case "getAvailableDiscounts":
               result = await tools.getAvailableDiscounts(
+                supabase,
                 functionArgs.userId,
                 functionArgs.plan
               );
