@@ -3042,10 +3042,10 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
 
                 interruption_settings: {
                   enabled: true,
-                  sensitivity: "ultra_high", // 🚀 ULTRA RÁPIDO: Sensibilidad ultra alta para detección inmediata
-                  min_duration: 0.1, // 🚀 ULTRA RÁPIDO: 0.1 segundos para detección instantánea del fin de habla
-                  max_duration: 0.5, // 🚀 ULTRA RÁPIDO: 0.5 segundos máximo para respuestas ultra rápidas
-                  cooldown_period: 0.1, // 🚀 ULTRA RÁPIDO: 0.1 segundos de cooldown para reactividad máxima
+                  sensitivity: "medium", // Sensibilidad media para interrupciones más naturales
+                  min_duration: 0.5, // 0.5 segundos para detectar interrupciones reales
+                  max_duration: 2.0, // Hasta 3 segundos de interrupción
+                  cooldown_period: 0.8, // 0.8 segundos de cooldown para evitar interrupciones accidentales
                 },
               },
               dynamic_variables: {
