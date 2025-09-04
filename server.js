@@ -75,6 +75,18 @@ const fastify = Fastify({
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
+// Agregar logging para ver si fastifyFormBody está funcionando
+fastify.addHook("onRequest", (request, reply, done) => {
+  if (request.url === "/webhook/whatsapp") {
+    console.log("🔧 [MIDDLEWARE] Request recibido en WhatsApp webhook");
+    console.log(
+      "🔧 [MIDDLEWARE] Content-Type:",
+      request.headers["content-type"]
+    );
+  }
+  done();
+});
+
 // fastifyFormBody ya registra un parser para application/x-www-form-urlencoded
 // No podemos agregar otro parser para el mismo content-type
 
@@ -8891,8 +8903,14 @@ fastify.post("/twilio-recording-status", async (request, reply) => {
 // Endpoint para limpiar grabaciones antiguas manualmente
 // ===== RUTA DE WHATSAPP =====
 fastify.post("/webhook/whatsapp", async (request, reply) => {
-  console.log("🚀 [SERVER] Webhook de WhatsApp recibido en POST");
+  console.log("🚀 [SERVER] ===== WEBHOOK WHATSAPP RECIBIDO =====");
+  console.log("🚀 [SERVER] URL:", request.url);
+  console.log("🚀 [SERVER] Método:", request.method);
   console.log("🚀 [SERVER] Headers:", request.headers);
+  console.log("🚀 [SERVER] Body:", request.body);
+  console.log("🚀 [SERVER] Query:", request.query);
+  console.log("🚀 [SERVER] Supabase client type:", typeof supabase);
+  console.log("🚀 [SERVER] Supabase client keys:", Object.keys(supabase || {}));
   return await handleWhatsAppMessage(supabase, request, reply);
 });
 

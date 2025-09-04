@@ -53,6 +53,9 @@ async function handleWhatsAppMessage(supabase, request, reply) {
     console.log("📱 [WHATSAPP] URL:", request.url);
     console.log("📱 [WHATSAPP] Método:", request.method);
     console.log("📱 [WHATSAPP] Mensaje recibido");
+    console.log("📱 [WHATSAPP] Supabase client type:", typeof supabase);
+    console.log("📱 [WHATSAPP] Supabase client keys:", Object.keys(supabase || {}));
+    console.log("📱 [WHATSAPP] Supabase client:", supabase);
 
     // Validar webhook de Twilio (opcional pero recomendado)
     const webhookUrl = `${request.protocol}://${request.hostname}${request.url}`;
