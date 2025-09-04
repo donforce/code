@@ -360,7 +360,110 @@ IMPORTANTE:
       model: modelName,
       instructions,
       input: userMessage,
-      // tools removidas temporalmente para evitar errores de API
+      // tools comentadas temporalmente para evitar errores de API
+      /*
+      tools: [
+        {
+          type: "function",
+          name: "getUserInfo",
+          description: "Obtener información completa del usuario registrado",
+          parameters: {
+            type: "object",
+            properties: {
+              userId: {
+                type: "string",
+                description: "ID del usuario",
+              },
+            },
+            required: ["userId"],
+            additionalProperties: false,
+          },
+          strict: true,
+        },
+        {
+          type: "function",
+          name: "getUserLeadsStats",
+          description:
+            "Obtener estadísticas de leads del usuario (period opcional: 'week' o 'month', por defecto 'week')",
+          parameters: {
+            type: "object",
+            properties: {
+              userId: {
+                type: "string",
+                description: "ID del usuario",
+              },
+            },
+            required: ["userId"],
+            additionalProperties: false,
+          },
+          strict: true,
+        },
+        {
+          type: "function",
+          name: "getPricingInfo",
+          description:
+            "Obtener información de precios y créditos por país (country opcional, por defecto 'US')",
+          parameters: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+          strict: true,
+        },
+        {
+          type: "function",
+          name: "getCallQueueStatus",
+          description: "Obtener estado de la cola de llamadas del usuario",
+          parameters: {
+            type: "object",
+            properties: {
+              userId: {
+                type: "string",
+                description: "ID del usuario",
+              },
+            },
+            required: ["userId"],
+            additionalProperties: false,
+          },
+          strict: true,
+        },
+        {
+          type: "function",
+          name: "getUserBillingInfo",
+          description: "Obtener información de facturación del usuario",
+          parameters: {
+            type: "object",
+            properties: {
+              userId: {
+                type: "string",
+                description: "ID del usuario",
+              },
+            },
+            required: ["userId"],
+            additionalProperties: false,
+          },
+          strict: true,
+        },
+        {
+          type: "function",
+          name: "getAvailableDiscounts",
+          description:
+            "Obtener descuentos disponibles para el usuario (plan opcional, por defecto se detecta automáticamente)",
+          parameters: {
+            type: "object",
+            properties: {
+              userId: {
+                type: "string",
+                description: "ID del usuario",
+              },
+            },
+            required: ["userId"],
+            additionalProperties: false,
+          },
+          strict: true,
+        },
+      ],
+      */
       temperature: 0.7,
     };
 
@@ -379,6 +482,8 @@ IMPORTANTE:
       (Array.isArray(r.output) && r.output[0]?.content?.[0]?.text) ||
       "Disculpa, ¿podrías repetir tu consulta?";
 
+    // Tools comentadas temporalmente - solo usar respuesta directa
+    /*
     // Si el modelo usó tools, ejecutarlas y generar respuesta final
     if (r.tool_calls && r.tool_calls.length > 0) {
       console.log(
@@ -399,46 +504,12 @@ IMPORTANTE:
           );
 
           let result;
-          switch (functionName) {
-            case "getUserInfo":
-              result = await tools.getUserInfo(supabase, functionArgs.userId);
-              break;
-            case "getUserLeadsStats":
-              result = await tools.getUserLeadsStats(
-                supabase,
-                functionArgs.userId,
-                functionArgs.period
-              );
-              break;
-            case "getPricingInfo":
-              result = await tools.getPricingInfo(
-                supabase,
-                functionArgs.country
-              );
-              break;
-            case "getCallQueueStatus":
-              result = await tools.getCallQueueStatus(
-                supabase,
-                functionArgs.userId
-              );
-              break;
-            case "getUserBillingInfo":
-              result = await tools.getUserBillingInfo(
-                supabase,
-                functionArgs.userId
-              );
-              break;
-            case "getAvailableDiscounts":
-              result = await tools.getAvailableDiscounts(
-                supabase,
-                functionArgs.userId,
-                functionArgs.plan
-              );
-              break;
-            default:
-              result = { success: false, error: "Función no implementada" };
-          }
-
+          // Tools comentadas temporalmente para evitar errores
+          result = {
+            success: false,
+            error: "Tools temporalmente deshabilitadas",
+          };
+          
           toolResults.push({
             tool_call_id: toolCall.id,
             function_name: functionName,
@@ -477,6 +548,7 @@ IMPORTANTE:
           finalResponse;
       }
     }
+    */
 
     // Persistir el nuevo response.id para la próxima vuelta
     await supabase
