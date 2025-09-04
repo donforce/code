@@ -2754,7 +2754,7 @@ fastify.register(async (fastifyInstance) => {
       let lastAudioTime = Date.now(); // Para detectar silencios largos
       let silenceThreshold = 15000; // 15 segundos de silencio para considerar buzón de voz
       let audioBuffer = []; // Buffer para acumular audio antes de enviar
-      let bufferSize = 1; // 🚀 ULTRA RÁPIDO: Buffer mínimo para latencia ultra baja (reducido de 5 a 1)
+      let bufferSize = 0; // 🚀 ULTRA RÁPIDO: Buffer cero para envío inmediato (reducido de 1 a 0)
       let bufferTimeout = null; // Timeout para enviar buffer parcial
 
       // 🆕 NUEVAS VARIABLES PARA MEJORAR DETECCIÓN DE DUPLICADOS
@@ -3029,13 +3029,13 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                 conversation_config: {
                   enable_fast_response: true, // Habilitar respuesta rápida
                   enable_instant_processing: true, // Procesamiento instantáneo
-                  response_timeout: 0.5, // Timeout de respuesta de 0.5 segundos
+                  response_timeout: 0.4, // Timeout de respuesta de 0.4 segundos
                 },
                 // 🚀 OPTIMIZADO: Configuraciones para reducir latencia de respuesta
                 processing_config: {
                   enable_streaming: true, // Habilitar streaming para respuestas más rápidas
                   enable_early_termination: true, // Terminación temprana para respuestas más ágiles
-                  response_delay_threshold: 0.1, // 🚀 ULTRA RÁPIDO: 0.1 segundos para respuesta inmediata
+                  response_delay_threshold: 0.08, // 🚀 ULTRA RÁPIDO: 0.08 segundos para respuesta inmediata
                   enable_realtime_processing: true, // Procesamiento en tiempo real
                   enable_instant_response: true, // Respuesta instantánea
                 },
@@ -4075,7 +4075,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                       if (audioBuffer.length > 0) {
                         sendAudioBuffer();
                       }
-                    }, 20); // 🚀 ULTRA RÁPIDO: 20ms timeout para latencia mínima
+                    }, 10); // 🚀 ULTRA RÁPIDO: 10ms timeout para latencia mínima
                   }
 
                   // Log ocasional para debugging
