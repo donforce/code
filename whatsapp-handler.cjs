@@ -376,7 +376,8 @@ usa las herramientas disponibles para obtener información actualizada y persona
               period: {
                 type: "string",
                 enum: ["week", "month"],
-                description: "Período de tiempo para las estadísticas",
+                description:
+                  "Período de tiempo para las estadísticas (opcional, por defecto 'week')",
               },
             },
             required: ["userId"],
