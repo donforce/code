@@ -224,6 +224,11 @@ async function getOrCreateConversation(
         }
 
         // Buscar usuario por número normalizado
+        console.log("🔍 [WHATSAPP] Buscando usuario con números:", {
+          normalizedNumber,
+          fromNumber,
+        });
+
         const { data: user, error: userError } = await supabase
           .from("users")
           .select("id, phone_number")
@@ -231,6 +236,8 @@ async function getOrCreateConversation(
             `phone_number.eq.${normalizedNumber},phone_number.eq.${fromNumber}`
           )
           .single();
+
+        console.log("🔍 [WHATSAPP] Resultado búsqueda:", { user, userError });
 
         if (user && !userError) {
           userId = user.id;
