@@ -296,7 +296,7 @@ async function generateAIResponse(supabase, userMessage, conversation) {
     const modelName = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
     // Importar tools
-    const tools = require("./whatsapp-tools");
+    const tools = require("./whatsapp-tools.cjs");
 
     // Obtener datos del usuario si está registrado
     let userData = null;
