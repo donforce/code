@@ -463,6 +463,13 @@ usa las herramientas disponibles para obtener información actualizada y persona
       req.previous_response_id = conversation.last_response_id;
     }
 
+    // Debug: verificar estructura de tools
+    console.log(
+      "🔧 [DEBUG] Estructura de tools:",
+      JSON.stringify(req.tools, null, 2)
+    );
+    console.log("🔧 [DEBUG] Request completo:", JSON.stringify(req, null, 2));
+
     const r = await openai.responses.create(req);
 
     // Procesar tools si el modelo los usó
