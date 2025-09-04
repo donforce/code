@@ -365,19 +365,14 @@ usa las herramientas disponibles para obtener información actualizada y persona
         {
           type: "function",
           name: "getUserLeadsStats",
-          description: "Obtener estadísticas de leads del usuario",
+          description:
+            "Obtener estadísticas de leads del usuario (period opcional: 'week' o 'month', por defecto 'week')",
           parameters: {
             type: "object",
             properties: {
               userId: {
                 type: "string",
                 description: "ID del usuario",
-              },
-              period: {
-                type: "string",
-                enum: ["week", "month"],
-                description:
-                  "Período de tiempo para las estadísticas (opcional, por defecto 'week')",
               },
             },
             required: ["userId"],
