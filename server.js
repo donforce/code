@@ -2747,8 +2747,7 @@ fastify.register(async (fastifyInstance) => {
       //let elevenLabsWs = null;
       let customParameters = null;
       let lastUserTranscript = "";
-      let sentAudioChunks = new Set(); // Para evitar audio duplicado
-      let audioChunkCounter = 0; // Contador para limpiar el Set periódicamente
+      let audioChunkCounter = 0; // Contador para logging
       let interrupted = false; // Variable para controlar interrupciones
       let isVoicemailDetectionMode = false; // Variable para evitar clear durante detección de buzón de voz
       let lastAudioTime = Date.now(); // Para detectar silencios largos
@@ -2757,61 +2756,23 @@ fastify.register(async (fastifyInstance) => {
       let bufferSize = 0; // 🚀 ULTRA RÁPIDO: Buffer cero para envío inmediato (reducido de 1 a 0)
       let bufferTimeout = null; // Timeout para enviar buffer parcial
 
-      // 🆕 NUEVAS VARIABLES PARA MEJORAR DETECCIÓN DE DUPLICADOS
-      let lastAudioHash = null; // Hash del último chunk de audio enviado
-      let consecutiveDuplicates = 0; // Contador de duplicados consecutivos
-      let maxConsecutiveDuplicates = 3; // Máximo de duplicados consecutivos permitidos
+      // 🆕 VARIABLES SIMPLIFICADAS PARA MÁXIMA VELOCIDAD
       let audioSequenceId = 0; // ID secuencial para tracking de chunks
-      let lastProcessedSequence = -1; // Último sequence ID procesado
-      let audioChunkTimestamps = new Map(); // Timestamps de chunks para detectar duplicados
-      let duplicateDetectionWindow = 1000; // Ventana de 1 segundo para detectar duplicados
 
       ws.on("error", console.error);
 
-      // 🆕 FUNCIÓN PARA GENERAR HASH DE AUDIO
-      const generateAudioHash = (audioChunk) => {
-        // Crear un hash simple del chunk de audio para detectar duplicados
-        let hash = 0;
-        for (let i = 0; i < Math.min(audioChunk.length, 100); i++) {
-          const char = audioChunk.charCodeAt(i);
-          hash = (hash << 5) - hash + char;
-          hash = hash & hash; // Convertir a 32-bit integer
-        }
-        return hash.toString();
-      };
+      // 🆕 FUNCIONES DE DUPLICIDAD ELIMINADAS PARA MÁXIMA VELOCIDAD
 
-      // 🆕 FUNCIÓN SIMPLIFICADA PARA VERIFICAR SI UN CHUNK ES DUPLICADO
-      const isDuplicateAudioChunk = (audioChunk) => {
-        // Verificación simplificada para reducir latencia
-        if (sentAudioChunks.has(audioChunk)) {
-          return true;
-        }
-
-        // Solo verificar hash básico para duplicados consecutivos
-        const audioHash = generateAudioHash(audioChunk);
-        if (lastAudioHash === audioHash) {
-          return true;
-        }
-
-        lastAudioHash = audioHash;
-        return false;
-      };
-
-      // 🆕 FUNCIÓN SIMPLIFICADA PARA LIMPIAR ESTADO DE AUDIO
+      // 🆕 FUNCIÓN ULTRA RÁPIDA PARA LIMPIAR ESTADO DE AUDIO
       const clearAudioState = () => {
-        sentAudioChunks.clear();
         audioChunkCounter = 0;
         audioBuffer = [];
-        lastAudioHash = null;
         audioSequenceId = 0;
-        lastProcessedSequence = -1;
 
         if (bufferTimeout) {
           clearTimeout(bufferTimeout);
           bufferTimeout = null;
         }
-
-        console.log("[Audio] Audio state cleared");
       };
 
       // Función para detectar silencios largos
@@ -3185,41 +3146,25 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                         message.audio?.chunk ||
                         message.audio_event?.audio_base_64;
 
-                      // Verificar si este audio ya fue enviado
-                      if (!isDuplicateAudioChunk(audioPayload)) {
-                        sentAudioChunks.add(audioPayload);
-                        audioChunkCounter++;
+                      // 🆕 ENVÍO DIRECTO SIN VERIFICACIÓN DE DUPLICIDAD
+                      audioChunkCounter++;
 
-                        // Log agent audio being sent to Twilio
-                        console.log(
-                          `🔊 [AGENT] Sending audio chunk #${audioChunkCounter} to Twilio`
-                        );
+                      // Log agent audio being sent to Twilio
+                      console.log(
+                        `🔊 [AGENT] Sending audio chunk #${audioChunkCounter} to Twilio`
+                      );
 
-                        // Limpiar el Set cada 100 chunks para evitar problemas de memoria
-                        if (audioChunkCounter > 100) {
-                          sentAudioChunks.clear();
-                          audioChunkCounter = 0;
-                          console.log(
-                            "[ElevenLabs Audio] Cleaned audio chunks cache"
-                          );
-                        }
+                      const audioData = {
+                        event: "media",
+                        streamSid,
+                        media: {
+                          payload: audioPayload,
+                        },
+                      };
+                      ws.send(JSON.stringify(audioData));
 
-                        const audioData = {
-                          event: "media",
-                          streamSid,
-                          media: {
-                            payload: audioPayload,
-                          },
-                        };
-                        ws.send(JSON.stringify(audioData));
-
-                        // Actualizar timestamp de audio para control de silencios
-                        lastAudioTime = Date.now();
-                      } else {
-                        console.log(
-                          "[ElevenLabs Audio] Skipping duplicate audio chunk"
-                        );
-                      }
+                      // Actualizar timestamp de audio para control de silencios
+                      lastAudioTime = Date.now();
                     }
                     break;
 
@@ -4036,24 +3981,12 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                   break;
                 }
 
-                // Verificar si este chunk de audio ya fue enviado (solo si no está interrumpido)
-                if (!interrupted && !isDuplicateAudioChunk(audioChunk)) {
-                  sentAudioChunks.add(audioChunk);
+                // 🆕 PROCESAMIENTO DIRECTO SIN VERIFICACIÓN DE DUPLICIDAD
+                if (!interrupted) {
                   audioChunkCounter++;
 
-                  // 🆕 TRACKING DE SECUENCIA PARA EVITAR CHUNKS FUERA DE ORDEN
+                  // 🆕 TRACKING SIMPLIFICADO PARA MÁXIMA VELOCIDAD
                   audioSequenceId++;
-                  const currentSequence = audioSequenceId;
-
-                  // Verificar que no estamos procesando chunks muy antiguos
-                  if (
-                    lastProcessedSequence > 0 &&
-                    currentSequence - lastProcessedSequence > 50
-                  ) {
-                    // console.log( `[Audio] Skipping out-of-order chunk: current=${currentSequence}, last=${lastProcessedSequence}`);
-                    break;
-                  }
-                  lastProcessedSequence = currentSequence;
 
                   // Actualizar timestamp de audio para control de silencios
                   lastAudioTime = Date.now();
@@ -4078,26 +4011,11 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                     }, 10); // 🚀 ULTRA RÁPIDO: 10ms timeout para latencia mínima
                   }
 
-                  // Log ocasional para debugging
-                  if (audioChunkCounter % 50 === 0) {
+                  // 🆕 LOGGING REDUCIDO PARA MÁXIMA VELOCIDAD
+                  if (audioChunkCounter % 200 === 0) {
                     console.log(
-                      `[Audio] Processed ${audioChunkCounter} audio chunks, buffer size: ${audioBuffer.length}`
+                      `[Audio] Processed ${audioChunkCounter} chunks`
                     );
-                  }
-
-                  // 🆕 LOGGING MEJORADO PARA DEBUGGING DE DUPLICADOS
-                  if (consecutiveDuplicates > 0) {
-                    console.log(
-                      `[Audio] Consecutive duplicates: ${consecutiveDuplicates}/${maxConsecutiveDuplicates}`
-                    );
-                  }
-
-                  // 🆕 LIMPIEZA PERIÓDICA DEL CACHE DE AUDIO
-                  if (audioChunkCounter > 100) {
-                    // Limpiar solo el Set, mantener el contador
-                    sentAudioChunks.clear();
-                    audioChunkCounter = 0;
-                    console.log("[Audio] Cleaned audio chunks cache");
                   }
                 } else if (interrupted) {
                   console.log(
@@ -4105,8 +4023,6 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                   );
                   // Limpiar estado completo durante interrupciones
                   clearAudioState();
-                } else {
-                  // console.log("[Audio] Skipping duplicate audio chunk");
                 }
               } else {
                 // console.log("[Audio] ElevenLabs WebSocket not ready, skipping audio chunk");
