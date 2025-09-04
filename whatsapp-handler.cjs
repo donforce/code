@@ -429,7 +429,8 @@ usa las herramientas disponibles para obtener información actualizada y persona
         {
           type: "function",
           name: "getAvailableDiscounts",
-          description: "Obtener descuentos disponibles para el usuario",
+          description:
+            "Obtener descuentos disponibles para el usuario (plan opcional, por defecto se detecta automáticamente)",
           parameters: {
             type: "object",
             properties: {
@@ -437,11 +438,8 @@ usa las herramientas disponibles para obtener información actualizada y persona
                 type: "string",
                 description: "ID del usuario",
               },
-              plan: {
-                type: "string",
-                description: "Plan del usuario (opcional)",
-              },
             },
+            required: ["userId"],
             additionalProperties: false,
           },
           strict: true,
