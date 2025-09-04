@@ -209,11 +209,11 @@ async function getOrCreateConversation(
 
         // Remover cualquier prefijo de país que empiece con +
         if (normalizedNumber.startsWith("+")) {
-          // Encontrar el primer dígito después del +
-          const match = normalizedNumber.match(/^\+\d+/);
-          if (match) {
-            normalizedNumber = normalizedNumber.substring(match[0].length);
-          }
+          // Remover solo el + y los primeros 1-3 dígitos (código de país)
+          // Ejemplo: +17862989564 -> 7862989564
+          normalizedNumber = normalizedNumber.substring(1); // Remover el +
+          // Remover código de país (1-3 dígitos al inicio)
+          normalizedNumber = normalizedNumber.replace(/^\d{1,3}/, "");
         }
 
         // Buscar usuario por número normalizado
