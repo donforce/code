@@ -8903,14 +8903,7 @@ fastify.post("/twilio-recording-status", async (request, reply) => {
 // Endpoint para limpiar grabaciones antiguas manualmente
 // ===== RUTA DE WHATSAPP =====
 fastify.post("/webhook/whatsapp", async (request, reply) => {
-  console.log("🚀 [SERVER] ===== WEBHOOK WHATSAPP RECIBIDO =====");
-  console.log("🚀 [SERVER] URL:", request.url);
-  console.log("🚀 [SERVER] Método:", request.method);
-  console.log("🚀 [SERVER] Headers:", request.headers);
-  console.log("🚀 [SERVER] Body:", request.body);
-  console.log("🚀 [SERVER] Query:", request.query);
-  console.log("🚀 [SERVER] Supabase client type:", typeof supabase);
-  console.log("🚀 [SERVER] Supabase client keys:", Object.keys(supabase || {}));
+  console.log("🚀 [SERVER] Webhook WhatsApp recibido");
   return await handleWhatsAppMessage(supabase, request, reply);
 });
 

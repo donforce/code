@@ -241,10 +241,15 @@ async function getOrCreateConversation(
 
         if (user && !userError) {
           userId = user.id;
-          console.log("📱 [WHATSAPP] Usuario encontrado por número:", userId);
+          console.log("✅ [WHATSAPP] Usuario encontrado por número:", {
+            userId: user.id,
+            phoneNumber: user.phone_number,
+            fromNumber: fromNumber,
+            normalizedNumber: normalizedNumber,
+          });
         } else {
           console.log(
-            "📱 [WHATSAPP] No se encontró usuario para el número:",
+            "❌ [WHATSAPP] No se encontró usuario para el número:",
             fromNumber
           );
         }
