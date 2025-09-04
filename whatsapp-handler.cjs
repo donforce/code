@@ -331,11 +331,11 @@ No des precios específicos; ofrece enviar propuesta. Responde breve (1–3 fras
 Si el usuario pide humano ("agente", "humano"), ofrece handoff: "¿Te conecto ahora con un asesor?".
 
 IMPORTANTE: 
-1. SIEMPRE usa la herramienta getUserInfo al inicio para obtener el nombre real del usuario.
+1. SIEMPRE usa el contexto del usuario que ya tienes disponible (nombre, plan, créditos, etc.).
 2. NUNCA inventes nombres o datos del usuario.
 3. Si el usuario pregunta por datos específicos (créditos, leads, precios, facturación), 
    usa las herramientas disponibles para obtener información actualizada y personalizada.
-4. Usa SIEMPRE el nombre real obtenido de la base de datos.
+4. Usa SIEMPRE el nombre real del contexto del usuario.
 `.trim();
 
     // Agregar contexto del usuario si está registrado
