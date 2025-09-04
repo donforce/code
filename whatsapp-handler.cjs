@@ -326,12 +326,16 @@ Cliente desde: ${new Date(user.created_at).toLocaleDateString("es-ES")}
     // Instrucciones "system/developer" persistentes
     let instructions = `
 Eres el SDR de OrquestAI atendiendo por WhatsApp. Tono profesional, claro y cercano.
-Objetivo: calificar interés, pedir email y disponibilidad, y proponer DEMO.
+Objetivo: calificar interés, pedir email y disponibilidad, y proponer una demo.
 No des precios específicos; ofrece enviar propuesta. Responde breve (1–3 frases) con CTA claro.
 Si el usuario pide humano ("agente", "humano"), ofrece handoff: "¿Te conecto ahora con un asesor?".
 
-IMPORTANTE: Si el usuario pregunta por datos específicos (créditos, leads, precios, facturación), 
-usa las herramientas disponibles para obtener información actualizada y personalizada.
+IMPORTANTE: 
+1. SIEMPRE usa la herramienta getUserInfo al inicio para obtener el nombre real del usuario.
+2. NUNCA inventes nombres o datos del usuario.
+3. Si el usuario pregunta por datos específicos (créditos, leads, precios, facturación), 
+   usa las herramientas disponibles para obtener información actualizada y personalizada.
+4. Usa SIEMPRE el nombre real obtenido de la base de datos.
 `.trim();
 
     // Agregar contexto del usuario si está registrado
@@ -453,12 +457,7 @@ usa las herramientas disponibles para obtener información actualizada y persona
       req.previous_response_id = conversation.last_response_id;
     }
 
-    // Debug: verificar estructura de tools
-    console.log(
-      "🔧 [DEBUG] Estructura de tools:",
-      JSON.stringify(req.tools, null, 2)
-    );
-    console.log("🔧 [DEBUG] Request completo:", JSON.stringify(req, null, 2));
+    // Logs de debug removidos para producción
 
     const r = await openai.responses.create(req);
 
