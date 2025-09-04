@@ -54,7 +54,10 @@ async function handleWhatsAppMessage(supabase, request, reply) {
     console.log("📱 [WHATSAPP] Método:", request.method);
     console.log("📱 [WHATSAPP] Mensaje recibido");
     console.log("📱 [WHATSAPP] Supabase client type:", typeof supabase);
-    console.log("📱 [WHATSAPP] Supabase client keys:", Object.keys(supabase || {}));
+    console.log(
+      "📱 [WHATSAPP] Supabase client keys:",
+      Object.keys(supabase || {})
+    );
     console.log("📱 [WHATSAPP] Supabase client:", supabase);
 
     // Validar webhook de Twilio (opcional pero recomendado)
@@ -212,6 +215,53 @@ async function getOrCreateConversation(
       return existingConversation;
     }
 
+    // Si no hay userId, buscar usuario por número de teléfono
+    if (!userId) {
+      try {
+        // Normalizar el número de teléfono (remover prefijos comunes)
+        let normalizedNumber = fromNumber;
+
+        // Remover prefijo "whatsapp:" si existe
+        if (normalizedNumber.startsWith("whatsapp:")) {
+          normalizedNumber = normalizedNumber.replace("whatsapp:", "");
+        }
+
+        // Remover cualquier prefijo de país que empiece con +
+        if (normalizedNumber.startsWith("+")) {
+          // Encontrar el primer dígito después del +
+          const match = normalizedNumber.match(/^\+\d+/);
+          if (match) {
+            normalizedNumber = normalizedNumber.substring(match[0].length);
+          }
+        }
+
+        // Buscar usuario por número normalizado
+        const { data: user, error: userError } = await supabase
+          .from("users")
+          .select("id, phone_number")
+          .or(
+            `phone_number.eq.${normalizedNumber},phone_number.eq.${fromNumber}`
+          )
+          .single();
+
+        if (user && !userError) {
+          userId = user.id;
+          console.log("📱 [WHATSAPP] Usuario encontrado por número:", userId);
+        } else {
+          console.log(
+            "📱 [WHATSAPP] No se encontró usuario para el número:",
+            fromNumber
+          );
+        }
+      } catch (userSearchError) {
+        console.log(
+          "📱 [WHATSAPP] Error buscando usuario por número:",
+          userSearchError.message
+        );
+        // Continuar sin userId
+      }
+    }
+
     // Crear nueva conversación
     const { data: newConversation, error: createError } = await supabase
       .from("whatsapp_conversations")
@@ -239,68 +289,310 @@ async function getOrCreateConversation(
     throw error;
   }
 }
-
-// Función para generar respuesta con OpenAI
+// Función para generar respuesta con OpenAI (Responses + fine-tuned + memoria + datos de usuario + tools)
 async function generateAIResponse(supabase, userMessage, conversation) {
   try {
-    console.log(
-      "🤖 [OPENAI] Generando respuesta para:",
-      userMessage.substring(0, 100)
-    );
+    console.log("🤖 [OPENAI] Generando respuesta (Responses API + Tools)...");
+    const modelName = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
-    // Obtener historial de mensajes para contexto
-    const { data: messageHistory, error: historyError } = await supabase
-      .from("whatsapp_messages")
-      .select("*")
-      .eq("conversation_id", conversation.id)
-      .order("created_at", { ascending: false })
-      .limit(10); // Últimos 10 mensajes para contexto
+    // Importar tools
+    const tools = require("./whatsapp-tools");
 
-    if (historyError) {
-      console.warn("⚠️ [OPENAI] Error obteniendo historial:", historyError);
+    // Obtener datos del usuario si está registrado
+    let userData = null;
+    let userContext = "";
+
+    if (conversation.user_id) {
+      try {
+        const { data: user, error: userError } = await supabase
+          .from("users")
+          .select(
+            `
+            first_name,
+            last_name,
+            email,
+            subscription_plan,
+            available_credits,
+            total_credits,
+            created_at
+          `
+          )
+          .eq("id", conversation.user_id)
+          .single();
+
+        if (user && !userError) {
+          userData = user;
+          userContext = `
+Usuario registrado: ${user.first_name || "Usuario"} ${user.last_name || ""}
+Plan: ${user.subscription_plan || "Básico"}
+Créditos: ${user.available_credits || 0}/${user.total_credits || 0}
+Email: ${user.email || "No disponible"}
+Cliente desde: ${new Date(user.created_at).toLocaleDateString("es-ES")}
+`.trim();
+        }
+      } catch (error) {
+        console.warn("⚠️ [OPENAI] Error obteniendo datos de usuario:", error);
+      }
     }
 
-    // Construir contexto para OpenAI
-    let context =
-      "Eres un asistente virtual amigable y profesional. Responde de manera clara y útil.";
+    // Instrucciones "system/developer" persistentes
+    let instructions = `
+Eres el SDR de OrquestAI atendiendo por WhatsApp. Tono profesional, claro y cercano.
+Objetivo: calificar interés, pedir email y disponibilidad, y proponer DEMO.
+No des precios específicos; ofrece enviar propuesta. Responde breve (1–3 frases) con CTA claro.
+Si el usuario pide humano ("agente", "humano"), ofrece handoff: "¿Te conecto ahora con un asesor?".
 
-    if (messageHistory && messageHistory.length > 0) {
-      context += "\n\nHistorial de la conversación:\n";
-      messageHistory.reverse().forEach((msg) => {
-        const role = msg.direction === "incoming" ? "Usuario" : "Asistente";
-        context += `${role}: ${msg.message_content}\n`;
-      });
+IMPORTANTE: Si el usuario pregunta por datos específicos (créditos, leads, precios, facturación), 
+usa las herramientas disponibles para obtener información actualizada y personalizada.
+`.trim();
+
+    // Agregar contexto del usuario si está registrado
+    if (userContext) {
+      instructions += `\n\n${userContext}\n\nIMPORTANTE: Usa el nombre del usuario y datos de su plan para personalizar la conversación.`;
     }
 
-    // Prompt para OpenAI
-    const prompt = `${context}\n\nUsuario: ${userMessage}\n\nAsistente:`;
-
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
+    // Build request con tools
+    const req = {
+      model: modelName,
+      instructions,
+      input: userMessage,
+      tools: [
         {
-          role: "system",
-          content:
-            "Eres un asistente virtual profesional y amigable. Responde de manera clara, útil y natural. Mantén las respuestas concisas pero informativas.",
+          type: "function",
+          function: {
+            name: "getUserInfo",
+            description: "Obtener información completa del usuario registrado",
+            parameters: {
+              type: "object",
+              properties: {
+                userId: {
+                  type: "string",
+                  description: "ID del usuario",
+                },
+              },
+              required: ["userId"],
+            },
+          },
         },
         {
-          role: "user",
-          content: prompt,
+          type: "function",
+          function: {
+            name: "getUserLeadsStats",
+            description: "Obtener estadísticas de leads del usuario",
+            parameters: {
+              type: "object",
+              properties: {
+                userId: {
+                  type: "string",
+                  description: "ID del usuario",
+                },
+                period: {
+                  type: "string",
+                  enum: ["week", "month"],
+                  description: "Período de tiempo para las estadísticas",
+                },
+              },
+              required: ["userId"],
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "getPricingInfo",
+            description: "Obtener información de precios y créditos por país",
+            parameters: {
+              type: "object",
+              properties: {
+                country: {
+                  type: "string",
+                  description: "Código de país (US, MX, ES, etc.)",
+                },
+              },
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "getCallQueueStatus",
+            description: "Obtener estado de la cola de llamadas del usuario",
+            parameters: {
+              type: "object",
+              properties: {
+                userId: {
+                  type: "string",
+                  description: "ID del usuario",
+                },
+              },
+              required: ["userId"],
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "getUserBillingInfo",
+            description: "Obtener información de facturación del usuario",
+            parameters: {
+              type: "object",
+              properties: {
+                userId: {
+                  type: "string",
+                  description: "ID del usuario",
+                },
+              },
+              required: ["userId"],
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "getAvailableDiscounts",
+            description: "Obtener descuentos disponibles para el usuario",
+            parameters: {
+              type: "object",
+              properties: {
+                userId: {
+                  type: "string",
+                  description: "ID del usuario",
+                },
+                plan: {
+                  type: "string",
+                  description: "Plan del usuario (opcional)",
+                },
+              },
+            },
+          },
         },
       ],
-      max_tokens: 500,
       temperature: 0.7,
-    });
+    };
 
-    const response = completion.choices[0].message.content.trim();
-    console.log("🤖 [OPENAI] Respuesta generada:", response.substring(0, 100));
+    // Memoria de hilo: encadenar si hay último response
+    if (conversation.last_response_id) {
+      req.previous_response_id = conversation.last_response_id;
+    }
 
-    return response;
+    const r = await openai.responses.create(req);
+
+    // Procesar tools si el modelo los usó
+    let finalResponse =
+      r.output_text ||
+      (Array.isArray(r.output) && r.output[0]?.content?.[0]?.text) ||
+      "Disculpa, ¿podrías repetir tu consulta?";
+
+    // Si el modelo usó tools, ejecutarlas y generar respuesta final
+    if (r.tool_calls && r.tool_calls.length > 0) {
+      console.log(
+        "🔧 [TOOLS] Modelo solicitó usar tools:",
+        r.tool_calls.length
+      );
+
+      const toolResults = [];
+
+      for (const toolCall of r.tool_calls) {
+        try {
+          const functionName = toolCall.function.name;
+          const functionArgs = JSON.parse(toolCall.function.arguments);
+
+          console.log(
+            `🔧 [TOOL] Ejecutando ${functionName} con args:`,
+            functionArgs
+          );
+
+          let result;
+          switch (functionName) {
+            case "getUserInfo":
+              result = await tools.getUserInfo(functionArgs.userId);
+              break;
+            case "getUserLeadsStats":
+              result = await tools.getUserLeadsStats(
+                functionArgs.userId,
+                functionArgs.period
+              );
+              break;
+            case "getPricingInfo":
+              result = await tools.getPricingInfo(functionArgs.country);
+              break;
+            case "getCallQueueStatus":
+              result = await tools.getCallQueueStatus(functionArgs.userId);
+              break;
+            case "getUserBillingInfo":
+              result = await tools.getUserBillingInfo(functionArgs.userId);
+              break;
+            case "getAvailableDiscounts":
+              result = await tools.getAvailableDiscounts(
+                functionArgs.userId,
+                functionArgs.plan
+              );
+              break;
+            default:
+              result = { success: false, error: "Función no implementada" };
+          }
+
+          toolResults.push({
+            tool_call_id: toolCall.id,
+            function_name: functionName,
+            result: result,
+          });
+        } catch (error) {
+          console.error(`❌ [TOOL] Error ejecutando tool:`, error);
+          toolResults.push({
+            tool_call_id: toolCall.id,
+            function_name: toolCall.function.name,
+            result: { success: false, error: error.message },
+          });
+        }
+      }
+
+      // Generar respuesta final con los resultados de las tools
+      if (toolResults.length > 0) {
+        const finalReq = {
+          model: modelName,
+          instructions:
+            instructions +
+            "\n\nUsa los resultados de las herramientas para dar una respuesta precisa y personalizada.",
+          input: `Usuario: ${userMessage}\n\nResultados de herramientas:\n${JSON.stringify(
+            toolResults,
+            null,
+            2
+          )}`,
+          temperature: 0.7,
+        };
+
+        const finalR = await openai.responses.create(finalReq);
+        finalResponse =
+          finalR.output_text ||
+          (Array.isArray(finalR.output) &&
+            finalR.output[0]?.content?.[0]?.text) ||
+          finalResponse;
+      }
+    }
+
+    // Persistir el nuevo response.id para la próxima vuelta
+    await supabase
+      .from("whatsapp_conversations")
+      .update({
+        last_response_id: r.id,
+        last_ai_response: finalResponse,
+        last_message_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", conversation.id);
+
+    console.log("🤖 [OPENAI] OK. response.id:", r.id);
+    if (userData) {
+      console.log(
+        "👤 [USER] Respuesta personalizada para:",
+        userData.first_name
+      );
+    }
+    return finalResponse;
   } catch (error) {
-    console.error("❌ [OPENAI] Error generando respuesta:", error);
-
-    // Respuesta de fallback
-    return "Disculpa, estoy teniendo dificultades técnicas en este momento. Por favor, intenta de nuevo en unos minutos o contacta con nuestro equipo de soporte.";
+    console.error("❌ [OPENAI] Error (Responses):", error);
+    return "Disculpa, tuve un inconveniente técnico. ¿Puedes intentar de nuevo en unos minutos?";
   }
 }
 
@@ -361,12 +653,24 @@ async function saveMessage(
 // Función para actualizar conversación
 async function updateConversation(supabase, conversationId, lastMessage) {
   try {
+    // Primero obtener el conteo actual de mensajes
+    const { data: currentConversation, error: fetchError } = await supabase
+      .from("whatsapp_conversations")
+      .select("message_count")
+      .eq("id", conversationId)
+      .single();
+
+    if (fetchError) {
+      throw new Error(`Error obteniendo conversación: ${fetchError.message}`);
+    }
+
+    const newMessageCount = (currentConversation?.message_count || 0) + 1;
+
     const { error: updateError } = await supabase
       .from("whatsapp_conversations")
       .update({
-        message_count: supabase.sql`message_count + 1`,
+        message_count: newMessageCount,
         last_message_at: new Date().toISOString(),
-        last_ai_response: lastMessage,
         updated_at: new Date().toISOString(),
       })
       .eq("id", conversationId);

@@ -1,0 +1,54 @@
+# Datasets de entrenamiento y validación (no subir al repo)
+*.jsonl
+*.json
+!package.json
+!package-lock.json
+
+# Archivos de estadísticas generados
+*_stats.json
+validation_combined.jsonl
+
+# Archivos de configuración local
+.env
+.env.local
+.env.production
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Dependencias
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+
+# Archivos temporales
+*.tmp
+*.temp
+.cache/
+
+# Archivos de IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Archivos de build
+dist/
+build/
+out/
+
+# Archivos de testing
+coverage/
+.nyc_output/
+
+# Archivos de backup
+*.bak
+*.backup

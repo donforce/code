@@ -235,6 +235,7 @@ async function getCallQueueStatus(supabase, userId) {
 /**
  * Obtener información de facturación del usuario
  */
+
 async function getUserBillingInfo(supabase, userId) {
   try {
     // Obtener información de suscripción activa
@@ -300,72 +301,18 @@ async function getUserBillingInfo(supabase, userId) {
  */
 async function getAvailableDiscounts(supabase, userId, plan = null) {
   try {
-    // Obtener plan del usuario si no se proporciona
-    if (!plan) {
-      const { data: subscription } = await supabase
-        .from("user_subscriptions")
-        .select(`
-          subscription_plans (
-            name
-          )
-        `)
-        .eq("user_id", userId)
-        .eq("status", "active")
-        .single();
-      
-      if (subscription?.subscription_plans?.name) {
-        plan = subscription.subscription_plans.name.toLowerCase();
-      } else {
-        // Fallback a información del usuario
-        const { data: user } = await supabase
-          .from("users")
-          .select("subscription_plan")
-          .eq("id", userId)
-          .single();
-        plan = user?.subscription_plan || "basic";
-      }
-    }
-
-    // Descuentos basados en el plan y antigüedad
-    const discounts = {
-      básico: {
-        creditos_adicionales: "10%",
-        renovacion_anticipada: "5%",
-      },
-      profesional: {
-        creditos_adicionales: "15%",
-        renovacion_anticipada: "10%",
-        funcionalidades_premium: "20%",
-      },
-      empresarial: {
-        creditos_adicionales: "20%",
-        renovacion_anticipada: "15%",
-        funcionalidades_premium: "25%",
-        soporte_prioritario: "Gratis",
-      },
-      // Fallbacks en inglés
-      basic: {
-        creditos_adicionales: "10%",
-        renovacion_anticipada: "5%",
-      },
-      professional: {
-        creditos_adicionales: "15%",
-        renovacion_anticipada: "10%",
-        funcionalidades_premium: "20%",
-      },
-      enterprise: {
-        creditos_adicionales: "20%",
-        renovacion_anticipada: "15%",
-        funcionalidades_premium: "25%",
-        soporte_prioritario: "Gratis",
-      },
+    // Por ahora, siempre devolver 10% de descuento
+    const discount = {
+      descuento_general: "10%",
+      aplica_a: "todos los planes",
+      validez: "hasta fin de mes",
     };
 
     return {
       success: true,
       data: {
-        plan: plan,
-        descuentos_disponibles: discounts[plan] || discounts.básico || discounts.basic,
+        plan: "todos",
+        descuentos_disponibles: discount,
       },
     };
   } catch (error) {
