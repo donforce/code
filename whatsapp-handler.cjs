@@ -347,112 +347,112 @@ usa las herramientas disponibles para obtener información actualizada y persona
       tools: [
         {
           type: "function",
-          function: {
-            name: "getUserInfo",
-            description: "Obtener información completa del usuario registrado",
-            parameters: {
-              type: "object",
-              properties: {
-                userId: {
-                  type: "string",
-                  description: "ID del usuario",
-                },
+          name: "getUserInfo",
+          description: "Obtener información completa del usuario registrado",
+          parameters: {
+            type: "object",
+            properties: {
+              userId: {
+                type: "string",
+                description: "ID del usuario",
               },
-              required: ["userId"],
             },
+            required: ["userId"],
+            additionalProperties: false,
           },
+          strict: true,
         },
         {
           type: "function",
-          function: {
-            name: "getUserLeadsStats",
-            description: "Obtener estadísticas de leads del usuario",
-            parameters: {
-              type: "object",
-              properties: {
-                userId: {
-                  type: "string",
-                  description: "ID del usuario",
-                },
-                period: {
-                  type: "string",
-                  enum: ["week", "month"],
-                  description: "Período de tiempo para las estadísticas",
-                },
+          name: "getUserLeadsStats",
+          description: "Obtener estadísticas de leads del usuario",
+          parameters: {
+            type: "object",
+            properties: {
+              userId: {
+                type: "string",
+                description: "ID del usuario",
               },
-              required: ["userId"],
+              period: {
+                type: "string",
+                enum: ["week", "month"],
+                description: "Período de tiempo para las estadísticas",
+              },
             },
+            required: ["userId"],
+            additionalProperties: false,
           },
+          strict: true,
         },
         {
           type: "function",
-          function: {
-            name: "getPricingInfo",
-            description: "Obtener información de precios y créditos por país",
-            parameters: {
-              type: "object",
-              properties: {
-                country: {
-                  type: "string",
-                  description: "Código de país (US, MX, ES, etc.)",
-                },
+          name: "getPricingInfo",
+          description: "Obtener información de precios y créditos por país",
+          parameters: {
+            type: "object",
+            properties: {
+              country: {
+                type: "string",
+                description: "Código de país (US, MX, ES, etc.)",
               },
             },
+            additionalProperties: false,
           },
+          strict: true,
         },
         {
           type: "function",
-          function: {
-            name: "getCallQueueStatus",
-            description: "Obtener estado de la cola de llamadas del usuario",
-            parameters: {
-              type: "object",
-              properties: {
-                userId: {
-                  type: "string",
-                  description: "ID del usuario",
-                },
+          name: "getCallQueueStatus",
+          description: "Obtener estado de la cola de llamadas del usuario",
+          parameters: {
+            type: "object",
+            properties: {
+              userId: {
+                type: "string",
+                description: "ID del usuario",
               },
-              required: ["userId"],
             },
+            required: ["userId"],
+            additionalProperties: false,
           },
+          strict: true,
         },
         {
           type: "function",
-          function: {
-            name: "getUserBillingInfo",
-            description: "Obtener información de facturación del usuario",
-            parameters: {
-              type: "object",
-              properties: {
-                userId: {
-                  type: "string",
-                  description: "ID del usuario",
-                },
+          name: "getUserBillingInfo",
+          description: "Obtener información de facturación del usuario",
+          parameters: {
+            type: "object",
+            properties: {
+              userId: {
+                type: "string",
+                description: "ID del usuario",
               },
-              required: ["userId"],
             },
+            required: ["userId"],
+            additionalProperties: false,
           },
+          strict: true,
         },
         {
           type: "function",
-          function: {
-            name: "getAvailableDiscounts",
-            description: "Obtener descuentos disponibles para el usuario",
-            parameters: {
-              type: "object",
-              properties: {
-                userId: {
-                  type: "string",
-                  description: "ID del usuario",
-                },
-                plan: {
-                  type: "string",
-                  description: "Plan del usuario (opcional)",
-                },
+          name: "getAvailableDiscounts",
+          description: "Obtener descuentos disponibles para el usuario",
+          parameters: {
+            type: "object",
+            properties: {
+              userId: {
+                type: "string",
+                description: "ID del usuario",
+              },
+              plan: {
+                type: "string",
+                description: "Plan del usuario (opcional)",
               },
             },
+            additionalProperties: false,
           },
+          strict: true,
         },
       ],
       temperature: 0.7,
