@@ -383,15 +383,11 @@ usa las herramientas disponibles para obtener información actualizada y persona
         {
           type: "function",
           name: "getPricingInfo",
-          description: "Obtener información de precios y créditos por país",
+          description:
+            "Obtener información de precios y créditos por país (country opcional, por defecto 'US')",
           parameters: {
             type: "object",
-            properties: {
-              country: {
-                type: "string",
-                description: "Código de país (US, MX, ES, etc.)",
-              },
-            },
+            properties: {},
             additionalProperties: false,
           },
           strict: true,
