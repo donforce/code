@@ -195,15 +195,8 @@ async function getOrCreateConversation(
       .limit(1)
       .single();
 
-    if (existingConversation && !searchError) {
-      console.log(
-        "📱 [WHATSAPP] Conversación existente encontrada:",
-        existingConversation.id
-      );
-      return existingConversation;
-    }
-
-    // Si no hay userId, buscar usuario por número de teléfono
+    // SIEMPRE buscar usuario por número de teléfono para contexto
+    let userData = null;
     if (!userId) {
       try {
         // Normalizar el número de teléfono (remover prefijos comunes)
@@ -231,7 +224,19 @@ async function getOrCreateConversation(
 
         const { data: user, error: userError } = await supabase
           .from("users")
-          .select("id, phone_number")
+          .select(
+            `
+            id, 
+            phone_number,
+            first_name,
+            last_name,
+            email,
+            subscription_plan,
+            available_credits,
+            total_credits,
+            created_at
+          `
+          )
           .or(
             `phone_number.eq.${normalizedNumber},phone_number.eq.${fromNumber}`
           )
@@ -241,8 +246,15 @@ async function getOrCreateConversation(
 
         if (user && !userError) {
           userId = user.id;
+          userData = user;
           console.log("✅ [WHATSAPP] Usuario encontrado por número:", {
             userId: user.id,
+            name: `${user.first_name || ""} ${user.last_name || ""}`.trim(),
+            email: user.email,
+            plan: user.subscription_plan,
+            credits: `${user.available_credits || 0}/${
+              user.total_credits || 0
+            }`,
             phoneNumber: user.phone_number,
             fromNumber: fromNumber,
             normalizedNumber: normalizedNumber,
@@ -260,6 +272,19 @@ async function getOrCreateConversation(
         );
         // Continuar sin userId
       }
+    }
+
+    // Si encontramos conversación existente, retornarla con contexto del usuario
+    if (existingConversation && !searchError) {
+      console.log(
+        "📱 [WHATSAPP] Conversación existente encontrada:",
+        existingConversation.id
+      );
+      // Agregar contexto del usuario a la conversación
+      if (userData) {
+        existingConversation.userContext = userData;
+      }
+      return existingConversation;
     }
 
     // Crear nueva conversación
@@ -283,6 +308,12 @@ async function getOrCreateConversation(
     }
 
     console.log("📱 [WHATSAPP] Nueva conversación creada:", newConversation.id);
+
+    // Agregar contexto del usuario a la nueva conversación
+    if (userData) {
+      newConversation.userContext = userData;
+    }
+
     return newConversation;
   } catch (error) {
     console.error("❌ [WHATSAPP] Error en getOrCreateConversation:", error);
@@ -298,23 +329,33 @@ async function generateAIResponse(supabase, userMessage, conversation) {
     // Importar tools
     const tools = require("./whatsapp-tools.cjs");
 
-    // Obtener datos del usuario si está registrado
+    // Usar contexto del usuario de la conversación o buscar si no está disponible
     let userData = null;
     let userContext = "";
 
-    if (conversation.user_id) {
+    // Primero intentar usar el contexto del usuario de la conversación
+    if (conversation.userContext) {
+      userData = conversation.userContext;
+      console.log(
+        "🔍 [OPENAI] Usando contexto del usuario de la conversación:",
+        userData
+      );
+    } else if (conversation.user_id) {
+      // Si no hay contexto, buscar datos del usuario por user_id
       try {
         const { data: user, error: userError } = await supabase
           .from("users")
           .select(
             `
+            id,
             first_name,
             last_name,
             email,
             subscription_plan,
             available_credits,
             total_credits,
-            created_at
+            created_at,
+            phone_number
           `
           )
           .eq("id", conversation.user_id)
@@ -322,17 +363,34 @@ async function generateAIResponse(supabase, userMessage, conversation) {
 
         if (user && !userError) {
           userData = user;
-          userContext = `
-Usuario registrado: ${user.first_name || "Usuario"} ${user.last_name || ""}
-Plan: ${user.subscription_plan || "Básico"}
-Créditos: ${user.available_credits || 0}/${user.total_credits || 0}
-Email: ${user.email || "No disponible"}
-Cliente desde: ${new Date(user.created_at).toLocaleDateString("es-ES")}
-`.trim();
+          console.log("🔍 [OPENAI] Usuario encontrado por user_id:", userData);
         }
       } catch (error) {
         console.warn("⚠️ [OPENAI] Error obteniendo datos de usuario:", error);
       }
+    }
+
+    // Generar contexto del usuario si tenemos datos
+    if (userData) {
+      const fullName =
+        `${userData.first_name || ""} ${userData.last_name || ""}`.trim() ||
+        "Usuario";
+      const registrationDate = userData.created_at
+        ? new Date(userData.created_at).toLocaleDateString("es-ES")
+        : "No disponible";
+
+      userContext = `
+CONTEXTO DEL USUARIO REGISTRADO:
+- Nombre completo: ${fullName}
+- Email: ${userData.email || "No disponible"}
+- Plan de suscripción: ${userData.subscription_plan || "Sin plan"}
+- Créditos disponibles: ${userData.available_credits || 0}
+- Total de créditos: ${userData.total_credits || 0}
+- Fecha de registro: ${registrationDate}
+- Teléfono: ${userData.phone_number || "No disponible"}
+
+IMPORTANTE: Usa SIEMPRE el nombre real del usuario (${fullName}) y sus datos específicos para personalizar la conversación.
+`.trim();
     }
 
     console.log("🔍 [OPENAI] Contexto del usuario:", userContext);
