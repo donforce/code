@@ -5954,7 +5954,7 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
         }
 
         // Try to create calendar event (this may fail if calendar not connected)
-        await createCalendarEvent(scheduledCallInfo, call);
+        await createCalendarEvent(scheduledCallInfo, callData?.[0]);
       } else {
         console.log("ℹ️ [CALENDAR] No scheduled call detected in webhook data");
       }
