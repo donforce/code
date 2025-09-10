@@ -5901,24 +5901,26 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       console.error("❌ [ANALYSIS] Error analyzing transcript:", analysisError);
     }
 
-    //  Update call metrics
+    //  Update call metrics and get call data for calendar processing
+    let callData = null;
     try {
-      const { data: callData } = await supabase
+      const { data: callDataResult } = await supabase
         .from("calls")
         .select("*")
         .eq("conversation_id", conversation_id)
-
         .order("created_at", { ascending: false })
         .limit(1);
 
+      callData = callDataResult;
+
       if (callData) {
         console.log("📊 [METRICS] Call completed:", {
-          conversation_id: callData.conversation_id,
-          duration: callData.duration,
-          turn_count: callData.turn_count,
-          detailed_result: callData.detailed_result,
+          conversation_id: callData[0]?.conversation_id,
+          duration: callData[0]?.duration,
+          turn_count: callData[0]?.turn_count,
+          detailed_result: callData[0]?.detailed_result,
           commercial_suggestion:
-            callData.commercial_suggestion?.substring(0, 50) + "...",
+            callData[0]?.commercial_suggestion?.substring(0, 50) + "...",
         });
       }
     } catch (metricsError) {
