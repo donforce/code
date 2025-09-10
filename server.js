@@ -2523,6 +2523,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
   console.log("📝 [TWiML] Script ID recibido:", script_id);
 
   // Obtener el contenido del script de la base de datos si está disponible
+  // Fallback: script_id -> DEFAULT_SCRIPT_ID -> contenido por defecto
   let scriptPrompt = prompt; // Usar el prompt por defecto
   let scriptFirstMessage = first_message; // Usar el first_message por defecto
 
