@@ -1980,61 +1980,14 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
         agentTitleTranslated
       );
 
-      // Obtener el contenido del script si está disponible
-      let scriptContent = {
-        prompt: "Eres un asistente de ventas inmobiliarias.",
-        firstMessage:
-          idioma === "en"
-            ? "Hello {{client_name}}, I am {{assistant_name}}, virtual assistant to {{agent_name}}, {{agent_title}} in {{agent_location}}. How are you?"
-            : "Holaa {{client_name}}, soy {{assistant_name}}. Asistente Virtual de {{agent_name}},{{agent_title}} en {{agent_location}}. ¿Cómo estás?",
-      };
-
-      let scriptIdToUse = queueItem.script_id;
-
-      // Si no hay script_id, usar el script por defecto de Railway/Vercel
-      if (!scriptIdToUse && process.env.DEFAULT_SCRIPT_ID) {
-        scriptIdToUse = process.env.DEFAULT_SCRIPT_ID;
-        console.log(
-          `[Queue] Worker ${workerId} - Using default script from environment: ${scriptIdToUse}`
-        );
-      }
-
-      if (scriptIdToUse) {
-        try {
-          const { data: scriptData } = await supabase
-            .from("script_content")
-            .select("greeting, prompt")
-            .eq("script_id", scriptIdToUse)
-            .eq("language", idioma || "es")
-            .eq("is_active", true)
-            .single();
-
-          if (scriptData) {
-            scriptContent = {
-              prompt: scriptData.prompt || scriptContent.prompt,
-              firstMessage: scriptData.greeting || scriptContent.firstMessage,
-            };
-            console.log(
-              `[Queue] Worker ${workerId} - Using script content from script_id: ${scriptIdToUse}`
-            );
-          } else {
-            console.log(
-              `[Queue] Worker ${workerId} - No script content found for script_id: ${scriptIdToUse}, using defaults`
-            );
-          }
-        } catch (scriptError) {
-          console.log(
-            `[Queue] Worker ${workerId} - Error fetching script content for script_id: ${scriptIdToUse}, using defaults:`,
-            scriptError.message
-          );
-        }
+      let firstMessage;
+      if (idioma === "en") {
+        firstMessage =
+          "Hello {{client_name}}, I am {{assistant_name}}, virtual assistant to {{agent_name}}, {{agent_title}} in {{agent_location}}. How are you?";
       } else {
-        console.log(
-          `[Queue] Worker ${workerId} - No script_id provided and no DEFAULT_SCRIPT_ID, using default content`
-        );
+        firstMessage =
+          "Holaa {{client_name}}, soy {{assistant_name}}. Asistente Virtual de {{agent_name}},{{agent_title}} en {{agent_location}}. ¿Cómo estás?";
       }
-
-      let firstMessage = scriptContent.firstMessage;
       let promptOverride = undefined;
       if (idioma === "en") {
         promptOverride = `You are a professional assistant with a friendly, trustworthy, and persuasive tone, specialized in the real estate sector in {{agent_location}}. You should sound charming and always smile. You speak neutral English or Spanish and communicate clearly and effectively with clients interested in buying properties. Avoid sounding robotic; speak fluently and empathetically, as a real advisor would. Always call the client by their name. Under no circumstances repeat exactly the same phrases to the client during a call. Do not leave too much time for the client to respond; if there is a pause, continue. Use short sentences.
@@ -2090,7 +2043,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
         from: fromPhoneNumber,
         to: queueItem.lead.phone,
         url: `https://${RAILWAY_PUBLIC_DOMAIN}/outbound-call-twiml?prompt=${encodeURIComponent(
-          scriptContent.prompt
+          "Eres un asistente de ventas inmobiliarias."
         )}&first_message=${encodeURIComponent(
           firstMessage
         )}&client_name=${encodeURIComponent(
@@ -2111,7 +2064,9 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
           agentTitleTranslated
         )}&conversation_language=${encodeURIComponent(
           idioma
-        )}&language=${languageParam}`,
+        )}&language=${languageParam}&script_id=${encodeURIComponent(
+          queueItem.script_id || ""
+        )}`,
         statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
         statusCallbackEvent: ["completed"],
         statusCallbackMethod: "POST",
@@ -2468,7 +2423,7 @@ fastify.post("/outbound-call", async (request, reply) => {
       from: fromPhoneNumber,
       to: number,
       url: `https://${RAILWAY_PUBLIC_DOMAIN}/outbound-call-twiml?prompt=${encodeURIComponent(
-        prompt
+        "Eres un asistente de ventas inmobiliarias."
       )}&first_message=${encodeURIComponent(
         first_message
       )}&client_name=${encodeURIComponent(
@@ -2487,7 +2442,9 @@ fastify.post("/outbound-call", async (request, reply) => {
         agentName
       )}&assistant_name=${encodeURIComponent(
         userData[0]?.assistant_name
-      )}&language=${encodeURIComponent(language)}`,
+      )}&language=${encodeURIComponent(
+        language
+      )}&script_id=${encodeURIComponent(script_id || "")}`,
       statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
       statusCallbackEvent: ["completed"],
       statusCallbackMethod: "POST",
@@ -2558,10 +2515,56 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     agent_location,
     agent_title,
     language,
+    script_id,
   } = request.query;
 
   console.log(`🔊 [TWiML] Received user_voice_id: "${user_voice_id}"`);
   console.log("🌐 [TWiML] Idioma recibido en query:", language);
+  console.log("📝 [TWiML] Script ID recibido:", script_id);
+
+  // Obtener el contenido del script de la base de datos si está disponible
+  let scriptPrompt = prompt; // Usar el prompt por defecto
+  let scriptFirstMessage = first_message; // Usar el first_message por defecto
+
+  let scriptIdToUse = script_id;
+
+  // Si no hay script_id, usar el script por defecto de Railway/Vercel
+  if (!scriptIdToUse && process.env.DEFAULT_SCRIPT_ID) {
+    scriptIdToUse = process.env.DEFAULT_SCRIPT_ID;
+    console.log(
+      `📝 [TWiML] Using default script from environment: ${scriptIdToUse}`
+    );
+  }
+
+  if (scriptIdToUse) {
+    try {
+      const { data: scriptData, error: scriptError } = await supabase
+        .from("script_content")
+        .select("prompt, greeting")
+        .eq("script_id", scriptIdToUse)
+        .eq("language", language || "es")
+        .eq("is_active", true)
+        .single();
+
+      if (!scriptError && scriptData) {
+        scriptPrompt = scriptData.prompt || scriptPrompt;
+        scriptFirstMessage = scriptData.greeting || scriptFirstMessage;
+        console.log(
+          `📝 [TWiML] Using script content from database for script_id: ${scriptIdToUse}`
+        );
+      } else {
+        console.log(
+          `📝 [TWiML] No script content found for script_id: ${scriptIdToUse}, using defaults`
+        );
+      }
+    } catch (error) {
+      console.error(`📝 [TWiML] Error fetching script content:`, error);
+    }
+  } else {
+    console.log(
+      `📝 [TWiML] No script_id provided and no DEFAULT_SCRIPT_ID, using default content`
+    );
+  }
 
   // Función para escapar caracteres especiales en XML
   const escapeXml = (str) => {
@@ -2579,8 +2582,10 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
       <Connect>
         <Stream url="wss://${RAILWAY_PUBLIC_DOMAIN}/outbound-media-stream" interruptible="true">
           <Parameter name="interruptionAllowed" value="true"/>
-          <Parameter name="prompt" value="${escapeXml(prompt)}" />
-          <Parameter name="first_message" value="${escapeXml(first_message)}" />
+          <Parameter name="prompt" value="${escapeXml(scriptPrompt)}" />
+          <Parameter name="first_message" value="${escapeXml(
+            scriptFirstMessage
+          )}" />
           <Parameter name="client_name" value="${escapeXml(client_name)}" />
           <Parameter name="client_phone" value="${escapeXml(client_phone)}" />
           <Parameter name="client_email" value="${escapeXml(client_email)}" />
@@ -4005,6 +4010,11 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                 client_phone: customParameters?.client_phone,
                 client_email: customParameters?.client_email,
               });
+
+              // El prompt del script ya viene en customParameters desde el endpoint /outbound-call-twiml
+              console.log(
+                `📝 [WEBSOCKET] Using script content from customParameters`
+              );
               //   `🔊 [WebSocket] Received user_voice_id: "${customParameters?.user_voice_id}"`
               // );
 
