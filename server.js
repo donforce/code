@@ -616,6 +616,7 @@ async function processAllPendingQueues() {
         created_at,
         priority,
         scheduled_at,
+        script_id,
         lead:leads (
           name,
           phone,
