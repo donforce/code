@@ -5,6 +5,7 @@ import fastifyFormBody from "@fastify/formbody";
 import fastifyWs from "@fastify/websocket";
 import Twilio from "twilio";
 import { createClient } from "@supabase/supabase-js";
+import { Resend } from "resend";
 import os from "os";
 import { performance } from "perf_hooks";
 import crypto from "crypto";
@@ -28,6 +29,8 @@ const {
   OPENAI_API_KEY,
   STRIPE_SECRET_KEY,
   STRIPE_WEBHOOK_SECRET,
+  RESEND_API_KEY,
+  FROM_EMAIL,
   MAX_CONCURRENT_CALLS,
   MAX_CALLS_PER_USER,
   WORKER_POOL_SIZE,
@@ -62,6 +65,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     persistSession: false,
   },
 });
+
+// Initialize Resend for email notifications
+const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 
 const fastify = Fastify({
   logger: false,
@@ -1977,10 +1983,10 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
       let firstMessage;
       if (idioma === "en") {
         firstMessage =
-          "Hello {{client_name}}, I am {{assistant_name}}, assistant to {{agent_name}}, {{agent_title}} in {{agent_location}}. How are you?";
+          "Hello {{client_name}}, I am {{assistant_name}}, virtual assistant to {{agent_name}}, {{agent_title}} in {{agent_location}}. How are you?";
       } else {
         firstMessage =
-          "Holaa {{client_name}}, soy {{assistant_name}}. Asistente de {{agent_name}},{{agent_title}} en {{agent_location}}. ¿Cómo estás?";
+          "Holaa {{client_name}}, soy {{assistant_name}}. Asistente Virtual de {{agent_name}},{{agent_title}} en {{agent_location}}. ¿Cómo estás?";
       }
 
       let promptOverride = undefined;
@@ -2960,10 +2966,10 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
             let firstMessage;
             if (webhookLanguage === "en") {
               firstMessage =
-                "Hello {{client_name}}, I am {{assistant_name}}, assistant to {{agent_name}}, {{agent_title}} in {{agent_location}}. How are you?";
+                "Hello {{client_name}}, I am {{assistant_name}}, virtual assistant to {{agent_name}}, {{agent_title}} in {{agent_location}}. How are you?";
             } else {
               firstMessage =
-                "Holaa {{client_name}}, soy {{assistant_name}}. Asistente de {{agent_name}},{{agent_title}} en {{agent_location}}. ¿Cómo estás?";
+                "Holaa {{client_name}}, soy {{assistant_name}}. Asistente Virtual de {{agent_name}},{{agent_title}} en {{agent_location}}. ¿Cómo estás?";
             }
             // ...
 
@@ -5930,6 +5936,19 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
         console.log(
           "✅ [CALENDAR] Scheduled call detected, creating calendar event..."
         );
+
+        // Send notification and email immediately when appointment is detected (isolated from main process)
+        try {
+          await sendAppointmentNotifications(scheduledCallInfo, call);
+        } catch (notificationError) {
+          console.error(
+            "❌ [NOTIFICATIONS] Error in notification process (non-blocking):",
+            notificationError
+          );
+          // Continue with the main process even if notifications fail
+        }
+
+        // Try to create calendar event (this may fail if calendar not connected)
         await createCalendarEvent(scheduledCallInfo, call);
       } else {
         console.log("ℹ️ [CALENDAR] No scheduled call detected in webhook data");
@@ -7437,6 +7456,171 @@ async function createCalendarEvent(scheduledCallInfo, call) {
   } catch (error) {
     // console.error("❌ [CALENDAR] Error creating calendar event:", error);
   }
+}
+
+// Function to send appointment notifications and emails (non-blocking)
+async function sendAppointmentNotifications(scheduledCallInfo, call) {
+  console.log(
+    "🔔 [NOTIFICATIONS] Starting appointment notifications for user:",
+    call.user_id
+  );
+
+  let userData = null;
+  let notificationSuccess = false;
+  let emailSuccess = false;
+
+  // Step 1: Get user information for email (non-blocking)
+  try {
+    const { data, error: userError } = await supabase
+      .from("users")
+      .select("email, first_name, last_name")
+      .eq("id", call.user_id)
+      .single();
+
+    if (userError) {
+      console.error("❌ [NOTIFICATIONS] Error fetching user data:", userError);
+    } else {
+      userData = data;
+      console.log("✅ [NOTIFICATIONS] User data fetched successfully");
+    }
+  } catch (userError) {
+    console.error("❌ [NOTIFICATIONS] Error in user data fetch:", userError);
+  }
+
+  // Step 2: Create notification in database (non-blocking)
+  try {
+    const { error: notificationError } = await supabase.rpc(
+      "create_manual_notification",
+      {
+        p_user_id: call.user_id,
+        p_type: "appointment_scheduled",
+        p_title: "Cita Agendada Exitosamente",
+        p_message: `Se ha agendado una cita para ${scheduledCallInfo.date} a las ${scheduledCallInfo.time}. El cliente ${scheduledCallInfo.clientName} está esperando la llamada.`,
+        p_priority: "high",
+        p_metadata: JSON.stringify({
+          call_id: call.id,
+          conversation_id: call.conversation_id,
+          client_name: scheduledCallInfo.clientName,
+          client_phone: scheduledCallInfo.clientPhone,
+          appointment_date: scheduledCallInfo.date,
+          appointment_time: scheduledCallInfo.time,
+        }),
+      }
+    );
+
+    if (notificationError) {
+      console.error(
+        "❌ [NOTIFICATIONS] Error creating appointment notification:",
+        notificationError
+      );
+    } else {
+      console.log(
+        "✅ [NOTIFICATIONS] Appointment notification created successfully"
+      );
+      notificationSuccess = true;
+    }
+  } catch (notificationError) {
+    console.error(
+      "❌ [NOTIFICATIONS] Error in notification creation:",
+      notificationError
+    );
+  }
+
+  // Step 3: Send email notification (non-blocking)
+  if (userData && userData.email && resend && FROM_EMAIL) {
+    try {
+      const user_name =
+        `${userData.first_name || ""} ${userData.last_name || ""}`.trim() ||
+        "Usuario";
+
+      const { data, error } = await resend.emails.send({
+        from: FROM_EMAIL,
+        to: [userData.email],
+        subject: `Nueva Cita Agendada - ${scheduledCallInfo.date} a las ${scheduledCallInfo.time}`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px; text-align: center; margin-bottom: 30px;">
+              <h1 style="color: white; margin: 0; font-size: 28px;">¡Nueva Cita Agendada!</h1>
+            </div>
+            
+            <div style="background: #f8f9fa; padding: 30px; border-radius: 10px; margin-bottom: 30px;">
+              <h2 style="color: #333; margin-top: 0;">Hola ${user_name},</h2>
+              <p style="color: #666; font-size: 16px; line-height: 1.6;">
+                Se ha agendado una nueva cita exitosamente. Aquí están los detalles:
+              </p>
+              
+              <div style="background: white; padding: 20px; border-radius: 8px; border-left: 4px solid #667eea; margin: 20px 0;">
+                <h3 style="color: #333; margin-top: 0;">Detalles de la Cita:</h3>
+                <ul style="color: #666; margin: 0; padding-left: 20px;">
+                  <li><strong>Cliente:</strong> ${scheduledCallInfo.clientName}</li>
+                  <li><strong>Teléfono:</strong> ${scheduledCallInfo.clientPhone}</li>
+                  <li><strong>Fecha:</strong> ${scheduledCallInfo.date}</li>
+                  <li><strong>Hora:</strong> ${scheduledCallInfo.time}</li>
+                  <li><strong>ID de Llamada:</strong> ${call.id}</li>
+                </ul>
+              </div>
+              
+              <div style="background: #e8f5e8; padding: 15px; border-radius: 8px; border-left: 4px solid #28a745; margin: 20px 0;">
+                <p style="color: #155724; margin: 0; font-weight: bold;">
+                  ✅ La cita ha sido agendada exitosamente y el cliente está esperando la llamada.
+                </p>
+              </div>
+              
+              <div style="background: #fff3cd; padding: 15px; border-radius: 8px; border-left: 4px solid #ffc107; margin: 20px 0;">
+                <p style="color: #856404; margin: 0;">
+                  <strong>Recordatorio:</strong> Asegúrate de estar disponible para la llamada en la fecha y hora programada.
+                </p>
+              </div>
+            </div>
+            
+            <div style="text-align: center; color: #999; font-size: 12px;">
+              <p>Este es un mensaje automático del sistema de gestión de citas.</p>
+              <p>Si tienes alguna pregunta, contacta al soporte técnico.</p>
+            </div>
+          </div>
+        `,
+      });
+
+      if (error) {
+        console.error(
+          "❌ [EMAIL] Error sending appointment notification email:",
+          error
+        );
+      } else {
+        console.log(
+          "✅ [EMAIL] Appointment notification email sent successfully, ID:",
+          data?.id
+        );
+        emailSuccess = true;
+      }
+    } catch (emailError) {
+      console.error(
+        "❌ [EMAIL] Error sending appointment notification email:",
+        emailError
+      );
+    }
+  } else {
+    if (!userData || !userData.email) {
+      console.log(
+        "ℹ️ [EMAIL] No user email found, skipping email notification"
+      );
+    } else if (!resend) {
+      console.log(
+        "ℹ️ [EMAIL] Resend not configured (RESEND_API_KEY missing), skipping email notification"
+      );
+    } else if (!FROM_EMAIL) {
+      console.log(
+        "ℹ️ [EMAIL] FROM_EMAIL not configured, skipping email notification"
+      );
+    }
+  }
+
+  // Summary log
+  console.log(
+    `🔔 [NOTIFICATIONS] Summary - DB: ${
+      notificationSuccess ? "✅" : "❌"
+    }, Email: ${emailSuccess ? "✅" : "❌"}`
+  );
 }
 
 // Función auxiliar para obtener el cliente de Twilio correcto para un usuario
