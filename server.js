@@ -1980,15 +1980,61 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
         agentTitleTranslated
       );
 
-      let firstMessage;
-      if (idioma === "en") {
-        firstMessage =
-          "Hello {{client_name}}, I am {{assistant_name}}, virtual assistant to {{agent_name}}, {{agent_title}} in {{agent_location}}. How are you?";
-      } else {
-        firstMessage =
-          "Holaa {{client_name}}, soy {{assistant_name}}. Asistente Virtual de {{agent_name}},{{agent_title}} en {{agent_location}}. ¿Cómo estás?";
+      // Obtener el contenido del script si está disponible
+      let scriptContent = {
+        prompt: "Eres un asistente de ventas inmobiliarias.",
+        firstMessage:
+          idioma === "en"
+            ? "Hello {{client_name}}, I am {{assistant_name}}, virtual assistant to {{agent_name}}, {{agent_title}} in {{agent_location}}. How are you?"
+            : "Holaa {{client_name}}, soy {{assistant_name}}. Asistente Virtual de {{agent_name}},{{agent_title}} en {{agent_location}}. ¿Cómo estás?",
+      };
+
+      let scriptIdToUse = queueItem.script_id;
+
+      // Si no hay script_id, usar el script por defecto de Railway/Vercel
+      if (!scriptIdToUse && process.env.DEFAULT_SCRIPT_ID) {
+        scriptIdToUse = process.env.DEFAULT_SCRIPT_ID;
+        console.log(
+          `[Queue] Worker ${workerId} - Using default script from environment: ${scriptIdToUse}`
+        );
       }
 
+      if (scriptIdToUse) {
+        try {
+          const { data: scriptData } = await supabase
+            .from("script_content")
+            .select("greeting, prompt")
+            .eq("script_id", scriptIdToUse)
+            .eq("language", idioma || "es")
+            .eq("is_active", true)
+            .single();
+
+          if (scriptData) {
+            scriptContent = {
+              prompt: scriptData.prompt || scriptContent.prompt,
+              firstMessage: scriptData.greeting || scriptContent.firstMessage,
+            };
+            console.log(
+              `[Queue] Worker ${workerId} - Using script content from script_id: ${scriptIdToUse}`
+            );
+          } else {
+            console.log(
+              `[Queue] Worker ${workerId} - No script content found for script_id: ${scriptIdToUse}, using defaults`
+            );
+          }
+        } catch (scriptError) {
+          console.log(
+            `[Queue] Worker ${workerId} - Error fetching script content for script_id: ${scriptIdToUse}, using defaults:`,
+            scriptError.message
+          );
+        }
+      } else {
+        console.log(
+          `[Queue] Worker ${workerId} - No script_id provided and no DEFAULT_SCRIPT_ID, using default content`
+        );
+      }
+
+      let firstMessage = scriptContent.firstMessage;
       let promptOverride = undefined;
       if (idioma === "en") {
         promptOverride = `You are a professional assistant with a friendly, trustworthy, and persuasive tone, specialized in the real estate sector in {{agent_location}}. You should sound charming and always smile. You speak neutral English or Spanish and communicate clearly and effectively with clients interested in buying properties. Avoid sounding robotic; speak fluently and empathetically, as a real advisor would. Always call the client by their name. Under no circumstances repeat exactly the same phrases to the client during a call. Do not leave too much time for the client to respond; if there is a pause, continue. Use short sentences.
@@ -2044,7 +2090,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
         from: fromPhoneNumber,
         to: queueItem.lead.phone,
         url: `https://${RAILWAY_PUBLIC_DOMAIN}/outbound-call-twiml?prompt=${encodeURIComponent(
-          "Eres un asistente de ventas inmobiliarias."
+          scriptContent.prompt
         )}&first_message=${encodeURIComponent(
           firstMessage
         )}&client_name=${encodeURIComponent(
@@ -2137,6 +2183,8 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
         result: result,
         error_code: translatedError.code,
         error_message: translatedError.message,
+        queue_id: queueItem.id,
+        script_id: queueItem.script_id,
         error_details: JSON.stringify({
           originalMessage: translatedError.originalMessage,
           translated: translatedError.translated,
@@ -2211,6 +2259,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
       status: "In Progress",
       result: "initiated",
       queue_id: queueItem.id,
+      script_id: queueItem.script_id,
       conversation_id: null,
     });
 
@@ -2981,8 +3030,12 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                   language: webhookLanguage,
                   agent_id: ELEVENLABS_AGENT_ID,
                   first_message: firstMessage, // solo agrega esta línea
-                  ...(promptOverride
-                    ? { prompt: { prompt: promptOverride } }
+                  ...(customParameters?.prompt || promptOverride
+                    ? {
+                        prompt: {
+                          prompt: customParameters?.prompt || promptOverride,
+                        },
+                      }
                     : {}),
                 },
                 tts: {
