@@ -3020,7 +3020,8 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                 agent: {
                   language: webhookLanguage,
                   agent_id: ELEVENLABS_AGENT_ID,
-                  first_message: firstMessage, // solo agrega esta línea
+                  first_message:
+                    customParameters?.first_message || firstMessage,
                   ...(customParameters?.prompt || promptOverride
                     ? {
                         prompt: {
