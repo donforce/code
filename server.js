@@ -5930,7 +5930,10 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       console.log(
         "📅 [CALENDAR] Checking for scheduled call in webhook data..."
       );
-      const scheduledCallInfo = await checkForScheduledCall(webhookData, call);
+      const scheduledCallInfo = await checkForScheduledCall(
+        webhookData,
+        callData?.[0]
+      );
 
       if (scheduledCallInfo) {
         console.log(
@@ -5939,7 +5942,7 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
 
         // Send notification and email immediately when appointment is detected (isolated from main process)
         try {
-          await sendAppointmentNotifications(scheduledCallInfo, call);
+          await sendAppointmentNotifications(scheduledCallInfo, callData?.[0]);
         } catch (notificationError) {
           console.error(
             "❌ [NOTIFICATIONS] Error in notification process (non-blocking):",
@@ -6774,11 +6777,19 @@ async function checkForScheduledCall(webhookData, call) {
 
       // Get lead information
       console.log("🔍 [CALENDAR] Lead ID from call:", call.lead_id);
+
+      // Check if lead_id exists before querying
+      if (!call.lead_id) {
+        console.log(
+          "ℹ️ [CALENDAR] No lead_id found in call data, skipping lead fetch"
+        );
+        return null;
+      }
+
       const { data: lead, error: leadError } = await supabase
         .from("leads")
         .select("name, phone, email")
         .eq("id", call.lead_id)
-
         .order("created_at", { ascending: false })
         .limit(1);
 
