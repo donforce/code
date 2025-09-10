@@ -1506,9 +1506,6 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       .order("created_at", { ascending: false })
       .limit(1);
 
-    console.log(`[DEBUG] Resultado de consulta de usuario:`, userData);
-    console.log(`[DEBUG] Error de consulta de usuario:`, userError);
-
     if (userError) {
       console.error(
         `[Queue] Worker ${workerId} - Error checking user credits:`,
@@ -1947,18 +1944,7 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
         }"`
       );
 
-      console.log("[DEBUG] userData[0]", userData[0]);
-      console.log("[DEBUG] userData[0].location:", userData[0]?.location);
-      console.log(
-        "[DEBUG] userData[0].location type:",
-        typeof userData[0]?.location
-      );
-      console.log(
-        "[DEBUG] userData[0].location length:",
-        userData[0]?.location?.length
-      );
       const agentLocation = userData[0]?.location || "Florida";
-      console.log("[DEBUG] Final agentLocation:", agentLocation);
       const agentTitle = userData[0]?.title || "Agente Inmobiliario";
       // Traducción de agentTitle si idioma es inglés
       let agentTitleTranslated = agentTitle;
@@ -1972,14 +1958,6 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
         else if (agentTitle === "Consultor Inmobiliario")
           agentTitleTranslated = "Real Estate Consultant";
       }
-      console.log(
-        "[DEBUG] agentLocation",
-        agentLocation,
-        "agentTitle",
-        agentTitle,
-        "agentTitleTranslated",
-        agentTitleTranslated
-      );
 
       let firstMessage;
       if (idioma === "en") {
@@ -2496,7 +2474,6 @@ fastify.post("/outbound-call", async (request, reply) => {
 
 // Your existing outbound-call-twiml endpoint
 fastify.all("/outbound-call-twiml", async (request, reply) => {
-  console.log("[DEBUG] /outbound-call-twiml params:", request.query);
   const {
     custom_llm_prompt,
     prompt,
@@ -2520,7 +2497,6 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
   } = request.query;
 
   console.log(`🔊 [TWiML] Received user_voice_id: "${user_voice_id}"`);
-  console.log("🌐 [TWiML] Idioma recibido en query:", language);
   console.log("📝 [TWiML] Script ID recibido:", script_id);
 
   // Obtener el contenido del script de la base de datos si está disponible
@@ -2534,7 +2510,7 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
   if (!scriptIdToUse && process.env.DEFAULT_SCRIPT_ID) {
     scriptIdToUse = process.env.DEFAULT_SCRIPT_ID;
     console.log(
-      `📝 [TWiML] Using default script from environment: ${scriptIdToUse}`
+      `📝 [TWiML] 🔄 SCRIPT SOURCE: FALLBACK - Using default script from environment: ${scriptIdToUse}`
     );
   }
 
@@ -2552,11 +2528,11 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
         scriptPrompt = scriptData.prompt || scriptPrompt;
         scriptFirstMessage = scriptData.greeting || scriptFirstMessage;
         console.log(
-          `📝 [TWiML] Using script content from database for script_id: ${scriptIdToUse}`
+          `📝 [TWiML] ✅ SCRIPT SOURCE: DATABASE - Using script content from database for script_id: ${scriptIdToUse}`
         );
       } else {
         console.log(
-          `📝 [TWiML] No script content found for script_id: ${scriptIdToUse}, using defaults`
+          `📝 [TWiML] ⚠️ SCRIPT SOURCE: DEFAULT - No script content found for script_id: ${scriptIdToUse}, using default content`
         );
       }
     } catch (error) {
@@ -2564,9 +2540,17 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     }
   } else {
     console.log(
-      `📝 [TWiML] No script_id provided and no DEFAULT_SCRIPT_ID, using default content`
+      `📝 [TWiML] ⚠️ SCRIPT SOURCE: HARDCODED - No script_id provided and no DEFAULT_SCRIPT_ID, using hardcoded default content`
     );
   }
+
+  // Log final del script que se enviará a ElevenLabs
+  console.log(`📝 [TWiML] 🎯 FINAL SCRIPT FOR ELEVENLABS:`, {
+    scriptId: scriptIdToUse || "none",
+    promptLength: scriptPrompt?.length || 0,
+    firstMessageLength: scriptFirstMessage?.length || 0,
+    promptPreview: scriptPrompt?.substring(0, 100) + "..." || "none",
+  });
 
   // Función para escapar caracteres especiales en XML
   const escapeXml = (str) => {
@@ -4002,16 +3986,6 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
               streamSid = msg.start.streamSid;
               callSid = msg.start.callSid;
               customParameters = msg.start.customParameters;
-
-              // console.log(
-              console.log("🔍 [WEBSOCKET DEBUG] Received customParameters:", {
-                agent_firstname: customParameters?.agent_firstname,
-                agent_name: customParameters?.agent_name,
-                assistant_name: customParameters?.assistant_name,
-                client_name: customParameters?.client_name,
-                client_phone: customParameters?.client_phone,
-                client_email: customParameters?.client_email,
-              });
 
               // El prompt del script ya viene en customParameters desde el endpoint /outbound-call-twiml
               console.log(
