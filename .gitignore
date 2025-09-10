@@ -52,3 +52,6 @@ coverage/
 # Archivos de backup
 *.bak
 *.backup
+
+# Archivos SQL (no subir al repositorio)
+*.sql
