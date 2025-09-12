@@ -11,7 +11,6 @@ import { performance } from "perf_hooks";
 import crypto from "crypto";
 import { sendCallCompletionData } from "./webhook-handlers.js";
 import { handleWhatsAppMessage } from "./whatsapp-handler.cjs";
-import { handleSMSMessage } from "./sms-handler.cjs";
 
 dotenv.config();
 
@@ -617,7 +616,6 @@ async function processAllPendingQueues() {
         created_at,
         priority,
         scheduled_at,
-        script_id,
         lead:leads (
           name,
           phone,
@@ -1507,6 +1505,9 @@ async function processQueueItem(queueItem, workerId = "unknown") {
       .order("created_at", { ascending: false })
       .limit(1);
 
+    console.log(`[DEBUG] Resultado de consulta de usuario:`, userData);
+    console.log(`[DEBUG] Error de consulta de usuario:`, userError);
+
     if (userError) {
       console.error(
         `[Queue] Worker ${workerId} - Error checking user credits:`,
@@ -1945,7 +1946,18 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
         }"`
       );
 
+      console.log("[DEBUG] userData[0]", userData[0]);
+      console.log("[DEBUG] userData[0].location:", userData[0]?.location);
+      console.log(
+        "[DEBUG] userData[0].location type:",
+        typeof userData[0]?.location
+      );
+      console.log(
+        "[DEBUG] userData[0].location length:",
+        userData[0]?.location?.length
+      );
       const agentLocation = userData[0]?.location || "Florida";
+      console.log("[DEBUG] Final agentLocation:", agentLocation);
       const agentTitle = userData[0]?.title || "Agente Inmobiliario";
       // Traducción de agentTitle si idioma es inglés
       let agentTitleTranslated = agentTitle;
@@ -1959,6 +1971,14 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
         else if (agentTitle === "Consultor Inmobiliario")
           agentTitleTranslated = "Real Estate Consultant";
       }
+      console.log(
+        "[DEBUG] agentLocation",
+        agentLocation,
+        "agentTitle",
+        agentTitle,
+        "agentTitleTranslated",
+        agentTitleTranslated
+      );
 
       let firstMessage;
       if (idioma === "en") {
@@ -1968,6 +1988,7 @@ No avances al paso 2 hasta obtener una respuesta clara para cada pregunta. Varí
         firstMessage =
           "Holaa {{client_name}}, soy {{assistant_name}}. Asistente Virtual de {{agent_name}},{{agent_title}} en {{agent_location}}. ¿Cómo estás?";
       }
+
       let promptOverride = undefined;
       if (idioma === "en") {
         promptOverride = `You are a professional assistant with a friendly, trustworthy, and persuasive tone, specialized in the real estate sector in {{agent_location}}. You should sound charming and always smile. You speak neutral English or Spanish and communicate clearly and effectively with clients interested in buying properties. Avoid sounding robotic; speak fluently and empathetically, as a real advisor would. Always call the client by their name. Under no circumstances repeat exactly the same phrases to the client during a call. Do not leave too much time for the client to respond; if there is a pause, continue. Use short sentences.
@@ -2044,9 +2065,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
           agentTitleTranslated
         )}&conversation_language=${encodeURIComponent(
           idioma
-        )}&language=${languageParam}&script_id=${encodeURIComponent(
-          queueItem.script_id || ""
-        )}`,
+        )}&language=${languageParam}`,
         statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
         statusCallbackEvent: ["completed"],
         statusCallbackMethod: "POST",
@@ -2118,8 +2137,6 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
         result: result,
         error_code: translatedError.code,
         error_message: translatedError.message,
-        queue_id: queueItem.id,
-        script_id: queueItem.script_id,
         error_details: JSON.stringify({
           originalMessage: translatedError.originalMessage,
           translated: translatedError.translated,
@@ -2194,7 +2211,6 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
       status: "In Progress",
       result: "initiated",
       queue_id: queueItem.id,
-      script_id: queueItem.script_id,
       conversation_id: null,
     });
 
@@ -2403,7 +2419,7 @@ fastify.post("/outbound-call", async (request, reply) => {
       from: fromPhoneNumber,
       to: number,
       url: `https://${RAILWAY_PUBLIC_DOMAIN}/outbound-call-twiml?prompt=${encodeURIComponent(
-        "Eres un asistente de ventas inmobiliarias."
+        prompt
       )}&first_message=${encodeURIComponent(
         first_message
       )}&client_name=${encodeURIComponent(
@@ -2422,9 +2438,7 @@ fastify.post("/outbound-call", async (request, reply) => {
         agentName
       )}&assistant_name=${encodeURIComponent(
         userData[0]?.assistant_name
-      )}&language=${encodeURIComponent(
-        language
-      )}&script_id=${encodeURIComponent(script_id || "")}`,
+      )}&language=${encodeURIComponent(language)}`,
       statusCallback: `https://${RAILWAY_PUBLIC_DOMAIN}/twilio-status`,
       statusCallbackEvent: ["completed"],
       statusCallbackMethod: "POST",
@@ -2475,6 +2489,7 @@ fastify.post("/outbound-call", async (request, reply) => {
 
 // Your existing outbound-call-twiml endpoint
 fastify.all("/outbound-call-twiml", async (request, reply) => {
+  console.log("[DEBUG] /outbound-call-twiml params:", request.query);
   const {
     custom_llm_prompt,
     prompt,
@@ -2494,64 +2509,10 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     agent_location,
     agent_title,
     language,
-    script_id,
   } = request.query;
 
   console.log(`🔊 [TWiML] Received user_voice_id: "${user_voice_id}"`);
-  console.log("📝 [TWiML] Script ID recibido:", script_id);
-
-  // Obtener el contenido del script de la base de datos si está disponible
-  // Fallback: script_id -> DEFAULT_SCRIPT_ID -> contenido por defecto
-  let scriptPrompt = prompt; // Usar el prompt por defecto
-  let scriptFirstMessage = first_message; // Usar el first_message por defecto
-
-  let scriptIdToUse = script_id;
-
-  // Si no hay script_id, usar el script por defecto de Railway/Vercel
-  if (!scriptIdToUse && process.env.DEFAULT_SCRIPT_ID) {
-    scriptIdToUse = process.env.DEFAULT_SCRIPT_ID;
-    console.log(
-      `📝 [TWiML] 🔄 SCRIPT SOURCE: FALLBACK - Using default script from environment: ${scriptIdToUse}`
-    );
-  }
-
-  if (scriptIdToUse) {
-    try {
-      const { data: scriptData, error: scriptError } = await supabase
-        .from("script_content")
-        .select("prompt, greeting")
-        .eq("script_id", scriptIdToUse)
-        .eq("language", language || "es")
-        .eq("is_active", true)
-        .single();
-
-      if (!scriptError && scriptData) {
-        scriptPrompt = scriptData.prompt || scriptPrompt;
-        scriptFirstMessage = scriptData.greeting || scriptFirstMessage;
-        console.log(
-          `📝 [TWiML] ✅ SCRIPT SOURCE: DATABASE - Using script content from database for script_id: ${scriptIdToUse}`
-        );
-      } else {
-        console.log(
-          `📝 [TWiML] ⚠️ SCRIPT SOURCE: DEFAULT - No script content found for script_id: ${scriptIdToUse}, using default content`
-        );
-      }
-    } catch (error) {
-      console.error(`📝 [TWiML] Error fetching script content:`, error);
-    }
-  } else {
-    console.log(
-      `📝 [TWiML] ⚠️ SCRIPT SOURCE: HARDCODED - No script_id provided and no DEFAULT_SCRIPT_ID, using hardcoded default content`
-    );
-  }
-
-  // Log final del script que se enviará a ElevenLabs
-  console.log(`📝 [TWiML] 🎯 FINAL SCRIPT FOR ELEVENLABS:`, {
-    scriptId: scriptIdToUse || "none",
-    promptLength: scriptPrompt?.length || 0,
-    firstMessageLength: scriptFirstMessage?.length || 0,
-    promptPreview: scriptPrompt?.substring(0, 100) + "..." || "none",
-  });
+  console.log("🌐 [TWiML] Idioma recibido en query:", language);
 
   // Función para escapar caracteres especiales en XML
   const escapeXml = (str) => {
@@ -2569,10 +2530,8 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
       <Connect>
         <Stream url="wss://${RAILWAY_PUBLIC_DOMAIN}/outbound-media-stream" interruptible="true">
           <Parameter name="interruptionAllowed" value="true"/>
-          <Parameter name="prompt" value="${escapeXml(scriptPrompt)}" />
-          <Parameter name="first_message" value="${escapeXml(
-            scriptFirstMessage
-          )}" />
+          <Parameter name="prompt" value="${escapeXml(prompt)}" />
+          <Parameter name="first_message" value="${escapeXml(first_message)}" />
           <Parameter name="client_name" value="${escapeXml(client_name)}" />
           <Parameter name="client_phone" value="${escapeXml(client_phone)}" />
           <Parameter name="client_email" value="${escapeXml(client_email)}" />
@@ -2935,6 +2894,28 @@ fastify.register(async (fastifyInstance) => {
           elevenLabsConnections.set(callSid, newWs);
 
           newWs.on("open", () => {
+            console.log("[ElevenLabs] Connected to Conversational AI");
+
+            // 🔍 AGREGAR LOGS DETALLADOS PARA DEBUGGING
+            console.log("🔍 [ELEVENLABS CONFIG] Custom parameters received:", {
+              client_name: customParameters?.client_name,
+              client_phone: customParameters?.client_phone,
+              client_email: customParameters?.client_email,
+              client_id: customParameters?.client_id,
+              fecha: customParameters?.fecha,
+              dia_semana: customParameters?.dia_semana,
+              agent_firstname: customParameters?.agent_firstname,
+              agent_name: customParameters?.agent_name,
+              assistant_name: customParameters?.assistant_name,
+              calendar_availability: customParameters?.calendar_availability,
+              calendar_timezone: customParameters?.calendar_timezone,
+              user_voice_id: customParameters?.user_voice_id,
+              custom_llm_prompt: customParameters?.custom_llm_prompt
+                ? "Present"
+                : "Not present",
+              agent_location: customParameters?.agent_location,
+              agent_title: customParameters?.agent_title,
+            });
             const webhookLanguage = customParameters?.language || "es";
             console.log(
               "🔍 [ELEVENLABS CONFIG] Custom language:",
@@ -2999,14 +2980,9 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                 agent: {
                   language: webhookLanguage,
                   agent_id: ELEVENLABS_AGENT_ID,
-                  first_message:
-                    customParameters?.first_message || firstMessage,
-                  ...(customParameters?.prompt || promptOverride
-                    ? {
-                        prompt: {
-                          prompt: customParameters?.prompt || promptOverride,
-                        },
-                      }
+                  first_message: firstMessage, // solo agrega esta línea
+                  ...(promptOverride
+                    ? { prompt: { prompt: promptOverride } }
                     : {}),
                 },
                 tts: {
@@ -3967,10 +3943,15 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
               callSid = msg.start.callSid;
               customParameters = msg.start.customParameters;
 
-              // El prompt del script ya viene en customParameters desde el endpoint /outbound-call-twiml
-              console.log(
-                `📝 [WEBSOCKET] Using script content from customParameters`
-              );
+              // console.log(
+              console.log("🔍 [WEBSOCKET DEBUG] Received customParameters:", {
+                agent_firstname: customParameters?.agent_firstname,
+                agent_name: customParameters?.agent_name,
+                assistant_name: customParameters?.assistant_name,
+                client_name: customParameters?.client_name,
+                client_phone: customParameters?.client_phone,
+                client_email: customParameters?.client_email,
+              });
               //   `🔊 [WebSocket] Received user_voice_id: "${customParameters?.user_voice_id}"`
               // );
 
@@ -4508,6 +4489,22 @@ fastify.post("/twilio-status", async (request, reply) => {
       return reply.code(200).send();
     }
 
+    console.log(`[TWILIO STATUS] Call lookup result:`, {
+      callSid,
+      existingCall:
+        existingCall && existingCall.length > 0
+          ? {
+              id: existingCall[0].id,
+              user_id: existingCall[0].user_id,
+              call_sid: existingCall[0].call_sid,
+              status: existingCall[0].status,
+              created_at: existingCall[0].created_at,
+            }
+          : null,
+      found: !!(existingCall && existingCall.length > 0),
+      dataLength: existingCall?.length || 0,
+    });
+
     // Determine the result based on Twilio status
     let result = "initiated";
     let connectionStatus = "connected";
@@ -4604,7 +4601,13 @@ fastify.post("/twilio-status", async (request, reply) => {
               userData[0]?.twilio_subaccount_sid,
               userData[0]?.twilio_auth_token
             );
+            console.log(
+              `🔍 [TWILIO STATUS] Using subaccount client for call ${callSid}: ${userData[0]?.twilio_subaccount_sid}`
+            );
           } else {
+            console.log(
+              `🔍 [TWILIO STATUS] Using main account client for call ${callSid}`
+            );
           }
         }
 
@@ -4704,10 +4707,17 @@ fastify.post("/twilio-status", async (request, reply) => {
 
           if (!userError && userData?.twilio_subaccount_sid) {
             accountSidToUse = userData.twilio_subaccount_sid;
+            console.log(
+              `🔍 [TWILIO STATUS] Using subaccount for non-completed call_uri: ${accountSidToUse}`
+            );
           }
         }
 
         const fallbackCallUri = `/2010-04-01/Accounts/${accountSidToUse}/Calls/${callSid}.json`;
+        console.log(
+          "🔄 [TWILIO STATUS] Saving call_uri for non-completed call:",
+          fallbackCallUri
+        );
 
         await supabase
           .from("calls")
@@ -4716,7 +4726,12 @@ fastify.post("/twilio-status", async (request, reply) => {
             updated_at: new Date().toISOString(),
           })
           .eq("call_sid", callSid);
-      } catch (fallbackErr) {}
+      } catch (fallbackErr) {
+        console.warn(
+          "⚠️ [TWILIO STATUS] Could not save fallback call_uri:",
+          fallbackErr?.message || fallbackErr
+        );
+      }
     }
 
     // Handle error cases and mark leads accordingly
@@ -4724,6 +4739,10 @@ fastify.post("/twilio-status", async (request, reply) => {
       try {
         // Handle failed calls with specific error messages
         if (result === "failed" && callErrorMessage) {
+          console.log(
+            `[TWILIO STATUS] Processing failed call for lead ${existingCall.lead_id}: ${callErrorMessage}`
+          );
+
           // Check for invalid phone number
           if (
             callErrorMessage.toLowerCase().includes("invalid phone number") ||
@@ -8999,12 +9018,6 @@ fastify.post("/twilio-recording-status", async (request, reply) => {
 fastify.post("/webhook/whatsapp", async (request, reply) => {
   console.log("🚀 [SERVER] Webhook WhatsApp recibido");
   return await handleWhatsAppMessage(supabase, request, reply);
-});
-
-// ===== RUTA DE SMS =====
-fastify.post("/webhook/sms", async (request, reply) => {
-  console.log("🚀 [SERVER] Webhook SMS recibido");
-  return await handleSMSMessage(supabase, request, reply);
 });
 
 fastify.post("/api/admin/cleanup-recordings", async (request, reply) => {
