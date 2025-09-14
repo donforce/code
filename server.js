@@ -3210,6 +3210,18 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
             }
             // ...
 
+            // 🚀 OPTIMIZACIONES TTS APLICADAS PARA VELOCIDAD MÁXIMA
+            console.log(
+              "🚀 [TTS_OPTIMIZATION] Aplicando configuraciones de velocidad máxima:"
+            );
+            console.log("   - streaming_latency: 0.1s (ultra-bajo)");
+            console.log("   - chunk_size: 512 (más pequeño)");
+            console.log("   - audio_quality: medium (más rápido)");
+            console.log("   - stability: 0.5 (media)");
+            console.log("   - similarity_boost: 0.6 (medio)");
+            console.log("   - style: 0.3 (bajo)");
+            console.log("   - use_speaker_boost: false (sin boost)");
+
             // Al armar initialConfig:
             const initialConfig = {
               type: "conversation_initiation_client_data",
@@ -3232,16 +3244,16 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                     customParameters?.user_voice_id ||
                     customParameters?.voice_id ||
                     "",
-                  // 🚀 OPTIMIZACIONES DE LATENCIA TTS
-                  streaming_latency: 0.2, // Latencia de streaming reducida
-                  chunk_size: 1024, // Chunks más pequeños para menor latencia
+                  // 🚀 OPTIMIZACIONES DE LATENCIA TTS - VELOCIDAD MÁXIMA
+                  streaming_latency: 0.1, // Latencia ultra-baja para respuesta inmediata
+                  chunk_size: 512, // Chunks más pequeños para menor latencia
                   enable_streaming: true, // Streaming habilitado
-                  audio_quality: "high", // Calidad alta pero optimizada
+                  audio_quality: "medium", // Calidad media para procesamiento más rápido
                   voice_settings: {
-                    stability: 0.7, // Estabilidad optimizada
-                    similarity_boost: 0.8, // Similaridad optimizada
-                    style: 0.5, // Estilo moderado
-                    use_speaker_boost: true, // Boost de speaker habilitado
+                    stability: 0.5, // Estabilidad media para procesamiento más rápido
+                    similarity_boost: 0.6, // Boost medio para procesamiento más rápido
+                    style: 0.3, // Estilo bajo para procesamiento más rápido
+                    use_speaker_boost: false, // Sin boost para procesamiento más rápido
                   },
                 },
                 keep_alive: true,
@@ -3249,13 +3261,13 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                 conversation_config: {
                   enable_fast_response: true, // Habilitar respuesta rápida
                   enable_instant_processing: true, // Procesamiento instantáneo
-                  response_timeout: 0.4, // Timeout de respuesta de 0.4 segundos
+                  response_timeout: 2.0, // Timeout de respuesta aumentado a 2 segundos para evitar timeouts prematuros
                 },
                 // 🚀 OPTIMIZADO: Configuraciones para reducir latencia de respuesta
                 processing_config: {
                   enable_streaming: true, // Habilitar streaming para respuestas más rápidas
                   enable_early_termination: true, // Terminación temprana para respuestas más ágiles
-                  response_delay_threshold: 0.08, // 🚀 ULTRA RÁPIDO: 0.08 segundos para respuesta inmediata
+                  response_delay_threshold: 0.2, // 🚀 OPTIMIZADO: 0.2 segundos para balance velocidad/calidad
                   enable_realtime_processing: true, // Procesamiento en tiempo real
                   enable_instant_response: true, // Respuesta instantánea
                 },
