@@ -578,15 +578,11 @@ let isProcessingQueue = false;
 async function processAllPendingQueues() {
   // Mutex: evitar procesamiento simultáneo (timeout de 30 segundos)
   if (isProcessingQueue) {
-    console.log(
-      `[Queue] Skipping - already processing (${new Date().toISOString()})`
-    );
+    // Logs de cola ya procesándose eliminados
     return;
   }
 
-  console.log(
-    `[Queue] Starting queue processing check at ${new Date().toISOString()}`
-  );
+  // Logs de inicio de procesamiento de cola eliminados
   isProcessingQueue = true;
 
   // Timeout de seguridad para liberar el mutex
@@ -2677,6 +2673,19 @@ fastify.register(async (fastifyInstance) => {
               latencyDiagnostics.timestamps.twilioReceive = twilioReceiveTime;
               latencyDiagnostics.audioChunks++;
 
+              // 🎯 NUEVO: Marcar que recibimos audio del usuario desde Twilio
+              lastUserAudioTime = twilioReceiveTime;
+
+              // Si estábamos esperando silencio, resetear los flags
+              if (isWaitingForUserSilence || twilioSilenceDetected) {
+                isWaitingForUserSilence = false;
+                twilioSilenceDetected = false;
+                userSilenceStartTime = null;
+                console.log(
+                  `🎯 [TWILIO_AUDIO] User resumed speaking - resetting silence detection`
+                );
+              }
+
               // 🚀 OPTIMIZACIÓN DE LATENCIA: Procesamiento inmediato sin buffer
               const frame = {
                 type: "user_audio_chunk",
@@ -2746,6 +2755,13 @@ fastify.register(async (fastifyInstance) => {
       let isVoicemailDetectionMode = false; // Variable para evitar clear durante detección de buzón de voz
       let lastAudioTime = Date.now(); // Para detectar silencios largos
       let silenceThreshold = 15000; // 15 segundos de silencio para considerar buzón de voz
+
+      // 🎯 NUEVO: Variables para detectar silencio del usuario (TWILIO-BASED)
+      let lastUserAudioTime = Date.now(); // Última vez que recibimos audio del usuario desde Twilio
+      let userSilenceThreshold = 800; // 800ms de silencio para considerar que el usuario terminó (ajustado para Twilio)
+      let isWaitingForUserSilence = false; // Flag para saber si estamos esperando silencio
+      let userSilenceStartTime = null; // Timestamp cuando comenzó el silencio del usuario
+      let twilioSilenceDetected = false; // Flag específico para silencio detectado por Twilio
       let audioBuffer = []; // Buffer para acumular audio antes de enviar
       let bufferSize = 0; // 🚀 ULTRA RÁPIDO: Buffer cero para envío inmediato (reducido de 1 a 0)
       let bufferTimeout = null; // Timeout para enviar buffer parcial
@@ -2783,6 +2799,7 @@ fastify.register(async (fastifyInstance) => {
         // Timestamps para cada punto del pipeline
         timestamps: {
           userSpeechEnd: null,
+          userSilenceDetected: null, // 🎯 NUEVO: Momento exacto cuando se detecta silencio
           twilioReceive: null,
           serverProcess: null,
           elevenLabsSend: null,
@@ -2799,6 +2816,8 @@ fastify.register(async (fastifyInstance) => {
           server: { latency: [], avg: 0, max: 0, min: Infinity },
           elevenLabs: { latency: [], avg: 0, max: 0, min: Infinity },
           network: { latency: [], avg: 0, max: 0, min: Infinity },
+          // 🎯 NUEVO: Latencia específica de silencio a respuesta
+          silenceToResponse: { latency: [], avg: 0, max: 0, min: Infinity },
         },
 
         // Métricas generales
@@ -2810,6 +2829,7 @@ fastify.register(async (fastifyInstance) => {
         // Contadores
         audioChunks: 0,
         interruptions: 0,
+        silenceDetections: 0, // 🎯 NUEVO: Contador de detecciones de silencio
       };
 
       // 🔍 FUNCIÓN DE DIAGNÓSTICO GRANULAR DE LATENCIA
@@ -2833,6 +2853,7 @@ fastify.register(async (fastifyInstance) => {
           server: "🖥️",
           elevenLabs: "🤖",
           network: "🌐",
+          silenceToResponse: "🎯", // 🎯 NUEVO: Emoji especial para silencio a respuesta
         };
 
         console.log(
@@ -2853,6 +2874,61 @@ fastify.register(async (fastifyInstance) => {
         return latency;
       };
 
+      // 🎯 NUEVA FUNCIÓN: Detectar silencio del usuario (TWILIO-BASED)
+      const detectUserSilence = () => {
+        const now = Date.now();
+        const timeSinceLastAudio = now - lastUserAudioTime;
+
+        if (
+          timeSinceLastAudio >= userSilenceThreshold &&
+          !isWaitingForUserSilence &&
+          !twilioSilenceDetected
+        ) {
+          // 🎯 TWILIO DETECTÓ SILENCIO - USUARIO TERMINÓ DE HABLAR
+          isWaitingForUserSilence = true;
+          twilioSilenceDetected = true;
+          userSilenceStartTime = now;
+          latencyDiagnostics.timestamps.userSilenceDetected = now;
+          latencyDiagnostics.silenceDetections++;
+
+          console.log(
+            `🎯 [TWILIO_SILENCE] Twilio detected user silence after ${timeSinceLastAudio}ms - waiting for ElevenLabs response`
+          );
+
+          // Marcar que estamos esperando respuesta de la IA
+          latencyDiagnostics.timestamps.userSpeechEnd = lastUserAudioTime;
+        }
+      };
+
+      // 🎯 NUEVA FUNCIÓN: Detectar inicio de respuesta de IA (ELEVENLABS-BASED)
+      const detectAIResponseStart = () => {
+        if (
+          isWaitingForUserSilence &&
+          latencyDiagnostics.timestamps.userSilenceDetected &&
+          twilioSilenceDetected
+        ) {
+          // 🎯 ELEVENLABS COMIENZA A RESPONDER DESPUÉS DE SILENCIO DE TWILIO
+          const responseStartTime = Date.now();
+          latencyDiagnostics.timestamps.responseStartTime = responseStartTime;
+
+          // Calcular latencia específica: TWILIO SILENCIO → ELEVENLABS RESPUESTA
+          const twilioSilenceToElevenLabsResponse = diagnoseLatency(
+            "silenceToResponse",
+            latencyDiagnostics.timestamps.userSilenceDetected,
+            responseStartTime
+          );
+
+          console.log(
+            `🎯 [ELEVENLABS_RESPONSE] ElevenLabs started responding ${twilioSilenceToElevenLabsResponse}ms after Twilio detected silence`
+          );
+
+          // Resetear flags
+          isWaitingForUserSilence = false;
+          twilioSilenceDetected = false;
+          userSilenceStartTime = null;
+        }
+      };
+
       // 📊 FUNCIÓN PARA REPORTAR DIAGNÓSTICO COMPLETO
       const reportDiagnostics = () => {
         console.log(`\n🔍 [DIAGNOSTIC_REPORT] Call ${callSid}:`);
@@ -2861,8 +2937,9 @@ fastify.register(async (fastifyInstance) => {
         Object.entries(latencyDiagnostics.components).forEach(
           ([component, data]) => {
             if (data.latency.length > 0) {
+              const emoji = component === "silenceToResponse" ? "🎯" : "📊";
               console.log(
-                `   ${component.toUpperCase()}: Avg ${data.avg.toFixed(
+                `   ${emoji} ${component.toUpperCase()}: Avg ${data.avg.toFixed(
                   1
                 )}ms, Max ${data.max}ms, Min ${data.min}ms (${
                   data.latency.length
@@ -2871,6 +2948,40 @@ fastify.register(async (fastifyInstance) => {
             }
           }
         );
+
+        // 🎯 NUEVO: Reporte específico de silencio a respuesta (TWILIO → ELEVENLABS)
+        if (latencyDiagnostics.silenceDetections > 0) {
+          console.log(
+            `\n🎯 [TWILIO_SILENCE_TO_ELEVENLABS_RESPONSE] Key metric:`
+          );
+          console.log(
+            `   - Twilio silence detections: ${latencyDiagnostics.silenceDetections}`
+          );
+          console.log(
+            `   - Average Twilio silence → ElevenLabs response: ${latencyDiagnostics.components.silenceToResponse.avg.toFixed(
+              1
+            )}ms`
+          );
+          console.log(
+            `   - Best response time: ${latencyDiagnostics.components.silenceToResponse.min}ms`
+          );
+          console.log(
+            `   - Worst response time: ${latencyDiagnostics.components.silenceToResponse.max}ms`
+          );
+
+          // Análisis de rendimiento
+          const avgLatency =
+            latencyDiagnostics.components.silenceToResponse.avg;
+          if (avgLatency < 500) {
+            console.log(`   ✅ EXCELLENT: Average response time under 500ms`);
+          } else if (avgLatency < 1000) {
+            console.log(`   ⚠️ GOOD: Average response time under 1 second`);
+          } else {
+            console.log(
+              `   ❌ NEEDS IMPROVEMENT: Average response time over 1 second`
+            );
+          }
+        }
 
         console.log(`\n⏱️ [TIMELINE] Key timestamps:`);
         Object.entries(latencyDiagnostics.timestamps).forEach(
@@ -2994,6 +3105,9 @@ fastify.register(async (fastifyInstance) => {
 
       // Verificar silencios cada 5 segundos (reducido para menos interferencia)
       const silenceCheckInterval = setInterval(checkForLongSilence, 5000);
+
+      // 🎯 NUEVO: Verificar silencio del usuario cada 50ms para detección ultra-precisa
+      const userSilenceCheckInterval = setInterval(detectUserSilence, 50);
 
       const sendClearToTwilio = (streamSid) => {
         if (streamSid) {
@@ -3183,14 +3297,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
               },
             };
 
-            // 🔍 LOG DE LA CONFIGURACIÓN FINAL
-            console.log("🔍 [ELEVENLABS CONFIG] Final config being sent:", {
-              agent_firstname: initialConfig.dynamic_variables.agent_firstname,
-              agent_name: initialConfig.dynamic_variables.agent_name,
-              assistant_name: initialConfig.dynamic_variables.assistant_name,
-              client_name: initialConfig.dynamic_variables.client_name,
-              agent_location: initialConfig.dynamic_variables.agent_location,
-            });
+            // Logs de configuración final eliminados
 
             // Verificar que el WebSocket esté abierto antes de enviar
             if (newWs.readyState === WebSocket.OPEN) {
@@ -3210,9 +3317,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
 
                 // Only log critical events, skip ping messages
 
-                if (message.type !== "ping") {
-                  console.log(`[ElevenLabs] Event: ${message.type}`);
-                }
+                // Logs de eventos de ElevenLabs eliminadosesponde
 
                 // console.log(
                 //   `[ElevenLabs] Message:`,
@@ -3272,6 +3377,9 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                       const elevenLabsResponseTime = Date.now();
                       latencyDiagnostics.timestamps.elevenLabsResponse =
                         elevenLabsResponseTime;
+
+                      // 🎯 NUEVO: Detectar inicio de respuesta de IA
+                      detectAIResponseStart();
 
                       // 🚀 OPTIMIZACIÓN: Marcar inicio de respuesta si es el primer chunk
                       if (
@@ -3987,12 +4095,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                   }
 
                   default:
-                    // Only log unknown message types, not ping
-                    if (message.type !== "ping") {
-                      console.log(
-                        `[ElevenLabs] Unknown event: ${message.type}`
-                      );
-                    }
+                  // Logs de eventos desconocidos eliminados
                 }
               } catch (error) {
                 console.error("[ElevenLabs] Error processing message:", error);
@@ -4007,7 +4110,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
             });
 
             newWs.on("close", async () => {
-              console.log("[ElevenLabs] Disconnected");
+              // Logs de desconexión de ElevenLabs eliminados
 
               // Limpiar chunks de audio al desconectar ElevenLabs
               clearAudioState();
@@ -4129,15 +4232,9 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                   }
 
                   // 🆕 LOGGING REDUCIDO PARA MÁXIMA VELOCIDAD
-                  if (audioChunkCounter % 200 === 0) {
-                    console.log(
-                      `[Audio] Processed ${audioChunkCounter} chunks`
-                    );
-                  }
+                  // Logs de procesamiento de chunks eliminados
                 } else if (interrupted) {
-                  console.log(
-                    "[Audio] Skipping audio chunk due to interruption"
-                  );
+                  // Logs de chunks saltados eliminados
                   // Limpiar estado completo durante interrupciones
                   clearAudioState();
                 }
@@ -4156,10 +4253,14 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
               // Limpiar chunks de audio al finalizar la llamada
               clearAudioState();
 
-              // Limpiar intervalo de verificación de silencios
+              // Limpiar intervalos de verificación de silencios
               if (silenceCheckInterval) {
                 clearInterval(silenceCheckInterval);
-                console.log("[SILENCE] Cleaned silence check interval on stop");
+                // Logs de limpieza de intervalo de silencio eliminados
+              }
+              if (userSilenceCheckInterval) {
+                clearInterval(userSilenceCheckInterval);
+                // Logs de limpieza de intervalo de silencio del usuario eliminados
               }
               break;
 
@@ -4181,7 +4282,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
         // Limpiar intervalo de verificación de silencios
         if (silenceCheckInterval) {
           clearInterval(silenceCheckInterval);
-          console.log("[SILENCE] Cleaned silence check interval");
+          // Logs de limpieza de intervalo de silencio eliminados
         }
       });
     }
