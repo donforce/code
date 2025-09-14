@@ -3212,15 +3212,17 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
 
             // 🚀 OPTIMIZACIONES TTS APLICADAS PARA VELOCIDAD MÁXIMA
             console.log(
-              "🚀 [TTS_OPTIMIZATION] Aplicando configuraciones de velocidad máxima:"
+              "🚀 [TTS_OPTIMIZATION] Aplicando configuraciones balanceadas velocidad/calidad:"
             );
-            console.log("   - streaming_latency: 0.1s (ultra-bajo)");
-            console.log("   - chunk_size: 512 (más pequeño)");
-            console.log("   - audio_quality: medium (más rápido)");
-            console.log("   - stability: 0.5 (media)");
-            console.log("   - similarity_boost: 0.6 (medio)");
-            console.log("   - style: 0.3 (bajo)");
-            console.log("   - use_speaker_boost: false (sin boost)");
+            console.log(
+              "   - streaming_latency: 0.15s (bajo pero con calidad)"
+            );
+            console.log("   - chunk_size: 768 (balanceado)");
+            console.log("   - audio_quality: high (calidad alta)");
+            console.log("   - stability: 0.7 (alta para voz estable)");
+            console.log("   - similarity_boost: 0.75 (alto para voz natural)");
+            console.log("   - style: 0.4 (moderado para voz natural)");
+            console.log("   - use_speaker_boost: true (para claridad)");
 
             // Al armar initialConfig:
             const initialConfig = {
@@ -3244,16 +3246,16 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                     customParameters?.user_voice_id ||
                     customParameters?.voice_id ||
                     "",
-                  // 🚀 OPTIMIZACIONES DE LATENCIA TTS - VELOCIDAD MÁXIMA
-                  streaming_latency: 0.1, // Latencia ultra-baja para respuesta inmediata
-                  chunk_size: 512, // Chunks más pequeños para menor latencia
+                  // 🚀 OPTIMIZACIONES DE LATENCIA TTS - BALANCE VELOCIDAD/CALIDAD
+                  streaming_latency: 0.15, // Latencia baja pero con mejor calidad
+                  chunk_size: 768, // Chunks balanceados para velocidad y calidad
                   enable_streaming: true, // Streaming habilitado
-                  audio_quality: "medium", // Calidad media para procesamiento más rápido
+                  audio_quality: "high", // Calidad alta para audio claro
                   voice_settings: {
-                    stability: 0.5, // Estabilidad media para procesamiento más rápido
-                    similarity_boost: 0.6, // Boost medio para procesamiento más rápido
-                    style: 0.3, // Estilo bajo para procesamiento más rápido
-                    use_speaker_boost: false, // Sin boost para procesamiento más rápido
+                    stability: 0.7, // Estabilidad alta para voz estable
+                    similarity_boost: 0.75, // Boost alto para voz natural
+                    style: 0.4, // Estilo moderado para voz natural
+                    use_speaker_boost: true, // Boost habilitado para claridad
                   },
                 },
                 keep_alive: true,
