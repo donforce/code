@@ -672,26 +672,16 @@ async function processAllPendingQueues() {
       // Group items by user and validate credits
       const userQueues = new Map();
 
-      console.log(`[Queue] Available items by user:`, {
-        totalItems: availableItems.length,
-        uniqueUsers: userIds.length,
-        usersWithData: usersData?.length || 0,
-      });
+      // Logs de cola eliminados para reducir verbosidad
 
       for (const item of availableItems) {
         const user = usersMap.get(item.user_id);
 
         if (!user) {
-          console.log(
-            `[Queue] Skipping item ${item.id} - user ${item.user_id} not found in users data`
-          );
           continue;
         }
 
         if (user.available_call_credits < 60) {
-          console.log(
-            `[Queue] Skipping item ${item.id} - user ${item.user_id} has insufficient credits: ${user.available_call_credits} < 60`
-          );
           continue;
         }
 
@@ -701,17 +691,7 @@ async function processAllPendingQueues() {
         userQueues.get(item.user_id).push(item);
       }
 
-      console.log(`[Queue] Users with sufficient credits:`, {
-        userQueuesSize: userQueues.size,
-        users: Array.from(userQueues.keys()).map((userId) => {
-          const user = usersMap.get(userId);
-          return {
-            userId,
-            availableCredits: user?.available_call_credits,
-            queueLength: userQueues.get(userId)?.length || 0,
-          };
-        }),
-      });
+      // Logs de usuarios con créditos suficientes eliminados
 
       // Calculate available slots
       const availableSlots =
@@ -767,22 +747,7 @@ async function processAllPendingQueues() {
           availableSlots - itemsToProcess.length // Available slots remaining
         );
 
-        console.log(`[Queue] User ${userData.userId} slot calculation:`, {
-          userId: userData.userId,
-          userActiveCallCount,
-          currentUserSlots,
-          maxCallsPerUser: QUEUE_CONFIG.maxCallsPerUser,
-          availableCredits: userData.availableCredits,
-          creditsPerCall: Math.floor(userData.availableCredits / 60),
-          availableSlotsRemaining: availableSlots - itemsToProcess.length,
-          maxSlotsForUser,
-          canProcess: maxSlotsForUser > 0,
-        });
-
         if (maxSlotsForUser <= 0) {
-          console.log(
-            `[Queue] Skipping user ${userData.userId} - no available slots (${maxSlotsForUser})`
-          );
           continue;
         }
 
@@ -802,24 +767,9 @@ async function processAllPendingQueues() {
         }
       }
 
-      console.log(`[Queue] Processing queue - Summary:`, {
-        availableSlots,
-        itemsToProcess: itemsToProcess.length,
-        userPriority: userPriority.map((u) => ({
-          userId: u.userId,
-          hasActiveCalls: u.hasActiveCalls,
-          queueLength: u.queueLength,
-          availableCredits: u.availableCredits,
-          userActiveCallCount: userActiveCalls.get(u.userId) || 0,
-        })),
-        userActiveCalls: Object.fromEntries(userActiveCalls),
-        globalActiveCallsSize: globalActiveCalls.size,
-      });
+      // Logs de resumen de procesamiento de cola eliminados
 
       if (itemsToProcess.length === 0) {
-        console.log(
-          `[Queue] No items to process - all users at capacity or no available slots`
-        );
         return;
       }
 
@@ -861,25 +811,12 @@ async function processQueueItemWithRetry(queueItem, attempt = 1) {
 
     // Check if we can still process this item
     if (globalActiveCalls.size >= QUEUE_CONFIG.maxConcurrentCalls) {
-      console.log(
-        `[Queue] Worker ${workerId} - Cannot process: max concurrent calls reached`
-      );
       return false;
     }
 
     const userActiveCallCount = userActiveCalls.get(queueItem.user_id) || 0;
-    console.log(`[Queue] Worker ${workerId} - Checking user limits:`, {
-      userId: queueItem.user_id,
-      userActiveCallCount,
-      maxCallsPerUser: QUEUE_CONFIG.maxCallsPerUser,
-      canProcess: userActiveCallCount < QUEUE_CONFIG.maxCallsPerUser,
-      userActiveCalls: Object.fromEntries(userActiveCalls),
-    });
 
     if (userActiveCallCount >= QUEUE_CONFIG.maxCallsPerUser) {
-      console.log(
-        `[Queue] Worker ${workerId} - Cannot process: max calls per user reached (${userActiveCallCount}/${QUEUE_CONFIG.maxCallsPerUser})`
-      );
       return false;
     }
 
@@ -2687,10 +2624,6 @@ fastify.register(async (fastifyInstance) => {
 
                   if (audioPayload) {
                     // 🔊 Reenviar audio del agente -> de vuelta a Twilio (mulaw base64)
-                    console.log(
-                      "🔊 [ELEVENLABS] Sending audio to Twilio, length:",
-                      audioPayload.length
-                    );
                     ws.send(
                       JSON.stringify({
                         event: "media",
@@ -2698,30 +2631,18 @@ fastify.register(async (fastifyInstance) => {
                         media: { payload: audioPayload },
                       })
                     );
-                  } else {
-                    console.log(
-                      "⚠️ [ELEVENLABS] Audio event received but no payload found:",
-                      evt
-                    );
                   }
                 } else if (evt && evt.type === "agent_response") {
-                  console.log("🗣️ [ELEVENLABS] agent_response:", evt.text);
+                  // Logs de agent_response eliminados
                 } else if (evt && evt.type === "user_transcript") {
-                  console.log("👤 [USER] transcript:", evt.text);
+                  // Logs de transcript eliminados
                 } else if (evt && evt.type === "error") {
                   console.error("❌ [ELEVENLABS] error:", evt.message || evt);
                 } else {
-                  console.log(
-                    "🔍 [ELEVENLABS] Received event:",
-                    evt?.type || "unknown"
-                  );
+                  // Logs de eventos recibidos eliminados
                   // Si ElevenLabs manda audio crudo (raro), intenta fallback:
                   if (!evt && Buffer.isBuffer(raw)) {
                     const base64 = raw.toString("base64");
-                    console.log(
-                      "🔊 [ELEVENLABS] Sending raw audio to Twilio, length:",
-                      base64.length
-                    );
                     ws.send(
                       JSON.stringify({
                         event: "media",
@@ -2738,7 +2659,7 @@ fastify.register(async (fastifyInstance) => {
               });
 
               elevenLabsWs.on("close", () => {
-                console.log("📞 [ELEVENLABS] WS closed");
+                // Logs de cierre de WebSocket eliminados
               });
             } catch (error) {
               console.error(
@@ -2749,16 +2670,42 @@ fastify.register(async (fastifyInstance) => {
           } else if (message.event === "media") {
             // 🎙️ Audio del llamante -> enviar a ElevenLabs
             if (elevenLabsWs && elevenLabsWs.readyState === WebSocket.OPEN) {
-              console.log(
-                "🎙️ [TWILIO] Received audio from caller, length:",
-                message.media.payload.length
-              );
-              // Twilio te entrega media.payload en base64 mulaw 8kHz mono
+              // Logs de recepción de audio eliminados
+
+              // 🔍 DIAGNÓSTICO: Marcar timestamp de recepción en Twilio
+              const twilioReceiveTime = Date.now();
+              latencyDiagnostics.timestamps.twilioReceive = twilioReceiveTime;
+              latencyDiagnostics.audioChunks++;
+
+              // 🚀 OPTIMIZACIÓN DE LATENCIA: Procesamiento inmediato sin buffer
               const frame = {
                 type: "user_audio_chunk",
                 user_audio_chunk: message.media.payload,
+                timestamp: twilioReceiveTime, // Timestamp para medición de latencia
+                sequence_id: ++audioSequenceId,
+                diagnostic_id: `chunk_${audioSequenceId}_${twilioReceiveTime}`, // ID único para tracking
               };
-              elevenLabsWs.send(JSON.stringify(frame));
+
+              // Envío inmediato para reducir latencia
+              if (elevenLabsWs && elevenLabsWs.readyState === WebSocket.OPEN) {
+                const serverProcessStart = Date.now();
+
+                // 🔍 DIAGNÓSTICO: Medir tiempo de procesamiento del servidor
+                diagnoseLatency("server", serverProcessStart, Date.now());
+
+                // 🔍 DIAGNÓSTICO: Marcar timestamp de envío a ElevenLabs
+                const elevenLabsSendTime = Date.now();
+                latencyDiagnostics.timestamps.elevenLabsSend =
+                  elevenLabsSendTime;
+
+                elevenLabsWs.send(JSON.stringify(frame));
+
+                // 🔍 DIAGNÓSTICO: Medir latencia de red a ElevenLabs
+                diagnoseLatency("network", elevenLabsSendTime, Date.now());
+
+                // Marcar fin de speech del usuario
+                latencyDiagnostics.timestamps.userSpeechEnd = Date.now();
+              }
             } else {
               console.log(
                 "⚠️ [TWILIO] ElevenLabs WebSocket not ready, state:",
@@ -2803,8 +2750,170 @@ fastify.register(async (fastifyInstance) => {
       let bufferSize = 0; // 🚀 ULTRA RÁPIDO: Buffer cero para envío inmediato (reducido de 1 a 0)
       let bufferTimeout = null; // Timeout para enviar buffer parcial
 
+      // 🚀 BUFFER INTELIGENTE PARA INTERRUPCIONES
+      const smartBuffer = {
+        enabled: true,
+        maxSize: 3, // Máximo 3 chunks en buffer
+        flushThreshold: 0.1, // Flush automático cada 100ms
+        lastFlushTime: Date.now(),
+        pendingChunks: [],
+      };
+
+      // Función para flush inteligente del buffer
+      const flushSmartBuffer = () => {
+        if (smartBuffer.pendingChunks.length > 0 && streamSid) {
+          console.log(
+            `🚀 [SMART_BUFFER] Flushing ${smartBuffer.pendingChunks.length} chunks`
+          );
+
+          smartBuffer.pendingChunks.forEach((chunk) => {
+            elevenLabsConnections.get(callSid)?.send(JSON.stringify(chunk));
+          });
+
+          smartBuffer.pendingChunks = [];
+          smartBuffer.lastFlushTime = Date.now();
+        }
+      };
+
       // 🆕 VARIABLES SIMPLIFICADAS PARA MÁXIMA VELOCIDAD
       let audioSequenceId = 0; // ID secuencial para tracking de chunks
+
+      // 🚀 SISTEMA DE DIAGNÓSTICO GRANULAR DE LATENCIA
+      const latencyDiagnostics = {
+        // Timestamps para cada punto del pipeline
+        timestamps: {
+          userSpeechEnd: null,
+          twilioReceive: null,
+          serverProcess: null,
+          elevenLabsSend: null,
+          elevenLabsProcess: null,
+          elevenLabsResponse: null,
+          serverReceive: null,
+          twilioSend: null,
+          userHears: null,
+        },
+
+        // Métricas por componente
+        components: {
+          twilio: { latency: [], avg: 0, max: 0, min: Infinity },
+          server: { latency: [], avg: 0, max: 0, min: Infinity },
+          elevenLabs: { latency: [], avg: 0, max: 0, min: Infinity },
+          network: { latency: [], avg: 0, max: 0, min: Infinity },
+        },
+
+        // Métricas generales
+        totalLatency: 0,
+        avgLatency: 0,
+        maxLatency: 0,
+        minLatency: Infinity,
+
+        // Contadores
+        audioChunks: 0,
+        interruptions: 0,
+      };
+
+      // 🔍 FUNCIÓN DE DIAGNÓSTICO GRANULAR DE LATENCIA
+      const diagnoseLatency = (component, startTime, endTime = Date.now()) => {
+        const latency = endTime - startTime;
+        const componentData = latencyDiagnostics.components[component];
+
+        if (componentData) {
+          componentData.latency.push(latency);
+          componentData.totalLatency =
+            (componentData.totalLatency || 0) + latency;
+          componentData.max = Math.max(componentData.max, latency);
+          componentData.min = Math.min(componentData.min, latency);
+          componentData.avg =
+            componentData.totalLatency / componentData.latency.length;
+        }
+
+        // Log detallado por componente
+        const emoji = {
+          twilio: "📞",
+          server: "🖥️",
+          elevenLabs: "🤖",
+          network: "🌐",
+        };
+
+        console.log(
+          `${
+            emoji[component]
+          } [${component.toUpperCase()}] ${latency}ms (avg: ${
+            componentData?.avg?.toFixed(1) || 0
+          }ms)`
+        );
+
+        // 🚨 ALERTAS ESPECÍFICAS POR COMPONENTE
+        if (latency > 500) {
+          console.warn(
+            `⚠️ [${component.toUpperCase()}_ALERT] High latency: ${latency}ms`
+          );
+        }
+
+        return latency;
+      };
+
+      // 📊 FUNCIÓN PARA REPORTAR DIAGNÓSTICO COMPLETO
+      const reportDiagnostics = () => {
+        console.log(`\n🔍 [DIAGNOSTIC_REPORT] Call ${callSid}:`);
+        console.log(`📊 [COMPONENTS] Latency breakdown:`);
+
+        Object.entries(latencyDiagnostics.components).forEach(
+          ([component, data]) => {
+            if (data.latency.length > 0) {
+              console.log(
+                `   ${component.toUpperCase()}: Avg ${data.avg.toFixed(
+                  1
+                )}ms, Max ${data.max}ms, Min ${data.min}ms (${
+                  data.latency.length
+                } samples)`
+              );
+            }
+          }
+        );
+
+        console.log(`\n⏱️ [TIMELINE] Key timestamps:`);
+        Object.entries(latencyDiagnostics.timestamps).forEach(
+          ([event, timestamp]) => {
+            if (timestamp) {
+              console.log(`   ${event}: ${new Date(timestamp).toISOString()}`);
+            }
+          }
+        );
+
+        // 🎯 IDENTIFICAR CUELLO DE BOTELLA
+        const bottlenecks = Object.entries(latencyDiagnostics.components)
+          .filter(([_, data]) => data.latency.length > 0)
+          .sort(([_, a], [__, b]) => b.avg - a.avg)
+          .slice(0, 2);
+
+        if (bottlenecks.length > 0) {
+          console.log(`\n🚨 [BOTTLENECK] Top latency sources:`);
+          bottlenecks.forEach(([component, data], index) => {
+            console.log(
+              `   ${index + 1}. ${component.toUpperCase()}: ${data.avg.toFixed(
+                1
+              )}ms avg`
+            );
+          });
+        }
+      };
+
+      // Función para reportar métricas de latencia
+      const reportLatencyMetrics = () => {
+        console.log(`📊 [LATENCY_REPORT] Call ${callSid}:`);
+        console.log(
+          `   - Audio Chunks: ${latencyMetrics.audioChunkLatency.length} processed`
+        );
+        console.log(
+          `   - Interruptions: ${latencyMetrics.interruptionLatency.length} detected`
+        );
+        console.log(
+          `   - Average Latency: ${latencyMetrics.avgLatency.toFixed(1)}ms`
+        );
+        console.log(`   - Max Latency: ${latencyMetrics.maxLatency}ms`);
+        console.log(`   - Min Latency: ${latencyMetrics.minLatency}ms`);
+      };
 
       ws.on("error", console.error);
 
@@ -2892,9 +3001,7 @@ fastify.register(async (fastifyInstance) => {
             event: "clear",
             streamSid: streamSid,
           });
-          console.log(
-            "🛑 [CLEAR] Sending clear event to Twilio to stop current audio"
-          );
+          // Logs de clear event eliminados
           ws.send(clearMsg);
         }
       };
@@ -2936,10 +3043,7 @@ fastify.register(async (fastifyInstance) => {
 
           newWs.on("open", () => {
             const webhookLanguage = customParameters?.language || "es";
-            console.log(
-              "🔍 [ELEVENLABS CONFIG] Custom language:",
-              webhookLanguage
-            );
+            // Logs de configuración de idioma eliminados
 
             // ... justo antes de armar initialConfig ...
             let promptOverride = undefined;
@@ -3014,6 +3118,17 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                     customParameters?.user_voice_id ||
                     customParameters?.voice_id ||
                     "",
+                  // 🚀 OPTIMIZACIONES DE LATENCIA TTS
+                  streaming_latency: 0.2, // Latencia de streaming reducida
+                  chunk_size: 1024, // Chunks más pequeños para menor latencia
+                  enable_streaming: true, // Streaming habilitado
+                  audio_quality: "high", // Calidad alta pero optimizada
+                  voice_settings: {
+                    stability: 0.7, // Estabilidad optimizada
+                    similarity_boost: 0.8, // Similaridad optimizada
+                    style: 0.5, // Estilo moderado
+                    use_speaker_boost: true, // Boost de speaker habilitado
+                  },
                 },
                 keep_alive: true,
                 // 🚀 ULTRA RÁPIDO: Configuraciones adicionales para latencia mínima
@@ -3033,10 +3148,12 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
 
                 interruption_settings: {
                   enabled: true,
-                  sensitivity: "medium", // Sensibilidad media para interrupciones más naturales
-                  min_duration: 0.5, // 0.5 segundos para detectar interrupciones reales
-                  max_duration: 2.0, // Hasta 3 segundos de interrupción
-                  cooldown_period: 0.8, // 0.8 segundos de cooldown para evitar interrupciones accidentales
+                  sensitivity: "low", // Sensibilidad baja para reducir falsos positivos
+                  min_duration: 0.3, // Reducido a 0.3s para respuesta más rápida
+                  max_duration: 2.5, // Aumentado para permitir interrupciones más largas
+                  cooldown_period: 0.5, // Reducido para recuperación más rápida
+                  interruption_threshold: 0.6, // Umbral más alto para interrupciones
+                  silence_duration: 0.2, // Detección de silencio más rápida
                 },
               },
               dynamic_variables: {
@@ -3104,17 +3221,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
 
                 switch (message.type) {
                   case "conversation_initiation_metadata":
-                    console.log(
-                      "🚀 [INIT] Conversation initiation metadata received"
-                    );
-                    console.log("🔍 [INIT] Message data:", {
-                      callSid: callSid,
-                      conversation_id:
-                        message.conversation_initiation_metadata_event
-                          ?.conversation_id,
-                      hasEvent:
-                        !!message.conversation_initiation_metadata_event,
-                    });
+                    // Logs de metadata de iniciación eliminados
 
                     // Save conversation_id to database
                     if (
@@ -3126,13 +3233,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                         message.conversation_initiation_metadata_event
                           .conversation_id;
 
-                      console.log(
-                        "💾 [INIT] Saving conversation_id to database:",
-                        {
-                          call_sid: callSid,
-                          conversation_id: conversationId,
-                        }
-                      );
+                      // Logs de guardado de conversation_id eliminados
 
                       try {
                         const { error: updateError } = await supabase
@@ -3147,11 +3248,6 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                           console.error(
                             "[ElevenLabs] Error saving conversation_id:",
                             updateError
-                          );
-                        } else {
-                          console.log(
-                            "✅ [INIT] Successfully saved conversation_id:",
-                            conversationId
                           );
                         }
                       } catch (dbError) {
@@ -3172,6 +3268,29 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
 
                   case "audio":
                     if (streamSid) {
+                      // 🔍 DIAGNÓSTICO: Marcar timestamp de respuesta de ElevenLabs
+                      const elevenLabsResponseTime = Date.now();
+                      latencyDiagnostics.timestamps.elevenLabsResponse =
+                        elevenLabsResponseTime;
+
+                      // 🚀 OPTIMIZACIÓN: Marcar inicio de respuesta si es el primer chunk
+                      if (
+                        !latencyDiagnostics.timestamps.responseStartTime &&
+                        latencyDiagnostics.timestamps.userSpeechEnd
+                      ) {
+                        latencyDiagnostics.timestamps.responseStartTime =
+                          Date.now();
+                        const totalResponseTime = diagnoseLatency(
+                          "elevenLabs",
+                          latencyDiagnostics.timestamps.userSpeechEnd,
+                          latencyDiagnostics.timestamps.responseStartTime
+                        );
+                        console.log(
+                          `🚀 [RESPONSE] ElevenLabs response time: ${totalResponseTime}ms`
+                        );
+                        latencyDiagnostics.interruptions++;
+                      }
+
                       const audioPayload =
                         message.audio?.chunk ||
                         message.audio_event?.audio_base_64;
@@ -3179,10 +3298,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                       // 🆕 ENVÍO DIRECTO SIN VERIFICACIÓN DE DUPLICIDAD
                       audioChunkCounter++;
 
-                      // Log agent audio being sent to Twilio
-                      console.log(
-                        `🔊 [AGENT] Sending audio chunk #${audioChunkCounter} to Twilio`
-                      );
+                      // Logs de envío de audio eliminados
 
                       const audioData = {
                         event: "media",
@@ -3191,53 +3307,40 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                           payload: audioPayload,
                         },
                       };
+
+                      // 🔍 DIAGNÓSTICO: Medir tiempo de procesamiento del servidor para respuesta
+                      const serverProcessStart = Date.now();
+
+                      // Envío inmediato sin buffer para reducir latencia
                       ws.send(JSON.stringify(audioData));
+
+                      // 🔍 DIAGNÓSTICO: Medir latencia de procesamiento del servidor
+                      diagnoseLatency("server", serverProcessStart, Date.now());
+
+                      // 🔍 DIAGNÓSTICO: Marcar timestamp de envío a Twilio
+                      latencyDiagnostics.timestamps.twilioSend = Date.now();
 
                       // Actualizar timestamp de audio para control de silencios
                       lastAudioTime = Date.now();
+
+                      // Marcar fin de respuesta
+                      latencyDiagnostics.timestamps.responseEndTime =
+                        Date.now();
                     }
                     break;
 
                   case "audio_chunk":
-                    console.log("🔊 [AUDIO] Audio chunk received");
                     if (!interrupted) {
                       wsClient.send(message.audio);
                     }
                     break;
 
                   case "message_response":
-                    console.log(
-                      `[ElevenLabs] Full message_response:`,
-                      JSON.stringify(message, null, 2)
-                    );
                     interrupted = false;
                     break;
 
                   case "agent_response":
-                    console.log("🤖 [AGENT] Speaking");
-                    // Log agent response details if available
-                    if (message.agent_response_event) {
-                      console.log(
-                        "📝 [AGENT] Response details:",
-                        JSON.stringify(message.agent_response_event, null, 2)
-                      );
-
-                      // Log the actual text the agent is speaking
-                      if (message.agent_response_event.text) {
-                        console.log(
-                          "🗣️ [AGENT] Text being spoken:",
-                          message.agent_response_event.text
-                        );
-                      }
-
-                      // Log the speech text if available
-                      if (message.agent_response_event.speech_text) {
-                        console.log(
-                          "🎯 [AGENT] Speech text:",
-                          message.agent_response_event.speech_text
-                        );
-                      }
-                    }
+                    // Logs de agent response eliminados
                     break;
 
                   case "user_speaking":
@@ -3246,35 +3349,18 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                     const shouldInterrupt =
                       message.user_speaking_event?.should_interrupt;
 
-                    console.log(
-                      `🎤 [USER] Speaking - Duration: ${speakingDuration}s, Should Interrupt: ${shouldInterrupt}`
-                    );
-
-                    if (shouldInterrupt) {
-                      console.log(
-                        "🚨 [INTERRUPTION] ElevenLabs detected should_interrupt=true"
-                      );
-                    }
+                    // Logs de user speaking eliminados
                     break;
 
                   case "agent_interrupted":
-                    console.log(
-                      "🛑 [INTERRUPTION] Agent interrupted successfully"
-                    );
                     interrupted = true;
                     break;
 
                   case "interruption_detected":
-                    console.log(
-                      "🚨 [INTERRUPTION] Interruption event received"
-                    );
                     interrupted = true;
                     break;
 
                   case "interruption":
-                    console.log(
-                      "🚨 [INTERRUPTION] Interruption event received"
-                    );
                     interrupted = true;
                     // 🆕 OPTIMIZADO: Limpieza rápida durante interrupciones
                     audioBuffer = [];
@@ -3290,15 +3376,12 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                     break;
 
                   case "conversation_resumed":
-                    console.log("🔄 [INTERRUPTION] Conversation resumed");
                     break;
 
                   case "interruption_started":
-                    console.log("🚨 [INTERRUPTION] Interruption started");
                     break;
 
                   case "interruption_ended":
-                    console.log("✅ [INTERRUPTION] Interruption ended");
                     break;
 
                   case "user_transcript":
@@ -3314,10 +3397,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
 
                     lastUserTranscript = transcript;
 
-                    // Log user transcript in real-time
-                    if (transcript) {
-                      console.log("🎤 [USER] Said:", transcript);
-                    }
+                    // Logs de transcript eliminados
 
                     // Agregar un pequeño delay para evitar procesar transcripts muy tempranos
                     // que pueden ser falsos positivos de buzón de voz
@@ -3560,6 +3640,9 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                   case "conversation_ended":
                     console.log("🔚 [END] Conversation ended");
 
+                    // 📊 REPORTAR MÉTRICAS DE LATENCIA AL FINAL
+                    reportLatencyMetrics();
+
                     // Save conversation end details to database
                     if (callSid) {
                       try {
@@ -3569,6 +3652,15 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                             status: "completed",
                             result: "conversation_ended",
                             end_reason: "elevenlabs_conversation_ended",
+                            latency_metrics: JSON.stringify({
+                              avg_latency: latencyMetrics.avgLatency,
+                              max_latency: latencyMetrics.maxLatency,
+                              min_latency: latencyMetrics.minLatency,
+                              total_chunks:
+                                latencyMetrics.audioChunkLatency.length,
+                              total_interruptions:
+                                latencyMetrics.interruptionLatency.length,
+                            }),
                             updated_at: new Date().toISOString(),
                           })
                           .eq("call_sid", callSid);
