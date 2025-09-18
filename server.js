@@ -2433,6 +2433,18 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
   console.log(`🔊 [TWiML] Received user_voice_id: "${user_voice_id}"`);
   console.log("📝 [TWiML] Script ID recibido:", script_id);
 
+  // 🔍 LOGS DETALLADOS PARA DEBUGGING DE SCRIPT
+  console.log("🔍 [SERVER_SCRIPT] All parameters received:", {
+    custom_llm_prompt: custom_llm_prompt ? "Present" : "Not present",
+    prompt: prompt ? "Present" : "Not present",
+    first_message: first_message ? "Present" : "Not present",
+    script_id: script_id || "Not provided",
+    language: language || "Not provided",
+    client_name: client_name || "Not provided",
+    client_phone: client_phone || "Not provided",
+    env_default_script: process.env.DEFAULT_SCRIPT_ID || "Not set",
+  });
+
   // Obtener el contenido del script de la base de datos si está disponible
   // Fallback: script_id -> DEFAULT_SCRIPT_ID -> contenido por defecto
   let scriptPrompt = prompt; // Usar el prompt por defecto
@@ -3252,8 +3264,8 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                   enable_streaming: true, // Streaming habilitado
                   audio_quality: "high", // Calidad alta para audio claro
                   voice_settings: {
-                    stability: 0.7, // Estabilidad alta para voz estable
-                    similarity_boost: 0.75, // Boost alto para voz natural
+                    stability: 0.6, // Estabilidad alta para voz estable
+                    similarity_boost: 0.7, // Boost alto para voz natural
                     style: 0.4, // Estilo moderado para voz natural
                     use_speaker_boost: true, // Boost habilitado para claridad
                   },
@@ -4650,14 +4662,6 @@ fastify.post("/twilio-status", async (request, reply) => {
       .eq("call_sid", callSid)
       .order("created_at", { ascending: false })
       .limit(1);
-
-    console.log(`[TWILIO STATUS] Query result:`, {
-      callSid: callSid,
-      data: existingCall,
-      error: checkError,
-      dataLength: existingCall?.length || 0,
-      dataType: typeof existingCall,
-    });
 
     // If not found, try case-insensitive search
     if (!existingCall || existingCall.length === 0) {
@@ -7690,24 +7694,24 @@ async function sendAppointmentNotifications(scheduledCallInfo, call) {
 
   // Step 2: Create notification in database (non-blocking)
   try {
-    const { error: notificationError } = await supabase.rpc(
-      "create_manual_notification",
-      {
-        p_user_id: call.user_id,
-        p_type: "appointment_scheduled",
-        p_title: "Cita Agendada Exitosamente",
-        p_message: `Se ha agendado una cita para ${scheduledCallInfo.date} a las ${scheduledCallInfo.time}. El cliente ${scheduledCallInfo.clientName} está esperando la llamada.`,
-        p_priority: "high",
-        p_metadata: JSON.stringify({
+    // Usar service role para insertar directamente en la tabla user_notifications
+    const { error: notificationError } = await supabase
+      .from("user_notifications")
+      .insert({
+        user_id: call.user_id,
+        type: "appointment_scheduled",
+        title: "Cita Agendada Exitosamente",
+        message: `Se ha agendado una cita para ${scheduledCallInfo.date} a las ${scheduledCallInfo.time}. El cliente ${scheduledCallInfo.clientName} está esperando la llamada.`,
+        priority: "high",
+        metadata: {
           call_id: call.id,
           conversation_id: call.conversation_id,
           client_name: scheduledCallInfo.clientName,
           client_phone: scheduledCallInfo.clientPhone,
           appointment_date: scheduledCallInfo.date,
           appointment_time: scheduledCallInfo.time,
-        }),
-      }
-    );
+        },
+      });
 
     if (notificationError) {
       console.error(
