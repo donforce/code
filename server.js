@@ -6269,7 +6269,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
         external_id,
         language = "es",
         clasificacion,
-      } = leadData;
+      } = leadData; // Campo clasificacion agregado
 
       // Normalizar auto_call para manejar diferentes tipos de entrada
       const normalizedAutoCall =
