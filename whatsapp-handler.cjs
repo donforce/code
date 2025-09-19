@@ -199,7 +199,7 @@ async function getOrCreateConversation(
     let userData = null;
     if (!userId) {
       try {
-        // Normalizar el número de teléfono (remover prefijos comunes)
+        // Normalizar el número de teléfono (mantener formato completo)
         let normalizedNumber = fromNumber;
 
         // Remover prefijo "whatsapp:" si existe
@@ -207,13 +207,10 @@ async function getOrCreateConversation(
           normalizedNumber = normalizedNumber.replace("whatsapp:", "");
         }
 
-        // Remover cualquier prefijo de país que empiece con +
+        // Mantener el número completo con código de país
+        // Ejemplo: +17862989564 -> 17862989564 (sin el +)
         if (normalizedNumber.startsWith("+")) {
-          // Remover solo el + y los primeros 1-3 dígitos (código de país)
-          // Ejemplo: +17862989564 -> 7862989564
-          normalizedNumber = normalizedNumber.substring(1); // Remover el +
-          // Remover código de país (1-3 dígitos al inicio)
-          normalizedNumber = normalizedNumber.replace(/^\d{1,3}/, "");
+          normalizedNumber = normalizedNumber.substring(1); // Solo remover el +
         }
 
         // Buscar usuario por número normalizado
@@ -227,7 +224,7 @@ async function getOrCreateConversation(
           .select(
             `
             id, 
-            phone_number,
+            phone,
             first_name,
             last_name,
             email,
@@ -237,9 +234,7 @@ async function getOrCreateConversation(
             created_at
           `
           )
-          .or(
-            `phone_number.eq.${normalizedNumber},phone_number.eq.${fromNumber}`
-          )
+          .or(`phone.eq.${normalizedNumber},phone.eq.${fromNumber}`)
           .single();
 
         console.log("🔍 [WHATSAPP] Resultado búsqueda:", { user, userError });
@@ -255,7 +250,7 @@ async function getOrCreateConversation(
             credits: `${user.available_credits || 0}/${
               user.total_credits || 0
             }`,
-            phoneNumber: user.phone_number,
+            phoneNumber: user.phone,
             fromNumber: fromNumber,
             normalizedNumber: normalizedNumber,
           });
@@ -355,7 +350,7 @@ async function generateAIResponse(supabase, userMessage, conversation) {
             available_credits,
             total_credits,
             created_at,
-            phone_number
+            phone
           `
           )
           .eq("id", conversation.user_id)
@@ -387,7 +382,7 @@ CONTEXTO DEL USUARIO REGISTRADO:
 - Créditos disponibles: ${userData.available_credits || 0}
 - Total de créditos: ${userData.total_credits || 0}
 - Fecha de registro: ${registrationDate}
-- Teléfono: ${userData.phone_number || "No disponible"}
+- Teléfono: ${userData.phone || "No disponible"}
 
 IMPORTANTE: Usa SIEMPRE el nombre real del usuario (${fullName}) y sus datos específicos para personalizar la conversación.
 `.trim();
