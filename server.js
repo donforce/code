@@ -6268,6 +6268,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
         notes,
         external_id,
         language = "es",
+        clasificacion,
       } = leadData;
 
       // Normalizar auto_call para manejar diferentes tipos de entrada
@@ -6330,6 +6331,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
           notes: notes || null,
           external_id: external_id || null,
           language,
+          clasificacion: clasificacion || null,
         },
       });
     }
@@ -6401,6 +6403,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                   notes: data.notes,
                   external_id: data.external_id,
                   language: data.language,
+                  clasificacion: data.clasificacion,
                   updated_at: new Date().toISOString(),
                 })
                 .eq("id", existingLead.id)
@@ -6517,6 +6520,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                   notes: data.notes,
                   external_id: data.external_id,
                   language: data.language,
+                  clasificacion: data.clasificacion,
                   created_at: new Date().toISOString(),
                   updated_at: new Date().toISOString(),
                 })
