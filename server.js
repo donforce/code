@@ -7984,31 +7984,36 @@ async function analyzeTranscriptAndGenerateInsights(
         
         CRITERIOS ESPECÍFICOS PARA CADA RESULTADO:
         
-        🎯 "Buzón de Voz" - SOLO cuando:
-        - Se escucha un mensaje de buzón de voz
-        - No hay conversación humana
+        🎯 "Buzón de Voz" - CUANDO:
+        - El resumen menciona "buzón de voz", "voicemail", "mensaje automático"
+        - Se detecta un buzón de voz o sistema de mensajes
+        - No hubo conversación humana real
+        - El cliente no respondió y se detectó buzón de voz
+        - La llamada fue interceptada por un sistema de buzón de voz
         
-        🎯 "No Contestó" - SOLO cuando:
+        🎯 "No Contestó" - CUANDO:
         - El teléfono suena pero nadie contesta
-        - No hay conversación ni buzón de voz
+        - No hay conversación ni se detecta buzón de voz
+        - Duración muy corta sin interacción
         
-        🎯 "Línea Ocupada" - SOLO cuando:
+        🎯 "Línea Ocupada" - CUANDO:
         - Se escucha tono de ocupado
         - end_reason indica línea ocupada
         
-        🎯 "Teléfono Inválido" - SOLO cuando:
+        🎯 "Teléfono Inválido" - CUANDO:
         - El número no existe o está mal formado
         - end_reason indica número inválido
         
-        🎯 "Llamada Cortada" - SOLO cuando:
+        🎯 "Llamada Cortada" - CUANDO:
         - La llamada se corta abruptamente
         - end_reason indica desconexión inesperada
         - Duración muy corta sin conversación
         
-        🎯 "Cita Agendada" - SOLO cuando:
-        - Se confirma que se agendó una cita
-        - calendar_event_id existe
-        - El cliente aceptó agendar
+        🎯 "Cita Agendada" - CUANDO:
+        - El resumen menciona que se agendó una cita
+        - Se confirma fecha y hora específica
+        - El cliente aceptó agendar una reunión
+        - Se menciona "agendó", "cita", "reunión" con detalles específicos
         
         🎯 "Cliente No Interesado" - SOLO cuando:
         - El cliente dice EXPLÍCITAMENTE que no está interesado
@@ -8034,16 +8039,22 @@ async function analyzeTranscriptAndGenerateInsights(
         - Error en el sistema que impidió la conversación
         - Fallo en la tecnología de la llamada
         
-        REGLAS IMPORTANTES:
-        - Analiza PRIMERO los DATOS ADICIONALES (end_reason, duración, etc.)
+        REGLAS IMPORTANTES DE PRIORIDAD:
+        1. PRIORIDAD MÁXIMA: Si el resumen menciona "buzón de voz", "voicemail" o "mensaje automático" → "Buzón de Voz"
+        2. Si el resumen menciona que se agendó una cita con fecha/hora específica → "Cita Agendada"
+        3. Si el cliente dice explícitamente que no está interesado → "Cliente No Interesado"
+        4. Si el cliente muestra interés pero no agenda → "Cliente Interesado"
+        5. Si el cliente está indeciso → "Cliente con Objeciones"
+        6. Duración corta sin conversación ni buzón de voz → "No Contestó"
+        7. Problemas técnicos → "Conversación Falló"
+        
+        ANÁLISIS ESPECÍFICO:
+        - Lee PRIMERO el resumen para identificar palabras clave
         - El end_reason "Client disconnected: 1005" indica que el cliente colgó
         - Si el cliente colgó durante la conversación, considera el contexto
-        - Duración corta (<30 seg) sin conversación = "No Contestó"
+        - Duración corta (<10 segundos) sin conversación = "No Contestó" (SOLO si no es buzón de voz)
         - Duración media con conversación = analiza el contenido
         - Duración larga con conversación = analiza el resultado final
-        - Si el cliente mostró interés = "Cliente Interesado"
-        - Si el cliente está indeciso = "Cliente con Objeciones"
-        - Si el cliente rechazó = "Cliente No Interesado"
         
         Formato EXACTO:
         RESUMEN:
