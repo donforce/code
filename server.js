@@ -8046,7 +8046,7 @@ async function analyzeTranscriptAndGenerateInsights(
         4. Si el cliente muestra interés pero no agenda → "Cliente Interesado"
         5. Si el cliente está indeciso → "Cliente con Objeciones"
         6. Duración corta sin conversación ni buzón de voz → "No Contestó"
-        7. Problemas técnicos → "Conversación Falló"
+        7. Problemas técnicos → "Llamada Fallida"
         
         ANÁLISIS ESPECÍFICO:
         - Lee PRIMERO el resumen para identificar palabras clave
