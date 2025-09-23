@@ -7990,6 +7990,11 @@ async function analyzeTranscriptAndGenerateInsights(
         - No hubo conversación humana real
         - El cliente no respondió y se detectó buzón de voz
         - La llamada fue interceptada por un sistema de buzón de voz
+        - El usuario fue redirigido a un menú telefónico
+        - Se conectó a un menú telefónico con opciones para grabar o solicitar retorno de llamada
+        - El usuario respondió con números/opciones de menú telefónico
+        - Problemas con reconocimiento de entrada en sistema telefónico automático
+        - Sistema telefónico automático sin interacción humana real
         
         🎯 "No Contestó" - CUANDO:
         - El teléfono suena pero nadie contesta
@@ -8040,7 +8045,7 @@ async function analyzeTranscriptAndGenerateInsights(
         - Fallo en la tecnología de la llamada
         
         REGLAS IMPORTANTES DE PRIORIDAD:
-        1. PRIORIDAD MÁXIMA: Si el resumen menciona "buzón de voz", "voicemail" o "mensaje automático" → "Buzón de Voz"
+        1. PRIORIDAD MÁXIMA: Si el resumen menciona "buzón de voz", "voicemail", "mensaje automático", "menú telefónico" o "sistema telefónico automático" → "Buzón de Voz"
         2. Si el resumen menciona que se agendó una cita con fecha/hora específica → "Cita Agendada"
         3. Si el cliente dice explícitamente que no está interesado → "Cliente No Interesado"
         4. Si el cliente muestra interés pero no agenda → "Cliente Interesado"
