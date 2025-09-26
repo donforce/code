@@ -8044,9 +8044,22 @@ async function analyzeTranscriptAndGenerateInsights(
         - Error en el sistema que impidió la conversación
         - Fallo en la tecnología de la llamada
         
-        REGLAS IMPORTANTES DE PRIORIDAD:
-        1. PRIORIDAD MÁXIMA: Si el resumen menciona "buzón de voz", "voicemail", "mensaje automático", "menú telefónico" o "sistema telefónico automático" → "Buzón de Voz"
-        2. Si el resumen menciona que se agendó una cita con fecha/hora específica → "Cita Agendada"
+        REGLAS CRÍTICAS DE ALINEACIÓN:
+        ⚠️ EL RESULTADO DEBE ESTAR ALINEADO CON EL RESUMEN ⚠️
+        
+        1. PRIORIDAD MÁXIMA: Si el resumen dice "buzón de voz", "mensaje automático", "sistema telefónico automático", "no hubo respuesta del cliente", "no se escuchó ninguna respuesta", "fue detectado como un buzón de voz", "interceptada por un buzón de voz", "menú telefónico", "opciones de menú", "no hubo interacción humana", "no hubo conversación efectiva" → RESULTADO: "Buzón de Voz"
+        
+        2. Si el resumen dice "se agendó", "cita agendada", "viernes 26 de septiembre", "se confirmó una cita", "aceptó agendar", incluye fecha y hora específica → RESULTADO: "Cita Agendada"
+        
+        3. Si el resumen dice "no contestó", "no respondió", "se cortó abruptamente", "llamada cortada", "se desconectó", "colgó" → RESULTADO: "Sin Respuesta"
+        
+        4. Si el cliente proporciona información específica (presupuesto, ubicación, tiempo) → RESULTADO: "Cliente Interesado"
+        
+        5. Si el cliente muestra dudas o indecisión → RESULTADO: "Cliente con Objeciones"
+        
+        6. Si el cliente rechaza explícitamente → RESULTADO: "Cliente No Interesado"
+        
+        ⚠️ CRÍTICO: NO uses "Exitosa" si el resumen indica buzón de voz, falta de respuesta o cita agendada.
         3. Si el cliente dice explícitamente que no está interesado → "Cliente No Interesado"
         4. Si el cliente muestra interés pero no agenda → "Cliente Interesado"
         5. Si el cliente está indeciso → "Cliente con Objeciones"
@@ -8061,6 +8074,11 @@ async function analyzeTranscriptAndGenerateInsights(
         - Duración media con conversación = analiza el contenido
         - Duración larga con conversación = analiza el resultado final
         
+        IMPORTANTE: El RESULTADO debe estar ALINEADO con el RESUMEN.
+        Si el resumen dice "buzón de voz", el resultado DEBE ser "Buzón de Voz".
+        Si el resumen dice "se agendó una cita", el resultado DEBE ser "Cita Agendada".
+        Si el resumen dice "no hubo respuesta", el resultado DEBE ser "Sin Respuesta".
+        
         Formato EXACTO:
         RESUMEN:
         [resultado simple y directo de la llamada]
@@ -8069,7 +8087,7 @@ async function analyzeTranscriptAndGenerateInsights(
         [próximo paso específico]
         
         RESULTADO:
-        [uno de los resultados posibles listados arriba]`,
+        [uno de los resultados posibles listados arriba - DEBE coincidir con el resumen]`,
         },
 
         {
@@ -9544,7 +9562,7 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
 
     if (callError) {
       console.error(
-        `❌ [CREDITS] Error obteniendo datos de llamada para CallSid ${callSid}:`,
+        `Error obteniendo datos de llamada para CallSid ${callSid}:`,
         callError
       );
       return;
@@ -9552,7 +9570,7 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
 
     if (!callRecord || callRecord.length === 0) {
       console.warn(
-        `⚠️ [CREDITS] No se encontró registro de llamada para CallSid ${callSid}`
+        `No se encontró registro de llamada para CallSid ${callSid}`
       );
       return;
     }
@@ -9563,10 +9581,6 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
 
     // 🚫 No procesar llamadas de menos de 5 segundos
     if (callDuration < 5) {
-      console.log(
-        `⏱️ [CREDITS] Llamada de ${callDuration} segundos (< 5s) - No se procesan créditos para CallSid: ${callSid}`
-      );
-
       // Marcar la llamada como no cobrable
       await supabase
         .from("calls")
@@ -9584,12 +9598,6 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
       return;
     }
 
-    console.log(`✅ [CREDITS] Procesando créditos para CallSid: ${callSid}`, {
-      duration: callDuration,
-      country: countryCode,
-      toNumber: toNumber,
-    });
-
     // 🌍 Buscar tarifa basada en país y prefijo de teléfono
     let selectedTariff = null;
     let searchMethod = "";
@@ -9597,9 +9605,6 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
     if (countryCode && toNumber) {
       // 1️⃣ Buscar por país exacto + prefijo más específico
       const phonePrefix = extractPhonePrefix(toNumber);
-      console.log(
-        ` [CREDITS] Buscando tarifa para país: ${countryCode}, prefijo: ${phonePrefix}`
-      );
 
       // Obtener todas las tarifas que coincidan con el país base (AR_1, AR_2, etc.)
       const { data: pricingData, error: pricingError } = await supabase
@@ -9611,14 +9616,10 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
 
       if (pricingError) {
         console.error(
-          `❌ [CREDITS] Error obteniendo tarifas para ${countryCode}:`,
+          `Error obteniendo tarifas para ${countryCode}:`,
           pricingError
         );
       } else if (pricingData && pricingData.length > 0) {
-        console.log(
-          `📊 [CREDITS] Encontradas ${pricingData.length} tarifas para ${countryCode}`
-        );
-
         // Filtrar tarifas que tengan prefijos de teléfono
         const tariffsWithPrefixes = pricingData.filter((t) => t.prefixes);
 
@@ -9627,31 +9628,15 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
           const matchingPrefixes = [];
           const cleanNumber = toNumber.replace(/\D/g, "");
 
-          console.log(
-            `🔍 [CREDITS] Buscando coincidencias para número: ${toNumber} (limpio: ${cleanNumber})`
-          );
-
           for (const tariff of tariffsWithPrefixes) {
             const prefixList = tariff.prefixes.split(",").map((p) => p.trim());
-            console.log(
-              `🔍 [CREDITS] Tarifa ${
-                tariff.country_code
-              } tiene prefijos: ${prefixList.join(", ")}`
-            );
 
             for (const prefix of prefixList) {
               if (cleanNumber.startsWith(prefix)) {
-                console.log(
-                  `✅ [CREDITS] ¡Coincidencia encontrada! Prefijo ${prefix} coincide con ${cleanNumber}`
-                );
                 matchingPrefixes.push({
                   ...tariff,
                   matchedPrefix: prefix,
                 });
-              } else {
-                console.log(
-                  `❌ [CREDITS] Prefijo ${prefix} NO coincide con ${cleanNumber}`
-                );
               }
             }
           }
@@ -9664,15 +9649,6 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
           if (matchingPrefixes.length > 0) {
             selectedTariff = matchingPrefixes[0];
             searchMethod = `prefijo_específico_${selectedTariff.matchedPrefix}`;
-            console.log(
-              `🎯 [CREDITS] Tarifa encontrada por prefijo específico:`,
-              {
-                country: selectedTariff.country_code,
-                prefix: selectedTariff.matchedPrefix,
-                price_per_credit: selectedTariff.price_per_credit,
-                number: toNumber,
-              }
-            );
           }
         }
 
@@ -9684,20 +9660,12 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
               : lowest
           );
           searchMethod = "tarifa_más_baja_grupo";
-          console.log(`🎯 [CREDITS] Usando tarifa más baja del grupo:`, {
-            country: selectedTariff.country_code,
-            price_per_credit: selectedTariff.price_per_credit,
-          });
         }
       }
     }
 
     // Si no se encontró tarifa, usar una tarifa por defecto razonable
     if (!selectedTariff) {
-      console.log(
-        `🔄 [CREDITS] No se encontró tarifa específica, buscando tarifa por defecto`
-      );
-
       // Buscar una tarifa por defecto (US o la más baja disponible)
       const { data: defaultPricing, error: pricingError } = await supabase
         .from("country_call_pricing")
@@ -9708,9 +9676,6 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
 
       if (pricingError || !defaultPricing || defaultPricing.length === 0) {
         // Si no hay tarifas por defecto, usar una tarifa mínima fija
-        console.log(
-          `⚠️ [CREDITS] No se encontraron tarifas por defecto, usando tarifa mínima fija`
-        );
         selectedTariff = {
           id: null,
           country_code: "DEFAULT",
@@ -9721,10 +9686,6 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
       } else {
         selectedTariff = defaultPricing[0];
         searchMethod = "tarifa_por_defecto";
-        console.log(`🎯 [CREDITS] Usando tarifa por defecto:`, {
-          country: selectedTariff.country_code,
-          price_per_credit: selectedTariff.price_per_credit,
-        });
       }
     }
 
@@ -9733,15 +9694,6 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
     const totalCredits = Math.ceil(
       selectedTariff.price_per_credit * minutesRounded
     );
-
-    console.log(` [CREDITS] Créditos calculados:`, {
-      callSid,
-      duration: callDuration,
-      minutes: minutesRounded,
-      price_per_credit: selectedTariff.price_per_credit,
-      totalCredits,
-      searchMethod,
-    });
 
     // Actualizar la base de datos
     const updateData = {
@@ -9762,16 +9714,11 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
 
     if (updateError) {
       console.error(
-        `❌ [CREDITS] Error actualizando BD para CallSid ${callSid}:`,
+        `Error actualizando BD para CallSid ${callSid}:`,
         updateError
       );
       return;
     }
-
-    console.log(
-      `✅ [CREDITS] Precio y créditos guardados para CallSid ${callSid}:`,
-      updateData
-    );
 
     // 🔥 DEDUCIR CRÉDITOS DEL USUARIO
     try {
@@ -9784,7 +9731,7 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
 
       if (callError) {
         console.error(
-          `❌ [CREDITS] Error obteniendo user_id para CallSid ${callSid}:`,
+          `Error obteniendo user_id para CallSid ${callSid}:`,
           callError
         );
         return;
@@ -9802,7 +9749,7 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
 
         if (userError) {
           console.error(
-            `❌ [CREDITS] Error obteniendo créditos del usuario ${userId}:`,
+            `Error obteniendo créditos del usuario ${userId}:`,
             userError
           );
           return;
@@ -9811,18 +9758,6 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
         if (userData) {
           const currentCredits = userData[0]?.available_call_credits || 0;
           const newCredits = Math.max(0, currentCredits - totalCredits);
-
-          console.log(
-            `💳 [CREDITS] Deduciendo créditos para usuario ${userId}:`,
-            {
-              callSid,
-              totalCredits,
-              before: currentCredits,
-              after: newCredits,
-              deducted: currentCredits - newCredits,
-              searchMethod,
-            }
-          );
 
           // Actualizar créditos del usuario
           const { error: creditUpdateError } = await supabase
@@ -9835,29 +9770,24 @@ async function fetchCallPriceAsync(callSid, callUri, twilioClientToUse = null) {
 
           if (creditUpdateError) {
             console.error(
-              `❌ [CREDITS] Error actualizando créditos del usuario ${userId}:`,
+              `Error actualizando créditos del usuario ${userId}:`,
               creditUpdateError
             );
           } else {
-            console.log(
-              `✅ [CREDITS] Créditos deducidos exitosamente para usuario ${userId}: ${totalCredits} créditos`
-            );
           }
         }
       } else {
-        console.warn(
-          `⚠️ [CREDITS] No se encontró user_id para CallSid ${callSid}`
-        );
+        console.warn(`No se encontró user_id para CallSid ${callSid}`);
       }
     } catch (deductionError) {
       console.error(
-        `❌ [CREDITS] Error durante la deducción de créditos para CallSid ${callSid}:`,
+        `Error durante la deducción de créditos para CallSid ${callSid}:`,
         deductionError
       );
     }
   } catch (error) {
     console.error(
-      `❌ [CREDITS] Error general en fetchCallPriceAsync para CallSid ${callSid}:`,
+      `Error general en fetchCallPriceAsync para CallSid ${callSid}:`,
       error
     );
   }
