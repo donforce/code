@@ -7007,18 +7007,25 @@ async function checkForScheduledCall(webhookData, call) {
         lead: lead,
         call: call,
         summary: summary,
+        title: "Sesión de Consultoría", // Título genérico para citas
+        description: `Sesión de consultoría agendada por teléfono.\n\nCliente: ${lead.name}\nTeléfono: ${lead.phone}\nEmail: ${lead.email}`,
+        clientName: lead.name,
+        clientPhone: lead.phone,
+        clientEmail: lead.email,
       };
 
-      //  console.log("🎉 [CALENDAR] ===== FINAL RESULT =====");
-      // console.log("📅 [CALENDAR] Date:", result.date);
-      // console.log("⏰ [CALENDAR] Time:", result.time);
-      // console.log("🌍 [CALENDAR] Timezone:", result.timezone);
-      // console.log("👤 [CALENDAR] Lead:", result.lead.name);
-      // console.log("📞 [CALENDAR] Phone:", result.lead.phone);
-      // console.log("📧 [CALENDAR] Email:", result.lead.email);
-      // console.log(
-      //   "🔍 [CALENDAR] ===== FIN DE BÚSQUEDA DE LLAMADA PROGRAMADA ====="
-      // );
+      console.log("🎉 [CALENDAR] ===== FINAL RESULT =====");
+      console.log("📅 [CALENDAR] Date:", result.date);
+      console.log("⏰ [CALENDAR] Time:", result.time);
+      console.log("🌍 [CALENDAR] Timezone:", result.timezone);
+      console.log("👤 [CALENDAR] Lead:", result.lead.name);
+      console.log("📞 [CALENDAR] Phone:", result.lead.phone);
+      console.log("📧 [CALENDAR] Email:", result.lead.email);
+      console.log("📝 [CALENDAR] Title:", result.title);
+      console.log("📄 [CALENDAR] Description:", result.description);
+      console.log(
+        "🔍 [CALENDAR] ===== FIN DE BÚSQUEDA DE LLAMADA PROGRAMADA ====="
+      );
 
       return result;
     } else {
@@ -7609,7 +7616,7 @@ async function createCalendarEvent(scheduledCallInfo, call) {
 
     const event = {
       summary: scheduledCallInfo.title,
-      description: `${scheduledCallInfo.description}\n\nCliente: ${scheduledCallInfo.lead.name}`,
+      description: scheduledCallInfo.description,
       start: {
         dateTime: startDateTime,
         timeZone: userTimeZone,
@@ -7630,13 +7637,14 @@ async function createCalendarEvent(scheduledCallInfo, call) {
       },
     };
 
-    // console.log("📅 [CALENDAR] Creating event:", {
-    //   title: event.summary,
-    //   start: event.start.dateTime,
-    //   end: event.end.dateTime,
-    //   timezone: userTimeZone,
-    //   attendees: event.attendees.length,
-    // });
+    console.log("📅 [CALENDAR] Creating event:", {
+      title: event.summary,
+      start: event.start.dateTime,
+      end: event.end.dateTime,
+      timezone: userTimeZone,
+      attendees: event.attendees.length,
+      description: event.description,
+    });
 
     const calendarResponse = await calendar.events.insert({
       calendarId: "primary",
