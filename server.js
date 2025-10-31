@@ -6230,6 +6230,38 @@ fastify.post("/api/integration/leads", async (request, reply) => {
     const userId = apiKeyData[0].user_id;
     console.log("✅ [API KEY DEBUG] API key validated for user:", userId);
 
+    // Obtener script por defecto del usuario y lógica de fallback
+    let defaultScriptId = null;
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select("default_script_id")
+      .eq("id", userId)
+      .single();
+
+    if (!userError && userData?.default_script_id) {
+      defaultScriptId = userData.default_script_id;
+      console.log("✅ [API] Script por defecto del usuario:", defaultScriptId);
+    } else {
+      // Si no hay script por defecto, obtener el primer script disponible del usuario
+      const { data: userScripts } = await supabase.rpc("get_user_scripts", {
+        user_uuid: userId,
+      });
+
+      if (userScripts && userScripts.length > 0) {
+        defaultScriptId = userScripts[0].script_id;
+        console.log(
+          "✅ [API] Usando primer script del usuario:",
+          defaultScriptId
+        );
+      } else if (process.env.DEFAULT_SCRIPT_ID) {
+        defaultScriptId = process.env.DEFAULT_SCRIPT_ID;
+        console.log(
+          "✅ [API] Usando script por defecto del sistema:",
+          defaultScriptId
+        );
+      }
+    }
+
     // Obtener datos del body
     const body = request.body;
     console.log("🔍 [API] Body recibido:", JSON.stringify(body, null, 2));
@@ -6393,19 +6425,26 @@ fastify.post("/api/integration/leads", async (request, reply) => {
 
             if (existingLead) {
               // Actualizar lead existente
+              const updateData = {
+                name: data.name.trim().split(" ")[0],
+                phone: data.phone,
+                auto_call: data.auto_call,
+                source: data.source,
+                notes: data.notes,
+                external_id: data.external_id,
+                language: data.language,
+                clasificacion: data.clasificacion,
+                updated_at: new Date().toISOString(),
+              };
+
+              // Si auto_call está activado, asignar el script_id
+              if (data.auto_call && defaultScriptId) {
+                updateData.script_id = defaultScriptId;
+              }
+
               const { data: updatedLead, error: updateError } = await supabase
                 .from("leads")
-                .update({
-                  name: data.name.trim().split(" ")[0],
-                  phone: data.phone,
-                  auto_call: data.auto_call,
-                  source: data.source,
-                  notes: data.notes,
-                  external_id: data.external_id,
-                  language: data.language,
-                  clasificacion: data.clasificacion,
-                  updated_at: new Date().toISOString(),
-                })
+                .update(updateData)
                 .eq("id", existingLead.id)
                 .select();
 
@@ -6473,6 +6512,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                       lead_id: existingLead.id,
                       queue_position: nextPosition,
                       status: "pending",
+                      script_id: defaultScriptId,
                       created_at: new Date().toISOString(),
                     });
 
@@ -6508,22 +6548,29 @@ fastify.post("/api/integration/leads", async (request, reply) => {
               console.log(
                 `🔍 [API] Creando nuevo lead con auto_call: ${data.auto_call}`
               );
+              const insertData = {
+                user_id: userId,
+                name: data.name.trim().split(" ")[0],
+                phone: data.phone,
+                email: data.email,
+                auto_call: data.auto_call,
+                source: data.source,
+                notes: data.notes,
+                external_id: data.external_id,
+                language: data.language,
+                clasificacion: data.clasificacion,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              };
+
+              // Si auto_call está activado, asignar el script_id
+              if (data.auto_call && defaultScriptId) {
+                insertData.script_id = defaultScriptId;
+              }
+
               const { data: newLeadData, error: insertError } = await supabase
                 .from("leads")
-                .insert({
-                  user_id: userId,
-                  name: data.name.trim().split(" ")[0],
-                  phone: data.phone,
-                  email: data.email,
-                  auto_call: data.auto_call,
-                  source: data.source,
-                  notes: data.notes,
-                  external_id: data.external_id,
-                  language: data.language,
-                  clasificacion: data.clasificacion,
-                  created_at: new Date().toISOString(),
-                  updated_at: new Date().toISOString(),
-                })
+                .insert(insertData)
                 .select();
 
               console.log(`🔍 [API] Lead creado:`, newLeadData);
@@ -6589,6 +6636,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                       lead_id: newLead.id,
                       queue_position: nextPosition,
                       status: "pending",
+                      script_id: defaultScriptId,
                       created_at: new Date().toISOString(),
                     });
 
