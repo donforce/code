@@ -98,13 +98,6 @@ async function handleWhatsAppMessage(supabase, request, reply) {
         userId
       );
 
-      // Generar respuesta con OpenAI
-      const aiResponse = await generateAIResponse(
-        supabase,
-        messageBody,
-        conversation
-      );
-
       // Guardar mensaje entrante en la base de datos
       await saveMessage(
         supabase,
@@ -113,6 +106,36 @@ async function handleWhatsAppMessage(supabase, request, reply) {
         messageBody,
         "incoming",
         messageId
+      );
+
+      // Verificar si la conversación tiene respuesta automática habilitada
+      // Si auto_respond es false o null (por defecto null = true), solo guardamos el mensaje
+      const shouldAutoRespond = conversation.auto_respond !== false;
+
+      console.log("🤖 [WHATSAPP] Auto-respond configurado:", {
+        conversationId: conversation.id,
+        auto_respond: conversation.auto_respond,
+        shouldAutoRespond: shouldAutoRespond,
+      });
+
+      if (!shouldAutoRespond) {
+        console.log(
+          "⏸️ [WHATSAPP] Respuesta automática desactivada. Mensaje guardado para respuesta manual."
+        );
+        return reply.code(200).send({
+          success: true,
+          message:
+            "Mensaje recibido y guardado. Respuesta automática desactivada.",
+          conversation_id: conversation.id,
+          auto_respond: false,
+        });
+      }
+
+      // Generar respuesta con OpenAI (solo si auto_respond está habilitado)
+      const aiResponse = await generateAIResponse(
+        supabase,
+        messageBody,
+        conversation
       );
 
       try {
@@ -341,6 +364,7 @@ async function getOrCreateConversation(
         status: "active",
         message_count: 0,
         last_message_at: new Date().toISOString(),
+        auto_respond: true, // Por defecto, respuesta automática habilitada
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
