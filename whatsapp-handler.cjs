@@ -311,6 +311,120 @@ async function getOrCreateConversation(
         );
         // Continuar sin userId
       }
+    } else if (userId && !userData) {
+      // Si tenemos userId pero no userData, obtener los datos del usuario
+      try {
+        const { data: user, error: userError } = await supabase
+          .from("users")
+          .select(
+            `
+            id, 
+            phone,
+            whatsapp_number,
+            first_name,
+            last_name,
+            email,
+            available_call_credits,
+            created_at
+          `
+          )
+          .eq("id", userId)
+          .single();
+
+        if (user && !userError) {
+          userData = user;
+          console.log(
+            "✅ [WHATSAPP] Datos del usuario obtenidos por userId:",
+            userData
+          );
+        }
+      } catch (error) {
+        console.warn(
+          "⚠️ [WHATSAPP] Error obteniendo datos del usuario por userId:",
+          error
+        );
+      }
+    }
+
+    // Buscar lead por phone_number (fromNumber - número del cliente que envía el mensaje)
+    // IMPORTANTE: Solo buscar leads del usuario asociado a la conversación (user_id)
+    // PRIMERO debemos garantizar que tenemos user_id antes de buscar lead_id
+    let leadId = null;
+
+    // Solo buscar lead si tenemos un user_id (los leads pertenecen a usuarios)
+    if (userId) {
+      try {
+        // Normalizar el fromNumber (phone_number de la conversación)
+        let normalizedFromNumber = fromNumber;
+
+        // Remover prefijo "whatsapp:" si existe
+        if (normalizedFromNumber.startsWith("whatsapp:")) {
+          normalizedFromNumber = normalizedFromNumber.replace("whatsapp:", "");
+        }
+
+        // Mantener el número completo con código de país
+        let normalizedNumberWithoutPlus = normalizedFromNumber;
+        if (normalizedFromNumber.startsWith("+")) {
+          normalizedNumberWithoutPlus = normalizedFromNumber.substring(1);
+        }
+
+        const normalizedWithPlus = `+${normalizedNumberWithoutPlus}`;
+
+        console.log(
+          "🔍 [WHATSAPP] Buscando lead por phone_number para user_id:",
+          {
+            fromNumber,
+            userId,
+            normalizedFromNumber,
+            normalizedNumberWithoutPlus,
+            normalizedWithPlus,
+          }
+        );
+
+        // Buscar lead por phone_number y user_id, ordenar por updated_at descendente para obtener el más reciente
+        const { data: leads, error: leadError } = await supabase
+          .from("leads")
+          .select("id, phone, name, updated_at")
+          .eq("user_id", userId) // Filtrar por user_id del usuario
+          .or(
+            `phone.ilike.%${normalizedNumberWithoutPlus}%,` +
+              `phone.ilike.%${normalizedWithPlus}%,` +
+              `phone.eq.${normalizedNumberWithoutPlus},` +
+              `phone.eq.${normalizedWithPlus}`
+          )
+          .order("updated_at", { ascending: false })
+          .limit(1);
+
+        if (leads && leads.length > 0 && !leadError) {
+          const lead = leads[0]; // El más reciente por updated_at
+          leadId = lead.id;
+          console.log("✅ [WHATSAPP] Lead encontrado por phone_number:", {
+            leadId: lead.id,
+            leadName: lead.name,
+            leadPhone: lead.phone,
+            userId: userId,
+            updatedAt: lead.updated_at,
+          });
+        } else {
+          console.log(
+            "❌ [WHATSAPP] No se encontró lead para el phone_number y user_id:",
+            {
+              phoneNumber: fromNumber,
+              userId: userId,
+            }
+          );
+        }
+      } catch (leadSearchError) {
+        console.log(
+          "📱 [WHATSAPP] Error buscando lead por phone_number:",
+          leadSearchError.message
+        );
+        // Continuar sin leadId
+      }
+    } else {
+      console.log(
+        "⚠️ [WHATSAPP] No se busca lead porque no hay user_id asociado a la conversación"
+      );
     }
 
     // Si encontramos conversación existente, retornarla con contexto del usuario
@@ -320,7 +434,10 @@ async function getOrCreateConversation(
         existingConversation.id
       );
 
-      // Si la conversación NO tiene user_id pero encontramos un usuario, actualizarla
+      // PRIMERO: Si la conversación NO tiene user_id pero encontramos un usuario, actualizarla
+      // Esto debe hacerse ANTES de buscar lead_id porque los leads pertenecen a usuarios
+      let conversationUserId = existingConversation.user_id || userId;
+
       if (!existingConversation.user_id && userId && userData) {
         console.log(
           "🔄 [WHATSAPP] Actualizando conversación sin user_id con usuario encontrado:",
@@ -352,6 +469,93 @@ async function getOrCreateConversation(
           );
           // Actualizar el objeto de conversación con el nuevo user_id
           existingConversation.user_id = userId;
+          conversationUserId = userId;
+        }
+      }
+
+      // DESPUÉS: Si ahora tenemos user_id en la conversación y no tiene lead_id, buscar lead
+      // y actualizar lead_id solo si tenemos user_id garantizado
+      if (conversationUserId && !existingConversation.lead_id) {
+        // Buscar lead solo si no lo buscamos antes o si necesitamos actualizarlo
+        let leadIdToUpdate = leadId;
+
+        // Si no buscamos lead antes porque no había userId, buscarlo ahora
+        if (!leadIdToUpdate && conversationUserId) {
+          try {
+            let normalizedFromNumber = fromNumber;
+            if (normalizedFromNumber.startsWith("whatsapp:")) {
+              normalizedFromNumber = normalizedFromNumber.replace(
+                "whatsapp:",
+                ""
+              );
+            }
+            let normalizedNumberWithoutPlus = normalizedFromNumber;
+            if (normalizedFromNumber.startsWith("+")) {
+              normalizedNumberWithoutPlus = normalizedFromNumber.substring(1);
+            }
+            const normalizedWithPlus = `+${normalizedNumberWithoutPlus}`;
+
+            const { data: leads, error: leadError } = await supabase
+              .from("leads")
+              .select("id, phone, name, updated_at")
+              .eq("user_id", conversationUserId) // Usar el user_id de la conversación
+              .or(
+                `phone.ilike.%${normalizedNumberWithoutPlus}%,` +
+                  `phone.ilike.%${normalizedWithPlus}%,` +
+                  `phone.eq.${normalizedNumberWithoutPlus},` +
+                  `phone.eq.${normalizedWithPlus}`
+              )
+              .order("updated_at", { ascending: false })
+              .limit(1);
+
+            if (leads && leads.length > 0 && !leadError) {
+              leadIdToUpdate = leads[0].id;
+              console.log(
+                "✅ [WHATSAPP] Lead encontrado para conversación existente:",
+                leadIdToUpdate
+              );
+            }
+          } catch (error) {
+            console.warn(
+              "⚠️ [WHATSAPP] Error buscando lead para conversación existente:",
+              error
+            );
+          }
+        }
+
+        // Actualizar lead_id si lo encontramos
+        if (leadIdToUpdate) {
+          console.log(
+            "🔄 [WHATSAPP] Actualizando conversación sin lead_id con lead encontrado:",
+            {
+              conversationId: existingConversation.id,
+              leadId: leadIdToUpdate,
+              userId: conversationUserId,
+              phoneNumber: fromNumber,
+            }
+          );
+
+          const { error: updateLeadError } = await supabase
+            .from("whatsapp_conversations")
+            .update({
+              lead_id: leadIdToUpdate,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", existingConversation.id);
+
+          if (updateLeadError) {
+            console.error(
+              "❌ [WHATSAPP] Error actualizando lead_id de conversación:",
+              updateLeadError
+            );
+          } else {
+            console.log(
+              "✅ [WHATSAPP] Conversación actualizada con lead_id:",
+              leadIdToUpdate
+            );
+            // Actualizar el objeto de conversación con el nuevo lead_id
+            existingConversation.lead_id = leadIdToUpdate;
+          }
         }
       }
 
@@ -373,6 +577,7 @@ async function getOrCreateConversation(
         message_count: 0,
         last_message_at: new Date().toISOString(),
         auto_respond: true, // Por defecto, respuesta automática habilitada
+        lead_id: leadId, // Incluir lead_id si se encontró
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -383,7 +588,12 @@ async function getOrCreateConversation(
       throw new Error(`Error creando conversación: ${createError.message}`);
     }
 
-    console.log("📱 [WHATSAPP] Nueva conversación creada:", newConversation.id);
+    console.log("📱 [WHATSAPP] Nueva conversación creada:", {
+      conversationId: newConversation.id,
+      userId: userId || "null",
+      leadId: leadId || "null",
+      phoneNumber: fromNumber,
+    });
 
     // Agregar contexto del usuario a la nueva conversación
     if (userData) {
