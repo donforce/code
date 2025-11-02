@@ -195,37 +195,41 @@ async function getOrCreateConversation(
       .limit(1)
       .single();
 
-    // SIEMPRE buscar usuario por número de teléfono para contexto
+    // SIEMPRE buscar usuario por twilio_number para contexto
+    // El twilio_number es el número de WhatsApp del usuario que recibe los mensajes
     let userData = null;
     if (!userId) {
       try {
-        // Normalizar el número de teléfono (mantener formato completo)
-        let normalizedNumber = fromNumber;
+        // Normalizar el twilio_number (toNumber) que es el número del usuario
+        let normalizedTwilioNumber = toNumber;
 
         // Remover prefijo "whatsapp:" si existe
-        if (normalizedNumber.startsWith("whatsapp:")) {
-          normalizedNumber = normalizedNumber.replace("whatsapp:", "");
+        if (normalizedTwilioNumber.startsWith("whatsapp:")) {
+          normalizedTwilioNumber = normalizedTwilioNumber.replace(
+            "whatsapp:",
+            ""
+          );
         }
 
         // Mantener el número completo con código de país
         // Ejemplo: +17862989564 -> 17862989564 (sin el +)
-        let normalizedNumberWithoutPlus = normalizedNumber;
-        if (normalizedNumber.startsWith("+")) {
-          normalizedNumberWithoutPlus = normalizedNumber.substring(1); // Solo remover el +
+        let normalizedNumberWithoutPlus = normalizedTwilioNumber;
+        if (normalizedTwilioNumber.startsWith("+")) {
+          normalizedNumberWithoutPlus = normalizedTwilioNumber.substring(1); // Solo remover el +
         }
 
         // También probar con el + para whatsapp_number
         const normalizedWithPlus = `+${normalizedNumberWithoutPlus}`;
 
-        // Buscar usuario por número normalizado
-        console.log("🔍 [WHATSAPP] Buscando usuario con números:", {
-          normalizedNumber,
+        // Buscar usuario por twilio_number (comparando con whatsapp_number del usuario)
+        console.log("🔍 [WHATSAPP] Buscando usuario por twilio_number:", {
+          twilioNumber: toNumber,
+          normalizedTwilioNumber,
           normalizedNumberWithoutPlus,
           normalizedWithPlus,
-          fromNumber,
         });
 
-        // Buscar por whatsapp_number primero (más específico), luego por phone
+        // Buscar por whatsapp_number comparándolo con el twilio_number de la conversación
         const { data: user, error: userError } = await supabase
           .from("users")
           .select(
@@ -236,19 +240,15 @@ async function getOrCreateConversation(
             first_name,
             last_name,
             email,
-            subscription_plan,
-            available_credits,
-            total_credits,
+            available_call_credits,
             created_at
           `
           )
           .or(
             `whatsapp_number.eq.${normalizedNumberWithoutPlus},` +
               `whatsapp_number.eq.${normalizedWithPlus},` +
-              `whatsapp_number.eq.${normalizedNumber},` +
-              `whatsapp_number.eq.${fromNumber},` +
-              `phone.eq.${normalizedNumberWithoutPlus},` +
-              `phone.eq.${fromNumber}`
+              `whatsapp_number.eq.${normalizedTwilioNumber},` +
+              `whatsapp_number.eq.${toNumber}`
           )
           .single();
 
@@ -257,28 +257,25 @@ async function getOrCreateConversation(
         if (user && !userError) {
           userId = user.id;
           userData = user;
-          console.log("✅ [WHATSAPP] Usuario encontrado por número:", {
+          console.log("✅ [WHATSAPP] Usuario encontrado por twilio_number:", {
             userId: user.id,
             name: `${user.first_name || ""} ${user.last_name || ""}`.trim(),
             email: user.email,
-            plan: user.subscription_plan,
-            credits: `${user.available_credits || 0}/${
-              user.total_credits || 0
-            }`,
+            credits: user.available_call_credits || 0,
             phoneNumber: user.phone,
             whatsappNumber: user.whatsapp_number,
-            fromNumber: fromNumber,
+            twilioNumber: toNumber,
             normalizedNumber: normalizedNumberWithoutPlus,
           });
         } else {
           console.log(
-            "❌ [WHATSAPP] No se encontró usuario para el número:",
-            fromNumber
+            "❌ [WHATSAPP] No se encontró usuario para el twilio_number:",
+            toNumber
           );
         }
       } catch (userSearchError) {
         console.log(
-          "📱 [WHATSAPP] Error buscando usuario por número:",
+          "📱 [WHATSAPP] Error buscando usuario por twilio_number:",
           userSearchError.message
         );
         // Continuar sin userId
@@ -299,7 +296,8 @@ async function getOrCreateConversation(
           {
             conversationId: existingConversation.id,
             userId: userId,
-            phoneNumber: fromNumber,
+            twilioNumber: toNumber,
+            whatsappNumber: userData.whatsapp_number,
           }
         );
 
