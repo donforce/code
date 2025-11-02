@@ -139,10 +139,34 @@ async function handleWhatsAppMessage(supabase, request, reply) {
       );
 
       try {
-        // Enviar respuesta por WhatsApp
-        await sendWhatsAppMessage(toNumber, fromNumber, aiResponse);
+        // Enviar respuesta por WhatsApp y capturar el sid de Twilio
+        const twilioResponse = await sendWhatsAppMessage(
+          toNumber,
+          fromNumber,
+          aiResponse
+        );
 
-        // Guardar respuesta de IA en la base de datos
+        // Guardar respuesta de IA en la base de datos con el external_message_id de Twilio
+        await saveMessage(
+          supabase,
+          conversation.id,
+          toNumber,
+          aiResponse,
+          "outgoing",
+          twilioResponse?.sid || null
+        );
+
+        // Actualizar conversación
+        await updateConversation(supabase, conversation.id, aiResponse);
+
+        console.log(
+          "✅ [WHATSAPP] Respuesta enviada y guardada exitosamente con external_message_id:",
+          twilioResponse?.sid
+        );
+      } catch (sendError) {
+        console.error("❌ [WHATSAPP] Error enviando respuesta:", sendError);
+
+        // Guardar respuesta de IA aunque falle el envío (sin external_message_id porque no se envió)
         await saveMessage(
           supabase,
           conversation.id,
@@ -154,22 +178,6 @@ async function handleWhatsAppMessage(supabase, request, reply) {
 
         // Actualizar conversación
         await updateConversation(supabase, conversation.id, aiResponse);
-
-        console.log("✅ [WHATSAPP] Respuesta enviada y guardada exitosamente");
-      } catch (sendError) {
-        console.error("❌ [WHATSAPP] Error enviando respuesta:", sendError);
-
-        // Guardar respuesta de IA aunque falle el envío
-        await saveMessage(
-          conversation.id,
-          toNumber,
-          aiResponse,
-          "outgoing",
-          null
-        );
-
-        // Actualizar conversación
-        await updateConversation(conversation.id, aiResponse);
 
         // No fallar completamente, solo loggear el error
         console.warn("⚠️ [WHATSAPP] Respuesta guardada pero no enviada");
