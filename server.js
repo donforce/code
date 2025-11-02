@@ -7022,39 +7022,62 @@ async function checkForScheduledCall(webhookData, call) {
         .from("leads")
         .select("name, phone, email")
         .eq("id", call.lead_id)
-        .order("created_at", { ascending: false })
-        .limit(1);
+        .single();
 
       if (leadError || !lead) {
         console.error("❌ [CALENDAR] Error fetching lead:", leadError);
+        console.error("❌ [CALENDAR] Lead data:", lead);
+        console.error("❌ [CALENDAR] Call lead_id:", call.lead_id);
         return null;
       }
 
-      // console.log("✅ [CALENDAR] Lead information retrieved:", {
-      //   name: lead.name,
-      //   phone: lead.phone,
-      //   email: lead.email,
-      // });
+      const leadData = lead; // .single() devuelve directamente el objeto
+
+      console.log("✅ [CALENDAR] Lead data retrieved:", {
+        leadData: leadData,
+        name: leadData?.name,
+        phone: leadData?.phone,
+        email: leadData?.email,
+        allKeys: leadData ? Object.keys(leadData) : "no leadData",
+      });
+
+      // Validar que los datos del lead existen
+      if (!leadData.name || !leadData.phone || !leadData.email) {
+        console.error("❌ [CALENDAR] Lead data incomplete:", {
+          name: leadData.name,
+          phone: leadData.phone,
+          email: leadData.email,
+        });
+        // Intentar obtener desde to_number si está disponible
+        if (call.to_number && !leadData.phone) {
+          leadData.phone = call.to_number;
+        }
+      }
+
+      // Asegurar que tenemos los datos mínimos, usar fallbacks si es necesario
+      const clientName = leadData?.name || call.to_number || "Cliente";
+      const clientPhone = leadData?.phone || call.to_number || "N/A";
+      const clientEmail = leadData?.email || "N/A";
 
       const result = {
         ...dateTimeInfo,
-        lead: lead,
+        lead: leadData,
         call: call,
         summary: summary,
         title: "Sesión de Consultoría", // Título genérico para citas
-        description: `Sesión de consultoría agendada por teléfono.\n\nCliente: ${lead.name}\nTeléfono: ${lead.phone}\nEmail: ${lead.email}`,
-        clientName: lead.name,
-        clientPhone: lead.phone,
-        clientEmail: lead.email,
+        description: `Sesión de consultoría agendada por teléfono.\n\nCliente: ${clientName}\nTeléfono: ${clientPhone}\nEmail: ${clientEmail}`,
+        clientName: clientName,
+        clientPhone: clientPhone,
+        clientEmail: clientEmail,
       };
 
       console.log("🎉 [CALENDAR] ===== FINAL RESULT =====");
       console.log("📅 [CALENDAR] Date:", result.date);
       console.log("⏰ [CALENDAR] Time:", result.time);
       console.log("🌍 [CALENDAR] Timezone:", result.timezone);
-      console.log("👤 [CALENDAR] Lead:", result.lead.name);
-      console.log("📞 [CALENDAR] Phone:", result.lead.phone);
-      console.log("📧 [CALENDAR] Email:", result.lead.email);
+      console.log("👤 [CALENDAR] Client Name:", result.clientName);
+      console.log("📞 [CALENDAR] Client Phone:", result.clientPhone);
+      console.log("📧 [CALENDAR] Client Email:", result.clientEmail);
       console.log("📝 [CALENDAR] Title:", result.title);
       console.log("📄 [CALENDAR] Description:", result.description);
       console.log(
@@ -7644,8 +7667,8 @@ async function createCalendarEvent(scheduledCallInfo, call) {
 
     // CORREGIDO: Usar el email real del cliente como invitado
     const attendees = [];
-    if (scheduledCallInfo.lead && scheduledCallInfo.lead.email) {
-      attendees.push({ email: scheduledCallInfo.lead.email });
+    if (scheduledCallInfo.clientEmail) {
+      attendees.push({ email: scheduledCallInfo.clientEmail });
     }
 
     const event = {
@@ -7803,8 +7826,15 @@ async function sendAppointmentNotifications(scheduledCallInfo, call) {
               <div style="background: white; padding: 20px; border-radius: 8px; border-left: 4px solid #667eea; margin: 20px 0;">
                 <h3 style="color: #333; margin-top: 0;">Detalles de la Cita:</h3>
                 <ul style="color: #666; margin: 0; padding-left: 20px;">
-                  <li><strong>Cliente:</strong> ${scheduledCallInfo.clientName}</li>
-                  <li><strong>Teléfono:</strong> ${scheduledCallInfo.clientPhone}</li>
+                  <li><strong>Cliente:</strong> ${
+                    scheduledCallInfo.clientName || "N/A"
+                  }</li>
+                  <li><strong>Teléfono:</strong> ${
+                    scheduledCallInfo.clientPhone || "N/A"
+                  }</li>
+                  <li><strong>Email:</strong> ${
+                    scheduledCallInfo.clientEmail || "N/A"
+                  }</li>
                   <li><strong>Fecha:</strong> ${scheduledCallInfo.date}</li>
                   <li><strong>Hora:</strong> ${scheduledCallInfo.time}</li>
                   <li><strong>ID de Llamada:</strong> ${call.id}</li>
