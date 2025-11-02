@@ -209,22 +209,30 @@ async function getOrCreateConversation(
 
         // Mantener el número completo con código de país
         // Ejemplo: +17862989564 -> 17862989564 (sin el +)
+        let normalizedNumberWithoutPlus = normalizedNumber;
         if (normalizedNumber.startsWith("+")) {
-          normalizedNumber = normalizedNumber.substring(1); // Solo remover el +
+          normalizedNumberWithoutPlus = normalizedNumber.substring(1); // Solo remover el +
         }
+
+        // También probar con el + para whatsapp_number
+        const normalizedWithPlus = `+${normalizedNumberWithoutPlus}`;
 
         // Buscar usuario por número normalizado
         console.log("🔍 [WHATSAPP] Buscando usuario con números:", {
           normalizedNumber,
+          normalizedNumberWithoutPlus,
+          normalizedWithPlus,
           fromNumber,
         });
 
+        // Buscar por whatsapp_number primero (más específico), luego por phone
         const { data: user, error: userError } = await supabase
           .from("users")
           .select(
             `
             id, 
             phone,
+            whatsapp_number,
             first_name,
             last_name,
             email,
@@ -234,7 +242,14 @@ async function getOrCreateConversation(
             created_at
           `
           )
-          .or(`phone.eq.${normalizedNumber},phone.eq.${fromNumber}`)
+          .or(
+            `whatsapp_number.eq.${normalizedNumberWithoutPlus},` +
+              `whatsapp_number.eq.${normalizedWithPlus},` +
+              `whatsapp_number.eq.${normalizedNumber},` +
+              `whatsapp_number.eq.${fromNumber},` +
+              `phone.eq.${normalizedNumberWithoutPlus},` +
+              `phone.eq.${fromNumber}`
+          )
           .single();
 
         console.log("🔍 [WHATSAPP] Resultado búsqueda:", { user, userError });
@@ -251,8 +266,9 @@ async function getOrCreateConversation(
               user.total_credits || 0
             }`,
             phoneNumber: user.phone,
+            whatsappNumber: user.whatsapp_number,
             fromNumber: fromNumber,
-            normalizedNumber: normalizedNumber,
+            normalizedNumber: normalizedNumberWithoutPlus,
           });
         } else {
           console.log(
@@ -275,6 +291,41 @@ async function getOrCreateConversation(
         "📱 [WHATSAPP] Conversación existente encontrada:",
         existingConversation.id
       );
+
+      // Si la conversación NO tiene user_id pero encontramos un usuario, actualizarla
+      if (!existingConversation.user_id && userId && userData) {
+        console.log(
+          "🔄 [WHATSAPP] Actualizando conversación sin user_id con usuario encontrado:",
+          {
+            conversationId: existingConversation.id,
+            userId: userId,
+            phoneNumber: fromNumber,
+          }
+        );
+
+        const { error: updateError } = await supabase
+          .from("whatsapp_conversations")
+          .update({
+            user_id: userId,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existingConversation.id);
+
+        if (updateError) {
+          console.error(
+            "❌ [WHATSAPP] Error actualizando user_id de conversación:",
+            updateError
+          );
+        } else {
+          console.log(
+            "✅ [WHATSAPP] Conversación actualizada con user_id:",
+            userId
+          );
+          // Actualizar el objeto de conversación con el nuevo user_id
+          existingConversation.user_id = userId;
+        }
+      }
+
       // Agregar contexto del usuario a la conversación
       if (userData) {
         existingConversation.userContext = userData;
