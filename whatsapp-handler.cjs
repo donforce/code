@@ -615,87 +615,92 @@ async function generateAIResponse(supabase, userMessage, conversation) {
     // Importar tools
     const tools = require("./whatsapp-tools.cjs");
 
-    // Usar contexto del usuario de la conversación o buscar si no está disponible
-    let userData = null;
-    let userContext = "";
+    // Obtener datos del LEAD con el que se está generando la conversación
+    let leadData = null;
+    let leadContext = "";
 
-    // Primero intentar usar el contexto del usuario de la conversación
-    if (conversation.userContext) {
-      userData = conversation.userContext;
-      console.log(
-        "🔍 [OPENAI] Usando contexto del usuario de la conversación:",
-        userData
-      );
-    } else if (conversation.user_id) {
-      // Si no hay contexto, buscar datos del usuario por user_id
+    // Buscar datos del lead usando lead_id de la conversación
+    if (conversation.lead_id) {
       try {
-        const { data: user, error: userError } = await supabase
-          .from("users")
+        const { data: lead, error: leadError } = await supabase
+          .from("leads")
           .select(
             `
             id,
-            first_name,
-            last_name,
+            name,
+            phone,
             email,
-            subscription_plan,
-            available_credits,
-            total_credits,
+            source,
+            notes,
             created_at,
-            phone
+            updated_at
           `
           )
-          .eq("id", conversation.user_id)
+          .eq("id", conversation.lead_id)
           .single();
 
-        if (user && !userError) {
-          userData = user;
-          console.log("🔍 [OPENAI] Usuario encontrado por user_id:", userData);
+        if (lead && !leadError) {
+          leadData = lead;
+          console.log("🔍 [OPENAI] Lead encontrado por lead_id:", leadData);
+        } else {
+          console.warn(
+            "⚠️ [OPENAI] No se encontró lead con lead_id:",
+            conversation.lead_id
+          );
         }
       } catch (error) {
-        console.warn("⚠️ [OPENAI] Error obteniendo datos de usuario:", error);
+        console.warn("⚠️ [OPENAI] Error obteniendo datos del lead:", error);
       }
+    } else {
+      console.log("⚠️ [OPENAI] La conversación no tiene lead_id asociado");
     }
 
-    // Generar contexto del usuario si tenemos datos
-    if (userData) {
-      const fullName =
-        `${userData.first_name || ""} ${userData.last_name || ""}`.trim() ||
-        "Usuario";
-      const registrationDate = userData.created_at
-        ? new Date(userData.created_at).toLocaleDateString("es-ES")
+    // Generar contexto del lead si tenemos datos
+    if (leadData) {
+      const leadName = leadData.name || "Cliente";
+      const leadCreatedDate = leadData.created_at
+        ? new Date(leadData.created_at).toLocaleDateString("es-ES")
         : "No disponible";
 
-      userContext = `
-CONTEXTO DEL USUARIO REGISTRADO:
-- Nombre completo: ${fullName}
-- Email: ${userData.email || "No disponible"}
-- Plan de suscripción: ${userData.subscription_plan || "Sin plan"}
-- Créditos disponibles: ${userData.available_credits || 0}
-- Total de créditos: ${userData.total_credits || 0}
-- Fecha de registro: ${registrationDate}
-- Teléfono: ${userData.phone || "No disponible"}
+      leadContext = `
+CONTEXTO DEL CLIENTE (LEAD):
+- Nombre: ${leadName}
+- Email: ${leadData.email || "No disponible"}
+- Teléfono: ${leadData.phone || "No disponible"}
+- Origen: ${leadData.source || "No especificado"}
+- Notas: ${leadData.notes || "Sin notas"}
+- Fecha de creación: ${leadCreatedDate}
 
-IMPORTANTE: Usa SIEMPRE el nombre real del usuario (${fullName}) y sus datos específicos para personalizar la conversación.
+IMPORTANTE: Usa SIEMPRE el nombre real del cliente (${leadName}) y sus datos específicos para personalizar la conversación. Este es el lead/prospecto con el que estás conversando por WhatsApp.
+`.trim();
+    } else {
+      // Si no hay lead, usar información básica del número de teléfono
+      leadContext = `
+CONTEXTO DEL CLIENTE:
+- No hay información adicional del cliente disponible en este momento.
+- Estás conversando con alguien que se contactó por WhatsApp.
+
+IMPORTANTE: Mantén un tono profesional y busca conocer al cliente, su nombre, y sus necesidades para poder ayudarle mejor.
 `.trim();
     }
 
-    console.log("🔍 [OPENAI] Contexto del usuario:", userContext);
+    console.log("🔍 [OPENAI] Contexto del lead:", leadContext);
     // Instrucciones "system/developer" persistentes
     let instructions = `
-Eres el SDR virtual de OrquestAI atendiendo conversaciones por WhatsApp. Mantén siempre un tono profesional, claro y cercano. Responde de forma breve (1 a 3 frases máximo) y enfocado en ser útil, escuchando primero y resolviendo las dudas del usuario antes de avanzar.
+Eres el SDR virtual de OrquestAI atendiendo conversaciones por WhatsApp. Mantén siempre un tono profesional, claro y cercano. Responde de forma breve (1 a 3 frases máximo) y enfocado en ser útil, escuchando primero y resolviendo las dudas del cliente antes de avanzar.
 
-Tu objetivo es calificar el interés, pedir su email y disponibilidad, y luego proponer una demo de manera natural, solo cuando el usuario muestre interés o después de algunas interacciones. La prioridad es generar confianza y dar claridad antes de invitar a la acción.
+Tu objetivo es calificar el interés, pedir su email y disponibilidad, y luego proponer una demo de manera natural, solo cuando el cliente muestre interés o después de algunas interacciones. La prioridad es generar confianza y dar claridad antes de invitar a la acción.
 
-No des precios específicos: en su lugar, ofrece enviar una propuesta personalizada. Usa siempre el contexto disponible del usuario (nombre, plan, créditos, leads, facturación, etc.) y nunca inventes nombres ni datos; si no tienes la información, utiliza las herramientas disponibles o indica que verificarás el dato.
+No des precios específicos: en su lugar, ofrece enviar una propuesta personalizada. Usa siempre el contexto disponible del cliente/lead (nombre, email, teléfono, origen, notas, etc.) y nunca inventes nombres ni datos; si no tienes la información, indica que verificarás el dato.
 
-Si el usuario pide hablar con un humano (usando palabras como “agente”, “humano” o similares), ofrece el handoff respondiendo: “¿Te conecto ahora con un asesor?”.
+Si el cliente pide hablar con un humano (usando palabras como "agente", "humano" o similares), ofrece el handoff respondiendo: "¿Te conecto ahora con un asesor?".
 
 Mantén el ritmo de la conversación con paciencia, brindando confianza primero y guiando de forma progresiva hacia acciones concretas como recibir más información, compartir datos de contacto o agendar una demo.
 `.trim();
 
-    // Agregar contexto del usuario si está registrado
-    if (userContext) {
-      instructions += `\n\n${userContext}\n\nIMPORTANTE: Usa el nombre del usuario y datos de su plan para personalizar la conversación.`;
+    // Agregar contexto del lead/cliente si está disponible
+    if (leadContext) {
+      instructions += `\n\n${leadContext}\n\nIMPORTANTE: Usa el nombre del cliente y sus datos específicos para personalizar la conversación.`;
     }
 
     // Build request con tools
@@ -905,10 +910,10 @@ Mantén el ritmo de la conversación con paciencia, brindando confianza primero 
       .eq("id", conversation.id);
 
     console.log("🤖 [OPENAI] OK. response.id:", r.id);
-    if (userData) {
+    if (leadData) {
       console.log(
-        "👤 [USER] Respuesta personalizada para:",
-        userData.first_name
+        "👤 [LEAD] Respuesta personalizada para lead:",
+        leadData.name || "Cliente"
       );
     }
     return finalResponse;
