@@ -10,7 +10,10 @@ import os from "os";
 import { performance } from "perf_hooks";
 import crypto from "crypto";
 import { sendCallCompletionData } from "./webhook-handlers.js";
-import { handleWhatsAppMessage } from "./whatsapp-handler.cjs";
+import {
+  handleWhatsAppMessage,
+  sendDefaultTemplateToNewLead,
+} from "./whatsapp-handler.cjs";
 import { handleSMSMessage } from "./sms-handler.cjs";
 
 dotenv.config();
@@ -6176,7 +6179,6 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
 });
 
 // API Integration endpoints for leads
-// API Integration endpoints for leads
 fastify.post("/api/integration/leads", async (request, reply) => {
   try {
     console.log("�� [API] POST /api/integration/leads - Creating lead");
@@ -6649,6 +6651,43 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                 );
               }
 
+              // Enviar template predeterminado de WhatsApp si el usuario tiene whatsapp_number configurado
+              // Se hace en segundo plano sin bloquear la respuesta
+              // TODO: Descomentar cuando se active la funcionalidad
+              /*
+              try {
+                sendDefaultTemplateToNewLead(supabase, userId, {
+                  id: newLead.id,
+                  name: newLead.name,
+                  phone: newLead.phone,
+                  email: newLead.email,
+                })
+                  .then((result) => {
+                    if (result.success) {
+                      console.log(
+                        `✅ [API] Template predeterminado enviado a nuevo lead: ${newLead.id}`
+                      );
+                    } else {
+                      console.log(
+                        `⚠️ [API] No se envió template: ${result.reason}`
+                      );
+                    }
+                  })
+                  .catch((error) => {
+                    console.error(
+                      `❌ [API] Error enviando template (no crítico):`,
+                      error
+                    );
+                  });
+              } catch (whatsappError) {
+                // Si hay error llamando la función, no fallar la creación del lead
+                console.warn(
+                  `⚠️ [API] No se pudo enviar template de WhatsApp (continuando):`,
+                  whatsappError
+                );
+              }
+              */
+
               return {
                 index,
                 success: true,
@@ -6710,6 +6749,8 @@ fastify.post("/api/integration/leads", async (request, reply) => {
     });
   }
 });
+// GET endpoint comentado - usando endpoint de Next.js en su lugar
+/*
 fastify.get("/api/integration/leads", async (request, reply) => {
   try {
     console.log("📞 [API] GET /api/integration/leads - Getting leads");
@@ -6810,6 +6851,7 @@ fastify.get("/api/integration/leads", async (request, reply) => {
     });
   }
 });
+*/
 
 // Endpoint para obtener estado de la cola
 fastify.get("/api/queue-status", async (request, reply) => {
