@@ -1348,18 +1348,30 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
         userId
       );
 
-      // 10. Actualizar lead_id en la conversación si no existe
-      if (conversation && !conversation.lead_id && leadData.id) {
+      // 10. Actualizar lead_id y auto_respond en la conversación
+      // Para templates predeterminados, desactivar auto_respond (IA apagada)
+      const updateData = {};
+      if (!conversation.lead_id && leadData.id) {
+        updateData.lead_id = leadData.id;
+      }
+      // Desactivar auto_respond para que la IA no responda automáticamente
+      updateData.auto_respond = false;
+      updateData.updated_at = new Date().toISOString();
+
+      if (Object.keys(updateData).length > 0) {
         await supabase
           .from("whatsapp_conversations")
-          .update({ lead_id: leadData.id })
+          .update(updateData)
           .eq("id", conversation.id);
 
-        conversation.lead_id = leadData.id;
-        console.log(
-          "✅ [WHATSAPP] lead_id actualizado en conversación:",
-          conversation.id
-        );
+        // Actualizar el objeto de conversación localmente
+        Object.assign(conversation, updateData);
+
+        console.log("✅ [WHATSAPP] Conversación actualizada:", {
+          conversationId: conversation.id,
+          lead_id: updateData.lead_id || conversation.lead_id,
+          auto_respond: false,
+        });
       }
 
       // 11. Guardar mensaje en la base de datos

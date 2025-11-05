@@ -6653,8 +6653,6 @@ fastify.post("/api/integration/leads", async (request, reply) => {
 
               // Enviar template predeterminado de WhatsApp si el usuario tiene whatsapp_number configurado
               // Se hace en segundo plano sin bloquear la respuesta
-              // TODO: Descomentar cuando se active la funcionalidad
-              /*
               try {
                 sendDefaultTemplateToNewLead(supabase, userId, {
                   id: newLead.id,
@@ -6686,7 +6684,6 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                   whatsappError
                 );
               }
-              */
 
               return {
                 index,
@@ -7106,6 +7103,7 @@ async function checkForScheduledCall(webhookData, call) {
         lead: leadData,
         call: call,
         summary: summary,
+        summary_es: call?.transcript_summary_es || null,
         title: "Sesión de Consultoría", // Título genérico para citas
         description: `Sesión de consultoría agendada por teléfono.\n\nCliente: ${clientName}\nTeléfono: ${clientPhone}\nEmail: ${clientEmail}`,
         clientName: clientName,
@@ -7758,12 +7756,15 @@ async function createCalendarEvent(scheduledCallInfo, call) {
     //   end: calendarResponse.data.end,
     // });
 
-    // Update call with calendar event info
+    // Update call with calendar event info and appointment date/time
     await supabase
       .from("calls")
       .update({
         calendar_event_id: calendarResponse.data.id,
         calendar_event_link: calendarResponse.data.htmlLink,
+        appointment_date: scheduledCallInfo.date,
+        appointment_time: scheduledCallInfo.time,
+        appointment_datetime: eventDate.toISOString(),
         updated_at: new Date().toISOString(),
       })
       .eq("conversation_id", call.conversation_id);
@@ -7882,6 +7883,21 @@ async function sendAppointmentNotifications(scheduledCallInfo, call) {
                   <li><strong>ID de Llamada:</strong> ${call.id}</li>
                 </ul>
               </div>
+              
+              ${
+                scheduledCallInfo.summary_es || scheduledCallInfo.summary
+                  ? `
+              <div style="background: #f0f4ff; padding: 20px; border-radius: 8px; border-left: 4px solid #4a90e2; margin: 20px 0;">
+                <h3 style="color: #333; margin-top: 0;">Resumen de la Llamada:</h3>
+                <div style="color: #555; font-size: 14px; line-height: 1.6; white-space: pre-wrap; background: white; padding: 15px; border-radius: 5px; border: 1px solid #e0e0e0;">
+${(scheduledCallInfo.summary_es || scheduledCallInfo.summary || "")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")}
+                </div>
+              </div>
+              `
+                  : ""
+              }
               
               <div style="background: #e8f5e8; padding: 15px; border-radius: 8px; border-left: 4px solid #28a745; margin: 20px 0;">
                 <p style="color: #155724; margin: 0; font-weight: bold;">
