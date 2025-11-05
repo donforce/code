@@ -6795,91 +6795,19 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                 );
               }
 
-              // Enviar template predeterminado de WhatsApp si el usuario tiene whatsapp_number configurado
+              // Enviar template predeterminado de WhatsApp usando la función helper preparada
               // Se hace en segundo plano sin bloquear la respuesta
-              console.log(
-                `📱 [API] ===== INICIANDO ENVÍO DE TEMPLATE WHATSAPP =====`
-              );
-              console.log(
-                `📱 [API] Intentando enviar template de WhatsApp para lead ${newLead.id}`
-              );
-              console.log(`📱 [API] Parámetros:`, {
-                userId,
-                leadId: newLead.id,
-                leadName: newLead.name,
-                leadPhone: newLead.phone,
-                leadEmail: newLead.email,
-              });
-
-              // Verificar que la función esté disponible
-              if (typeof sendDefaultTemplateToNewLead !== "function") {
-                console.error(
-                  `❌ [API] sendDefaultTemplateToNewLead no es una función. Tipo: ${typeof sendDefaultTemplateToNewLead}`
-                );
-              } else {
-                try {
-                  // Ejecutar de forma asíncrona sin bloquear la respuesta
-                  console.log(
-                    `📱 [API] Llamando a sendDefaultTemplateToNewLead con parámetros:`,
-                    {
-                      userId,
-                      leadData: {
-                        id: newLead.id,
-                        name: newLead.name,
-                        phone: newLead.phone,
-                        email: newLead.email,
-                      },
-                    }
-                  );
-
-                  // Llamar la función y manejar el resultado
-                  sendDefaultTemplateToNewLead(supabase, userId, {
-                    id: newLead.id,
-                    name: newLead.name,
-                    phone: newLead.phone,
-                    email: newLead.email,
-                  })
-                    .then((result) => {
-                      console.log(
-                        `📱 [API] Resultado de sendDefaultTemplateToNewLead:`,
-                        JSON.stringify(result, null, 2)
-                      );
-                      if (result && result.success) {
-                        console.log(
-                          `✅ [API] Template predeterminado enviado a nuevo lead: ${newLead.id}`
-                        );
-                      } else if (result) {
-                        console.log(
-                          `⚠️ [API] No se envió template para lead ${
-                            newLead.id
-                          }: ${result.reason || "unknown"}`
-                        );
-                      } else {
-                        console.log(
-                          `⚠️ [API] Resultado vacío al enviar template para lead ${newLead.id}`
-                        );
-                      }
-                    })
-                    .catch((error) => {
-                      // Capturar cualquier error y loguearlo sin interrumpir el flujo
-                      console.error(
-                        `❌ [API] Error enviando template de WhatsApp para lead ${newLead.id} (no crítico, continuando):`,
-                        error?.message || error,
-                        error?.stack
-                      );
-                    });
-
-                  console.log(
-                    `📱 [API] Llamada a sendDefaultTemplateToNewLead iniciada (asíncrona)`
-                  );
-                } catch (error) {
-                  // Capturar errores síncronos que puedan ocurrir al llamar la función
+              if (typeof sendWhatsAppTemplateToNewLead === "function") {
+                sendWhatsAppTemplateToNewLead(newLead).catch((error) => {
                   console.error(
-                    `❌ [API] Error al iniciar envío de template para lead ${newLead.id} (no crítico, continuando):`,
-                    error?.message || error,
-                    error?.stack
+                    `❌ [API] Error en función helper de WhatsApp (no crítico):`,
+                    error
                   );
-                }
+                });
+              } else {
+                console.warn(
+                  `⚠️ [API] sendWhatsAppTemplateToNewLead helper no está disponible`
+                );
               }
 
               return {
@@ -10219,41 +10147,39 @@ async function scheduleVoicemailRetry(callData) {
           : 1;
 
       // Calculate scheduled time: 3 hours from now, but ensure it's between 9am and 8pm
-      const scheduledAt = new Date();
-      scheduledAt.setHours(scheduledAt.getHours() + 3);
+      // Work in UTC to avoid timezone issues when saving to database
+      const now = new Date();
+      const scheduledAt = new Date(now.getTime() + 3 * 60 * 60 * 1000); // Add 3 hours in milliseconds
 
-      // Get the hour and minutes of the scheduled time (before any adjustments)
-      const scheduledHour = scheduledAt.getHours();
-      const scheduledMinutes = scheduledAt.getMinutes();
-      const scheduledSeconds = scheduledAt.getSeconds();
+      // Get UTC hour and minutes to work with database timezone
+      const scheduledHourUTC = scheduledAt.getUTCHours();
+      const scheduledMinutes = scheduledAt.getUTCMinutes();
+      const scheduledSeconds = scheduledAt.getUTCSeconds();
 
-      // Adjust if outside business hours (9am - 8pm)
+      // Adjust if outside business hours (9am - 8pm UTC)
       // Keep the minutes and seconds, only adjust the hour
-      if (scheduledHour < 9) {
-        // If before 9am, schedule for same day at 9am with same minutes
-        scheduledAt.setHours(9, scheduledMinutes, scheduledSeconds, 0);
+      if (scheduledHourUTC < 9) {
+        // If before 9am UTC, schedule for same day at 9am UTC with same minutes
+        scheduledAt.setUTCHours(9, scheduledMinutes, scheduledSeconds, 0);
         console.log(
-          `[VOICEMAIL] ⏰ Horario calculado (${scheduledHour}:${scheduledMinutes
+          `[VOICEMAIL] ⏰ Horario calculado (${scheduledHourUTC}:${scheduledMinutes
             .toString()
             .padStart(
               2,
               "0"
-            )}) es antes de 9am, ajustando a 9:${scheduledMinutes
+            )} UTC) es antes de 9am, ajustando a 9:${scheduledMinutes
             .toString()
-            .padStart(2, "0")} del mismo día`
+            .padStart(2, "0")} UTC del mismo día`
         );
       } else if (
-        scheduledHour > 20 ||
-        (scheduledHour === 20 && scheduledMinutes > 0)
+        scheduledHourUTC > 20 ||
+        (scheduledHourUTC === 20 && scheduledMinutes > 0)
       ) {
-        // If after 8pm (20:01 or later), schedule for next day
-        scheduledAt.setDate(scheduledAt.getDate() + 1);
+        // If after 8pm UTC (20:01 or later), schedule for next day
+        scheduledAt.setUTCDate(scheduledAt.getUTCDate() + 1);
         // Calculate the equivalent hour in the next day's business hours
-        // Example from user: 19:45 (7:45pm) → next day 11:45am (19 - 8 = 11)
-        // Example: 23:45 (11:45pm) → next day 15:45 (3:45pm) (23 - 8 = 15, but 15 is within range)
-        // Actually, re-reading: if 19:45 → 11:45am, that's 19 - 8 = 11
-        // So we subtract 8 hours to get equivalent time
-        let adjustedHour = scheduledHour - 8; // Subtract 8 hours to get equivalent time
+        // Example: 23:45 UTC → next day 15:45 UTC (23 - 8 = 15, which is 3:45pm)
+        let adjustedHour = scheduledHourUTC - 8; // Subtract 8 hours to get equivalent time
         if (adjustedHour < 9) {
           // If still before 9am, use 9am
           adjustedHour = 9;
@@ -10261,27 +10187,30 @@ async function scheduleVoicemailRetry(callData) {
           // If still after 8pm, use 8pm
           adjustedHour = 20;
         }
-        scheduledAt.setHours(
+        scheduledAt.setUTCHours(
           adjustedHour,
           scheduledMinutes,
           scheduledSeconds,
           0
         );
         console.log(
-          `[VOICEMAIL] ⏰ Horario calculado (${scheduledHour}:${scheduledMinutes
+          `[VOICEMAIL] ⏰ Horario calculado (${scheduledHourUTC}:${scheduledMinutes
             .toString()
             .padStart(
               2,
               "0"
-            )}) es después de 8pm, ajustando al día siguiente a ${adjustedHour}:${scheduledMinutes
+            )} UTC) es después de 8pm, ajustando al día siguiente a ${adjustedHour}:${scheduledMinutes
             .toString()
-            .padStart(2, "0")}`
+            .padStart(2, "0")} UTC`
         );
       } else {
         console.log(
-          `[VOICEMAIL] ⏰ Horario calculado (${scheduledHour}:${scheduledMinutes
+          `[VOICEMAIL] ⏰ Horario calculado (${scheduledHourUTC}:${scheduledMinutes
             .toString()
-            .padStart(2, "0")}) está dentro del rango permitido (9am-8pm)`
+            .padStart(
+              2,
+              "0"
+            )} UTC) está dentro del rango permitido (9am-8pm UTC)`
         );
       }
 
