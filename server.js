@@ -6653,37 +6653,38 @@ fastify.post("/api/integration/leads", async (request, reply) => {
 
               // Enviar template predeterminado de WhatsApp si el usuario tiene whatsapp_number configurado
               // Se hace en segundo plano sin bloquear la respuesta
-              try {
-                sendDefaultTemplateToNewLead(supabase, userId, {
-                  id: newLead.id,
-                  name: newLead.name,
-                  phone: newLead.phone,
-                  email: newLead.email,
-                })
+              // Usar setImmediate para asegurar que no interrumpa el flujo principal
+              setImmediate(() => {
+                Promise.resolve()
+                  .then(() => {
+                    return sendDefaultTemplateToNewLead(supabase, userId, {
+                      id: newLead.id,
+                      name: newLead.name,
+                      phone: newLead.phone,
+                      email: newLead.email,
+                    });
+                  })
                   .then((result) => {
-                    if (result.success) {
+                    if (result && result.success) {
                       console.log(
                         `✅ [API] Template predeterminado enviado a nuevo lead: ${newLead.id}`
                       );
-                    } else {
+                    } else if (result) {
                       console.log(
-                        `⚠️ [API] No se envió template: ${result.reason}`
+                        `⚠️ [API] No se envió template: ${
+                          result.reason || "unknown"
+                        }`
                       );
                     }
                   })
                   .catch((error) => {
+                    // Capturar cualquier error y loguearlo sin interrumpir el flujo
                     console.error(
-                      `❌ [API] Error enviando template (no crítico):`,
-                      error
+                      `❌ [API] Error enviando template de WhatsApp (no crítico, continuando):`,
+                      error?.message || error
                     );
                   });
-              } catch (whatsappError) {
-                // Si hay error llamando la función, no fallar la creación del lead
-                console.warn(
-                  `⚠️ [API] No se pudo enviar template de WhatsApp (continuando):`,
-                  whatsappError
-                );
-              }
+              });
 
               return {
                 index,
