@@ -6232,6 +6232,111 @@ fastify.post("/api/integration/leads", async (request, reply) => {
     const userId = apiKeyData[0].user_id;
     console.log("✅ [API KEY DEBUG] API key validated for user:", userId);
 
+    // Preparar función helper para enviar template WhatsApp a nuevos leads
+    console.log("📱 [WHATSAPP] ===== PREPARANDO SISTEMA DE WHATSAPP =====");
+    console.log(
+      "📱 [WHATSAPP] sendDefaultTemplateToNewLead disponible:",
+      typeof sendDefaultTemplateToNewLead
+    );
+
+    // Función helper para enviar template WhatsApp cuando se cree un lead nuevo
+    const sendWhatsAppTemplateToNewLead = async (leadData) => {
+      if (typeof sendDefaultTemplateToNewLead !== "function") {
+        console.warn(
+          "⚠️ [WHATSAPP] sendDefaultTemplateToNewLead no está disponible"
+        );
+        return;
+      }
+
+      console.log(
+        "📱 [WHATSAPP] ===== INICIANDO ENVÍO DE TEMPLATE WHATSAPP ====="
+      );
+      console.log(
+        "📱 [WHATSAPP] Intentando enviar template de WhatsApp para lead:",
+        leadData?.id
+      );
+      console.log("📱 [WHATSAPP] Parámetros:", {
+        userId,
+        leadId: leadData?.id,
+        leadName: leadData?.name,
+        leadPhone: leadData?.phone,
+        leadEmail: leadData?.email,
+      });
+
+      try {
+        console.log(
+          "📱 [WHATSAPP] Llamando a sendDefaultTemplateToNewLead con parámetros:",
+          {
+            userId,
+            leadData: {
+              id: leadData.id,
+              name: leadData.name,
+              phone: leadData.phone,
+              email: leadData.email,
+            },
+          }
+        );
+
+        // Llamar la función y manejar el resultado
+        sendDefaultTemplateToNewLead(supabase, userId, {
+          id: leadData.id,
+          name: leadData.name,
+          phone: leadData.phone,
+          email: leadData.email,
+        })
+          .then((result) => {
+            console.log(
+              "📱 [WHATSAPP] Resultado de sendDefaultTemplateToNewLead:",
+              JSON.stringify(result, null, 2)
+            );
+            if (result && result.success) {
+              console.log(
+                `✅ [WHATSAPP] Template predeterminado enviado a nuevo lead: ${leadData.id}`
+              );
+            } else if (result) {
+              console.log(
+                `⚠️ [WHATSAPP] No se envió template para lead ${leadData.id}: ${
+                  result.reason || "unknown"
+                }`
+              );
+            } else {
+              console.log(
+                `⚠️ [WHATSAPP] Resultado vacío al enviar template para lead ${leadData.id}`
+              );
+            }
+          })
+          .catch((error) => {
+            // Capturar cualquier error y loguearlo sin interrumpir el flujo
+            console.error(
+              `❌ [WHATSAPP] Error enviando template de WhatsApp para lead ${leadData.id} (no crítico, continuando):`,
+              error?.message || error,
+              error?.stack
+            );
+          });
+
+        console.log(
+          "📱 [WHATSAPP] Llamada a sendDefaultTemplateToNewLead iniciada (asíncrona)"
+        );
+      } catch (error) {
+        // Capturar errores síncronos que puedan ocurrir al llamar la función
+        console.error(
+          `❌ [WHATSAPP] Error al iniciar envío de template para lead ${leadData.id} (no crítico, continuando):`,
+          error?.message || error,
+          error?.stack
+        );
+      }
+    };
+
+    if (typeof sendDefaultTemplateToNewLead === "function") {
+      console.log(
+        "✅ [WHATSAPP] Sistema de WhatsApp listo - función helper preparada"
+      );
+    } else {
+      console.warn(
+        "⚠️ [WHATSAPP] sendDefaultTemplateToNewLead no está disponible - no se enviarán templates automáticos"
+      );
+    }
+
     // Obtener script por defecto del usuario y lógica de fallback
     let defaultScriptId = null;
     const { data: userData, error: userError } = await supabase
@@ -6657,96 +6762,9 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                 );
               }
 
-              // Enviar template predeterminado de WhatsApp si el usuario tiene whatsapp_number configurado
+              // Enviar template predeterminado de WhatsApp usando la función helper preparada
               // Se hace en segundo plano sin bloquear la respuesta
-              console.log(
-                `📱 [API] ===== INICIANDO ENVÍO DE TEMPLATE WHATSAPP =====`
-              );
-              console.log(
-                `📱 [API] Intentando enviar template de WhatsApp para lead ${newLead.id}`
-              );
-              console.log(
-                `📱 [API] sendDefaultTemplateToNewLead definida:`,
-                typeof sendDefaultTemplateToNewLead
-              );
-              console.log(`📱 [API] Parámetros:`, {
-                userId,
-                leadId: newLead.id,
-                leadName: newLead.name,
-                leadPhone: newLead.phone,
-                leadEmail: newLead.email,
-              });
-
-              // Verificar que la función esté disponible
-              if (typeof sendDefaultTemplateToNewLead !== "function") {
-                console.error(
-                  `❌ [API] sendDefaultTemplateToNewLead no es una función. Tipo: ${typeof sendDefaultTemplateToNewLead}`
-                );
-              } else {
-                try {
-                  // Ejecutar de forma asíncrona sin bloquear la respuesta
-                  console.log(
-                    `📱 [API] Llamando a sendDefaultTemplateToNewLead con parámetros:`,
-                    {
-                      userId,
-                      leadData: {
-                        id: newLead.id,
-                        name: newLead.name,
-                        phone: newLead.phone,
-                        email: newLead.email,
-                      },
-                    }
-                  );
-
-                  // Llamar la función y manejar el resultado
-                  sendDefaultTemplateToNewLead(supabase, userId, {
-                    id: newLead.id,
-                    name: newLead.name,
-                    phone: newLead.phone,
-                    email: newLead.email,
-                  })
-                    .then((result) => {
-                      console.log(
-                        `📱 [API] Resultado de sendDefaultTemplateToNewLead:`,
-                        JSON.stringify(result, null, 2)
-                      );
-                      if (result && result.success) {
-                        console.log(
-                          `✅ [API] Template predeterminado enviado a nuevo lead: ${newLead.id}`
-                        );
-                      } else if (result) {
-                        console.log(
-                          `⚠️ [API] No se envió template para lead ${
-                            newLead.id
-                          }: ${result.reason || "unknown"}`
-                        );
-                      } else {
-                        console.log(
-                          `⚠️ [API] Resultado vacío al enviar template para lead ${newLead.id}`
-                        );
-                      }
-                    })
-                    .catch((error) => {
-                      // Capturar cualquier error y loguearlo sin interrumpir el flujo
-                      console.error(
-                        `❌ [API] Error enviando template de WhatsApp para lead ${newLead.id} (no crítico, continuando):`,
-                        error?.message || error,
-                        error?.stack
-                      );
-                    });
-
-                  console.log(
-                    `📱 [API] Llamada a sendDefaultTemplateToNewLead iniciada (asíncrona)`
-                  );
-                } catch (error) {
-                  // Capturar errores síncronos que puedan ocurrir al llamar la función
-                  console.error(
-                    `❌ [API] Error al iniciar envío de template para lead ${newLead.id} (no crítico, continuando):`,
-                    error?.message || error,
-                    error?.stack
-                  );
-                }
-              }
+              sendWhatsAppTemplateToNewLead(newLead);
 
               return {
                 index,
