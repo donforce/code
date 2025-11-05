@@ -6587,6 +6587,12 @@ fastify.post("/api/integration/leads", async (request, reply) => {
 
               const newLead = newLeadData[0];
               console.log(`🔍 [API] Lead ID extraído:`, newLead.id);
+              console.log(`📋 [API] Datos del lead:`, {
+                id: newLead.id,
+                name: newLead.name,
+                phone: newLead.phone,
+                email: newLead.email,
+              });
 
               // NUEVO: Si auto_call es true, agregar a la cola automáticamente
               if (data.auto_call) {
@@ -6654,10 +6660,27 @@ fastify.post("/api/integration/leads", async (request, reply) => {
               // Enviar template predeterminado de WhatsApp si el usuario tiene whatsapp_number configurado
               // Se hace en segundo plano sin bloquear la respuesta
               console.log(
+                `📱 [API] ===== INICIANDO ENVÍO DE TEMPLATE WHATSAPP =====`
+              );
+              console.log(
                 `📱 [API] Intentando enviar template de WhatsApp para lead ${newLead.id}`
               );
+              console.log(
+                `📱 [API] sendDefaultTemplateToNewLead definida:`,
+                typeof sendDefaultTemplateToNewLead
+              );
+              console.log(`📱 [API] Parámetros:`, {
+                userId,
+                leadId: newLead.id,
+                leadName: newLead.name,
+                leadPhone: newLead.phone,
+                leadEmail: newLead.email,
+              });
               try {
                 // Ejecutar de forma asíncrona sin bloquear la respuesta
+                console.log(
+                  `📱 [API] Llamando a sendDefaultTemplateToNewLead...`
+                );
                 sendDefaultTemplateToNewLead(supabase, userId, {
                   id: newLead.id,
                   name: newLead.name,

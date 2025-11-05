@@ -1229,27 +1229,62 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
     );
 
     // 1. Verificar que el usuario tenga whatsapp_number configurado
+    console.log("🔍 [WHATSAPP] Paso 1: Buscando usuario en BD...");
+    console.log(
+      "🔍 [WHATSAPP] Query: SELECT id, whatsapp_number, first_name, last_name FROM users WHERE id =",
+      userId
+    );
     const { data: userData, error: userError } = await supabase
       .from("users")
       .select("id, whatsapp_number, first_name, last_name")
       .eq("id", userId)
       .single();
 
+    console.log("🔍 [WHATSAPP] Resultado de búsqueda de usuario:", {
+      hasData: !!userData,
+      hasError: !!userError,
+      error: userError,
+      userData: userData
+        ? {
+            id: userData.id,
+            hasWhatsAppNumber: !!userData.whatsapp_number,
+            whatsappNumber: userData.whatsapp_number
+              ? "***configurado***"
+              : null,
+          }
+        : null,
+    });
+
     if (userError || !userData) {
       console.log(
         "⚠️ [WHATSAPP] Usuario no encontrado, saltando envío de template"
       );
+      console.log("⚠️ [WHATSAPP] Error details:", userError);
       return { success: false, reason: "user_not_found" };
     }
+
+    console.log("✅ [WHATSAPP] Usuario encontrado:", userData.id);
 
     if (!userData.whatsapp_number) {
       console.log(
         "⚠️ [WHATSAPP] Usuario sin whatsapp_number configurado, saltando envío de template"
       );
+      console.log(
+        "⚠️ [WHATSAPP] userData.whatsapp_number:",
+        userData.whatsapp_number
+      );
       return { success: false, reason: "no_whatsapp_number" };
     }
 
+    console.log("✅ [WHATSAPP] Usuario tiene whatsapp_number configurado");
+
     // 2. Buscar template predeterminado para nuevos leads
+    console.log("🔍 [WHATSAPP] Paso 2: Buscando template predeterminado...");
+    console.log(
+      "🔍 [WHATSAPP] Query: SELECT * FROM whatsapp_templates WHERE user_id =",
+      userId,
+      "AND is_default_for_new_leads = true AND is_active = true"
+    );
     const { data: defaultTemplate, error: templateError } = await supabase
       .from("whatsapp_templates")
       .select("*")
@@ -1257,6 +1292,14 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
       .eq("is_default_for_new_leads", true)
       .eq("is_active", true)
       .maybeSingle();
+
+    console.log("🔍 [WHATSAPP] Resultado de búsqueda de template:", {
+      hasTemplate: !!defaultTemplate,
+      hasError: !!templateError,
+      error: templateError,
+      templateId: defaultTemplate?.id,
+      templateName: defaultTemplate?.["Template name"],
+    });
 
     if (templateError) {
       console.error(
@@ -1281,8 +1324,19 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
       "✅ [WHATSAPP] Template predeterminado encontrado:",
       defaultTemplate["Template name"]
     );
+    console.log("📋 [WHATSAPP] Detalles del template:", {
+      id: defaultTemplate.id,
+      name: defaultTemplate["Template name"],
+      contentSid: defaultTemplate["Content template SID"],
+      description: defaultTemplate.description,
+    });
 
     // 3. Validar y normalizar número de teléfono del lead
+    console.log(
+      "🔍 [WHATSAPP] Paso 3: Validando y normalizando número de teléfono..."
+    );
+    console.log("🔍 [WHATSAPP] leadData.phone:", leadData.phone);
+
     if (!leadData.phone) {
       console.log(
         "⚠️ [WHATSAPP] El lead no tiene número de teléfono, saltando envío de template"
@@ -1290,26 +1344,61 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
       return { success: false, reason: "no_phone_number" };
     }
 
+    console.log("🔍 [WHATSAPP] Normalizando teléfono del lead...");
     let normalizedPhone = leadData.phone
       .replace(/\s+/g, "")
       .replace(/[-\/]/g, "")
       .replace(/^whatsapp:/, "")
       .replace(/^\+/, "");
     const withPlusPhone = `+${normalizedPhone}`;
+    console.log("✅ [WHATSAPP] Teléfono normalizado:", {
+      original: leadData.phone,
+      normalized: normalizedPhone,
+      withPlus: withPlusPhone,
+    });
 
     // 4. Obtener número de WhatsApp del usuario (twilio_number o whatsapp_number)
+    console.log(
+      "🔍 [WHATSAPP] Paso 4: Normalizando número de WhatsApp del usuario..."
+    );
+    console.log(
+      "🔍 [WHATSAPP] userData.whatsapp_number:",
+      userData.whatsapp_number
+    );
     const twilioWhatsAppNumber = userData.whatsapp_number
       .replace("whatsapp:", "")
       .replace(/^\+/, "");
+    console.log(
+      "✅ [WHATSAPP] Número de WhatsApp del usuario normalizado:",
+      twilioWhatsAppNumber
+    );
 
     // 5. Inicializar cliente de Twilio
+    console.log("🔍 [WHATSAPP] Paso 5: Inicializando cliente de Twilio...");
+    console.log(
+      "🔍 [WHATSAPP] accountSid:",
+      accountSid ? "***configurado***" : "NO CONFIGURADO"
+    );
+    console.log(
+      "🔍 [WHATSAPP] authToken:",
+      authToken ? "***configurado***" : "NO CONFIGURADO"
+    );
     const twilioClient = twilio(accountSid, authToken);
+    console.log("✅ [WHATSAPP] Cliente de Twilio inicializado");
 
     // 6. Formatear números para WhatsApp
+    console.log("🔍 [WHATSAPP] Paso 6: Formateando números para WhatsApp...");
     const fromNumber = `whatsapp:${twilioWhatsAppNumber}`;
     const toNumber = `whatsapp:${withPlusPhone}`;
+    console.log("✅ [WHATSAPP] Números formateados:", {
+      from: fromNumber,
+      to: toNumber,
+    });
 
     // 7. Construir contentVariables para el template
+    console.log(
+      "🔍 [WHATSAPP] Paso 7: Construyendo contentVariables para el template..."
+    );
     const contentVariables = {
       1: leadData.name || "Cliente",
     };
@@ -1322,7 +1411,10 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
       contentVariables["3"] = leadData.email;
     }
 
-    console.log("📝 [WHATSAPP] Variables del template:", contentVariables);
+    console.log(
+      "✅ [WHATSAPP] Variables del template construidas:",
+      contentVariables
+    );
 
     // 8. Enviar mensaje con template usando Twilio
     console.log(
@@ -1345,11 +1437,23 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
 
     let twilioMessage;
     try {
+      console.log("🔍 [WHATSAPP] Paso 8: Enviando mensaje a Twilio...");
+      console.log("🔍 [WHATSAPP] Payload para Twilio:", {
+        from: fromNumber,
+        to: toNumber,
+        contentSid: defaultTemplate["Content template SID"],
+        contentVariables: JSON.stringify(contentVariables),
+      });
       twilioMessage = await twilioClient.messages.create({
         from: fromNumber,
         to: toNumber,
         contentSid: defaultTemplate["Content template SID"],
         contentVariables: JSON.stringify(contentVariables), // Twilio requiere string JSON
+      });
+      console.log("🔍 [WHATSAPP] Respuesta de Twilio recibida:", {
+        sid: twilioMessage.sid,
+        status: twilioMessage.status,
+        dateCreated: twilioMessage.dateCreated,
       });
 
       console.log(
@@ -1358,14 +1462,26 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
       );
 
       // 9. Buscar o crear conversación
+      console.log("🔍 [WHATSAPP] Paso 9: Buscando o creando conversación...");
+      console.log("🔍 [WHATSAPP] Parámetros para getOrCreateConversation:", {
+        phoneNumber: withPlusPhone,
+        twilioNumber: twilioWhatsAppNumber,
+        userId: userId,
+      });
       const conversation = await getOrCreateConversation(
         supabase,
         withPlusPhone,
         twilioWhatsAppNumber,
         userId
       );
+      console.log("✅ [WHATSAPP] Conversación obtenida/creada:", {
+        conversationId: conversation.id,
+        leadId: conversation.lead_id,
+        autoRespond: conversation.auto_respond,
+      });
 
       // 10. Actualizar lead_id y auto_respond en la conversación
+      console.log("🔍 [WHATSAPP] Paso 10: Actualizando conversación...");
       // Para templates predeterminados, desactivar auto_respond (IA apagada)
       const updateData = {};
       if (!conversation.lead_id && leadData.id) {
@@ -1392,11 +1508,16 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
       }
 
       // 11. Guardar mensaje en la base de datos
+      console.log("🔍 [WHATSAPP] Paso 11: Guardando mensaje en BD...");
       // Usar la descripción del template si existe, sino el nombre del template
       const messageContent =
         defaultTemplate.description ||
         defaultTemplate["Template name"] ||
         "Template enviado";
+      console.log(
+        "🔍 [WHATSAPP] Contenido del mensaje a guardar:",
+        messageContent
+      );
 
       const { data: savedMessage, error: saveError } = await supabase
         .from("whatsapp_messages")
@@ -1412,6 +1533,13 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
         .select()
         .single();
 
+      console.log("🔍 [WHATSAPP] Resultado de guardar mensaje:", {
+        hasData: !!savedMessage,
+        hasError: !!saveError,
+        error: saveError,
+        messageId: savedMessage?.id,
+      });
+
       if (saveError) {
         console.error(
           "⚠️ [WHATSAPP] Error guardando mensaje en BD (mensaje enviado):",
@@ -1422,7 +1550,10 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
       }
 
       // 12. Actualizar message_count y last_message_at en la conversación
-      await supabase
+      console.log(
+        "🔍 [WHATSAPP] Paso 12: Actualizando message_count y last_message_at..."
+      );
+      const { error: updateError } = await supabase
         .from("whatsapp_conversations")
         .update({
           message_count: (conversation.message_count || 0) + 1,
@@ -1431,9 +1562,25 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
         })
         .eq("id", conversation.id);
 
+      if (updateError) {
+        console.error(
+          "⚠️ [WHATSAPP] Error actualizando message_count:",
+          updateError
+        );
+      } else {
+        console.log("✅ [WHATSAPP] message_count actualizado");
+      }
+
       console.log(
         "✅ [WHATSAPP] ===== TEMPLATE PREDETERMINADO ENVIADO EXITOSAMENTE ====="
       );
+      console.log("✅ [WHATSAPP] Resumen final:", {
+        success: true,
+        message_sid: twilioMessage.sid,
+        conversation_id: conversation.id,
+        template_id: defaultTemplate.id,
+        lead_id: leadData.id,
+      });
 
       return {
         success: true,
@@ -1460,9 +1607,12 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
     }
   } catch (error) {
     console.error(
-      "❌ [WHATSAPP] Error en sendDefaultTemplateToNewLead:",
-      error
+      "❌ [WHATSAPP] ===== ERROR GENERAL EN sendDefaultTemplateToNewLead ====="
     );
+    console.error("❌ [WHATSAPP] Error:", error);
+    console.error("❌ [WHATSAPP] Error message:", error?.message);
+    console.error("❌ [WHATSAPP] Error stack:", error?.stack);
+    console.error("❌ [WHATSAPP] Error name:", error?.name);
     return {
       success: false,
       reason: "unexpected_error",
