@@ -3984,6 +3984,14 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                     // Save voicemail detection to database
                     if (callSid) {
                       try {
+                        // First, get call data to obtain user_id, lead_id, queue_id, script_id
+                        const { data: callData, error: callDataError } =
+                          await supabase
+                            .from("calls")
+                            .select("user_id, lead_id, queue_id, script_id")
+                            .eq("call_sid", callSid)
+                            .single();
+
                         const { error: updateError } = await supabase
                           .from("calls")
                           .update({
@@ -4005,6 +4013,10 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                           console.log(
                             `[ElevenLabs] Call ${callSid} marked as completed - voicemail detected`
                           );
+
+                          // NOTE: Retry logic is now handled in /api/calls/[id]/update-result endpoint
+                          // when detailed_result is set to "Buzón de Voz" by AI analysis
+                          // This ensures retries only happen when the AI confirms it's voicemail
                         }
                       } catch (dbError) {
                         console.error(
