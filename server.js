@@ -10218,9 +10218,72 @@ async function scheduleVoicemailRetry(callData) {
           ? (lastQueueItem[0]?.queue_position || 0) + 1
           : 1;
 
-      // Calculate scheduled time: 15 minutes from now
+      // Calculate scheduled time: 3 hours from now, but ensure it's between 9am and 8pm
       const scheduledAt = new Date();
-      scheduledAt.setMinutes(scheduledAt.getMinutes() + 15);
+      scheduledAt.setHours(scheduledAt.getHours() + 3);
+
+      // Get the hour and minutes of the scheduled time (before any adjustments)
+      const scheduledHour = scheduledAt.getHours();
+      const scheduledMinutes = scheduledAt.getMinutes();
+      const scheduledSeconds = scheduledAt.getSeconds();
+
+      // Adjust if outside business hours (9am - 8pm)
+      // Keep the minutes and seconds, only adjust the hour
+      if (scheduledHour < 9) {
+        // If before 9am, schedule for same day at 9am with same minutes
+        scheduledAt.setHours(9, scheduledMinutes, scheduledSeconds, 0);
+        console.log(
+          `[VOICEMAIL] ⏰ Horario calculado (${scheduledHour}:${scheduledMinutes
+            .toString()
+            .padStart(
+              2,
+              "0"
+            )}) es antes de 9am, ajustando a 9:${scheduledMinutes
+            .toString()
+            .padStart(2, "0")} del mismo día`
+        );
+      } else if (
+        scheduledHour > 20 ||
+        (scheduledHour === 20 && scheduledMinutes > 0)
+      ) {
+        // If after 8pm (20:01 or later), schedule for next day
+        scheduledAt.setDate(scheduledAt.getDate() + 1);
+        // Calculate the equivalent hour in the next day's business hours
+        // Example from user: 19:45 (7:45pm) → next day 11:45am (19 - 8 = 11)
+        // Example: 23:45 (11:45pm) → next day 15:45 (3:45pm) (23 - 8 = 15, but 15 is within range)
+        // Actually, re-reading: if 19:45 → 11:45am, that's 19 - 8 = 11
+        // So we subtract 8 hours to get equivalent time
+        let adjustedHour = scheduledHour - 8; // Subtract 8 hours to get equivalent time
+        if (adjustedHour < 9) {
+          // If still before 9am, use 9am
+          adjustedHour = 9;
+        } else if (adjustedHour > 20) {
+          // If still after 8pm, use 8pm
+          adjustedHour = 20;
+        }
+        scheduledAt.setHours(
+          adjustedHour,
+          scheduledMinutes,
+          scheduledSeconds,
+          0
+        );
+        console.log(
+          `[VOICEMAIL] ⏰ Horario calculado (${scheduledHour}:${scheduledMinutes
+            .toString()
+            .padStart(
+              2,
+              "0"
+            )}) es después de 8pm, ajustando al día siguiente a ${adjustedHour}:${scheduledMinutes
+            .toString()
+            .padStart(2, "0")}`
+        );
+      } else {
+        console.log(
+          `[VOICEMAIL] ⏰ Horario calculado (${scheduledHour}:${scheduledMinutes
+            .toString()
+            .padStart(2, "0")}) está dentro del rango permitido (9am-8pm)`
+        );
+      }
 
       // Calculate next retry number
       const nextRetryNumber = currentRetryNumber + 1;
@@ -10250,7 +10313,7 @@ async function scheduleVoicemailRetry(callData) {
         };
       } else {
         console.log(
-          `[VOICEMAIL] ✅ Llamada programada (retry #${nextRetryNumber}) para 15 minutos después (${scheduledAt.toISOString()}) para lead ${
+          `[VOICEMAIL] ✅ Llamada programada (retry #${nextRetryNumber}) para 3 horas después (${scheduledAt.toISOString()}) para lead ${
             callData.lead_id
           }`
         );
