@@ -41,6 +41,7 @@ const {
   QUEUE_CHECK_INTERVAL,
   RETRY_ATTEMPTS,
   RETRY_DELAY,
+  MAX_VOICEMAIL_RETRIES,
 } = process.env;
 
 if (
@@ -6036,6 +6037,13 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
             analysisUpdateData.detailed_result = detailedResult;
           }
 
+          // Obtener datos de la llamada antes de actualizar para verificar si necesita retry
+          const { data: callDataBefore } = await supabase
+            .from("calls")
+            .select("user_id, lead_id, queue_id, script_id, detailed_result")
+            .eq("conversation_id", conversation_id)
+            .single();
+
           const { error: analysisError } = await supabase
             .from("calls")
             .update(analysisUpdateData)
@@ -6073,6 +6081,19 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
                 "🔍 [ANALYSIS] Detailed result trimmed:",
                 `"${detailedResult.trim()}"`
               );
+            }
+
+            // Si el resultado es "Buzón de Voz" y está dentro del máximo de retries, programar retry
+            if (
+              detailedResult &&
+              detailedResult.trim() === "Buzón de Voz" &&
+              callDataBefore
+            ) {
+              console.log(
+                "📞 [VOICEMAIL] Detected voicemail from AI analysis, scheduling retry..."
+              );
+              // Usar la función reutilizable para programar el retry
+              await scheduleVoicemailRetry(callDataBefore);
             }
 
             // 🆕 ENVIAR WEBHOOK DESPUÉS DE GUARDAR EL ANÁLISIS COMPLETO
@@ -6839,6 +6860,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
     });
   }
 });
+
 // GET endpoint comentado - usando endpoint de Next.js en su lugar
 /*
 fastify.get("/api/integration/leads", async (request, reply) => {
@@ -10036,4 +10058,140 @@ async function getPlanCredits(stripePriceId) {
     return 0;
   }
   return data.credits_per_month || 0;
+}
+
+// Función reutilizable para programar retry de voicemail
+async function scheduleVoicemailRetry(callData) {
+  try {
+    console.log("📞 [VOICEMAIL] Scheduling voicemail retry...", {
+      lead_id: callData.lead_id,
+      user_id: callData.user_id,
+      queue_id: callData.queue_id,
+    });
+
+    // Obtener el número de retry actual del queue item
+    let currentRetryNumber = 0;
+
+    if (callData.queue_id) {
+      const { data: queueItem } = await supabase
+        .from("call_queue")
+        .select("voicemail_retry_count")
+        .eq("id", callData.queue_id)
+        .single();
+
+      if (queueItem) {
+        // NULL or undefined means it's not a retry (original call)
+        currentRetryNumber = queueItem.voicemail_retry_count ?? 0;
+      }
+    }
+
+    // Leer MAX_VOICEMAIL_RETRIES de variables de entorno (default: 1)
+    const maxRetries = parseInt(MAX_VOICEMAIL_RETRIES) || 1;
+
+    if (currentRetryNumber >= maxRetries) {
+      console.log(
+        `[VOICEMAIL] ⚠️ Esta llamada es retry #${currentRetryNumber} de voicemail para lead ${callData.lead_id}. Máximo permitido: ${maxRetries}. No se creará otro retry.`
+      );
+      return {
+        success: false,
+        reason: "max_retries_reached",
+        retry_number: currentRetryNumber,
+      };
+    }
+
+    if (!callData.lead_id || !callData.user_id) {
+      console.log(
+        `[VOICEMAIL] ⚠️ Faltan datos necesarios (lead_id o user_id) para programar retry`
+      );
+      return { success: false, reason: "missing_data" };
+    }
+
+    // Verificar si ya existe una llamada pendiente para este lead
+    const query = supabase
+      .from("call_queue")
+      .select("id, scheduled_at")
+      .eq("lead_id", callData.lead_id)
+      .eq("user_id", callData.user_id)
+      .eq("status", "pending");
+
+    // Exclude the current queue item if it exists
+    if (callData.queue_id) {
+      query.neq("id", callData.queue_id);
+    }
+
+    const { data: existingPendingCalls } = await query;
+
+    // Si no hay llamadas pendientes, crear el retry
+    if (!existingPendingCalls || existingPendingCalls.length === 0) {
+      // Get the last queue position
+      const { data: lastQueueItem } = await supabase
+        .from("call_queue")
+        .select("queue_position")
+        .order("queue_position", { ascending: false })
+        .limit(1);
+
+      const nextPosition =
+        lastQueueItem && lastQueueItem.length > 0
+          ? (lastQueueItem[0]?.queue_position || 0) + 1
+          : 1;
+
+      // Calculate scheduled time: 15 minutes from now
+      const scheduledAt = new Date();
+      scheduledAt.setMinutes(scheduledAt.getMinutes() + 15);
+
+      // Calculate next retry number
+      const nextRetryNumber = currentRetryNumber + 1;
+
+      // Create new queue entry with scheduled_at
+      const { error: queueError } = await supabase.from("call_queue").insert({
+        user_id: callData.user_id,
+        lead_id: callData.lead_id,
+        queue_position: nextPosition,
+        status: "pending",
+        priority: 2,
+        scheduled_at: scheduledAt.toISOString(),
+        script_id: callData.script_id,
+        voicemail_retry_count: nextRetryNumber, // Track retry number
+        created_at: new Date().toISOString(),
+      });
+
+      if (queueError) {
+        console.error(
+          `[VOICEMAIL] ❌ Error creando llamada programada para lead ${callData.lead_id}:`,
+          queueError
+        );
+        return {
+          success: false,
+          reason: "queue_insert_error",
+          error: queueError,
+        };
+      } else {
+        console.log(
+          `[VOICEMAIL] ✅ Llamada programada (retry #${nextRetryNumber}) para 15 minutos después (${scheduledAt.toISOString()}) para lead ${
+            callData.lead_id
+          }`
+        );
+        return {
+          success: true,
+          retry_number: nextRetryNumber,
+          scheduled_at: scheduledAt.toISOString(),
+        };
+      }
+    } else {
+      console.log(
+        `[VOICEMAIL] ⚠️ Ya existe una llamada pendiente o programada para lead ${callData.lead_id}, no se creará otra`
+      );
+      return { success: false, reason: "pending_call_exists" };
+    }
+  } catch (retryError) {
+    console.error(
+      "[VOICEMAIL] ❌ Error al programar reintento de llamada:",
+      retryError
+    );
+    return {
+      success: false,
+      reason: "unexpected_error",
+      error: retryError.message,
+    };
+  }
 }
