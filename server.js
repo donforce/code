@@ -6795,9 +6795,92 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                 );
               }
 
-              // Enviar template predeterminado de WhatsApp usando la función helper preparada
+              // Enviar template predeterminado de WhatsApp si el usuario tiene whatsapp_number configurado
               // Se hace en segundo plano sin bloquear la respuesta
-              sendWhatsAppTemplateToNewLead(newLead);
+              console.log(
+                `📱 [API] ===== INICIANDO ENVÍO DE TEMPLATE WHATSAPP =====`
+              );
+              console.log(
+                `📱 [API] Intentando enviar template de WhatsApp para lead ${newLead.id}`
+              );
+              console.log(`📱 [API] Parámetros:`, {
+                userId,
+                leadId: newLead.id,
+                leadName: newLead.name,
+                leadPhone: newLead.phone,
+                leadEmail: newLead.email,
+              });
+
+              // Verificar que la función esté disponible
+              if (typeof sendDefaultTemplateToNewLead !== "function") {
+                console.error(
+                  `❌ [API] sendDefaultTemplateToNewLead no es una función. Tipo: ${typeof sendDefaultTemplateToNewLead}`
+                );
+              } else {
+                try {
+                  // Ejecutar de forma asíncrona sin bloquear la respuesta
+                  console.log(
+                    `📱 [API] Llamando a sendDefaultTemplateToNewLead con parámetros:`,
+                    {
+                      userId,
+                      leadData: {
+                        id: newLead.id,
+                        name: newLead.name,
+                        phone: newLead.phone,
+                        email: newLead.email,
+                      },
+                    }
+                  );
+
+                  // Llamar la función y manejar el resultado
+                  sendDefaultTemplateToNewLead(supabase, userId, {
+                    id: newLead.id,
+                    name: newLead.name,
+                    phone: newLead.phone,
+                    email: newLead.email,
+                  })
+                    .then((result) => {
+                      console.log(
+                        `📱 [API] Resultado de sendDefaultTemplateToNewLead:`,
+                        JSON.stringify(result, null, 2)
+                      );
+                      if (result && result.success) {
+                        console.log(
+                          `✅ [API] Template predeterminado enviado a nuevo lead: ${newLead.id}`
+                        );
+                      } else if (result) {
+                        console.log(
+                          `⚠️ [API] No se envió template para lead ${
+                            newLead.id
+                          }: ${result.reason || "unknown"}`
+                        );
+                      } else {
+                        console.log(
+                          `⚠️ [API] Resultado vacío al enviar template para lead ${newLead.id}`
+                        );
+                      }
+                    })
+                    .catch((error) => {
+                      // Capturar cualquier error y loguearlo sin interrumpir el flujo
+                      console.error(
+                        `❌ [API] Error enviando template de WhatsApp para lead ${newLead.id} (no crítico, continuando):`,
+                        error?.message || error,
+                        error?.stack
+                      );
+                    });
+
+                  console.log(
+                    `📱 [API] Llamada a sendDefaultTemplateToNewLead iniciada (asíncrona)`
+                  );
+                } catch (error) {
+                  // Capturar errores síncronos que puedan ocurrir al llamar la función
+                  console.error(
+                    `❌ [API] Error al iniciar envío de template para lead ${newLead.id} (no crítico, continuando):`,
+                    error?.message || error,
+                    error?.stack
+                  );
+                }
+              }
 
               return {
                 index,
