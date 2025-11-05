@@ -1207,14 +1207,24 @@ async function getEngagementMetrics(userId = null) {
 
 // Función para enviar template predeterminado a un nuevo lead
 async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
+  console.log(
+    "🚀 [WHATSAPP] ===== INICIANDO sendDefaultTemplateToNewLead ====="
+  );
+  console.log("📥 [WHATSAPP] Parámetros recibidos:", {
+    userId,
+    leadId: leadData?.id,
+    leadName: leadData?.name,
+    leadPhone: leadData?.phone,
+    leadEmail: leadData?.email,
+  });
   try {
     console.log(
       "📱 [WHATSAPP] Verificando envío de template predeterminado para nuevo lead:",
       {
         userId,
-        leadId: leadData.id,
-        leadName: leadData.name,
-        leadPhone: leadData.phone,
+        leadId: leadData?.id,
+        leadName: leadData?.name,
+        leadPhone: leadData?.phone,
       }
     );
 
@@ -1272,7 +1282,14 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
       defaultTemplate["Template name"]
     );
 
-    // 3. Normalizar número de teléfono del lead
+    // 3. Validar y normalizar número de teléfono del lead
+    if (!leadData.phone) {
+      console.log(
+        "⚠️ [WHATSAPP] El lead no tiene número de teléfono, saltando envío de template"
+      );
+      return { success: false, reason: "no_phone_number" };
+    }
+
     let normalizedPhone = leadData.phone
       .replace(/\s+/g, "")
       .replace(/[-\/]/g, "")

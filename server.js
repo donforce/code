@@ -6653,17 +6653,17 @@ fastify.post("/api/integration/leads", async (request, reply) => {
 
               // Enviar template predeterminado de WhatsApp si el usuario tiene whatsapp_number configurado
               // Se hace en segundo plano sin bloquear la respuesta
-              // Usar setImmediate para asegurar que no interrumpa el flujo principal
-              setImmediate(() => {
-                Promise.resolve()
-                  .then(() => {
-                    return sendDefaultTemplateToNewLead(supabase, userId, {
-                      id: newLead.id,
-                      name: newLead.name,
-                      phone: newLead.phone,
-                      email: newLead.email,
-                    });
-                  })
+              console.log(
+                `📱 [API] Intentando enviar template de WhatsApp para lead ${newLead.id}`
+              );
+              try {
+                // Ejecutar de forma asíncrona sin bloquear la respuesta
+                sendDefaultTemplateToNewLead(supabase, userId, {
+                  id: newLead.id,
+                  name: newLead.name,
+                  phone: newLead.phone,
+                  email: newLead.email,
+                })
                   .then((result) => {
                     if (result && result.success) {
                       console.log(
@@ -6671,20 +6671,32 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                       );
                     } else if (result) {
                       console.log(
-                        `⚠️ [API] No se envió template: ${
-                          result.reason || "unknown"
-                        }`
+                        `⚠️ [API] No se envió template para lead ${
+                          newLead.id
+                        }: ${result.reason || "unknown"}`
+                      );
+                    } else {
+                      console.log(
+                        `⚠️ [API] Resultado vacío al enviar template para lead ${newLead.id}`
                       );
                     }
                   })
                   .catch((error) => {
                     // Capturar cualquier error y loguearlo sin interrumpir el flujo
                     console.error(
-                      `❌ [API] Error enviando template de WhatsApp (no crítico, continuando):`,
-                      error?.message || error
+                      `❌ [API] Error enviando template de WhatsApp para lead ${newLead.id} (no crítico, continuando):`,
+                      error?.message || error,
+                      error?.stack
                     );
                   });
-              });
+              } catch (error) {
+                // Capturar errores síncronos que puedan ocurrir al llamar la función
+                console.error(
+                  `❌ [API] Error al iniciar envío de template para lead ${newLead.id} (no crítico, continuando):`,
+                  error?.message || error,
+                  error?.stack
+                );
+              }
 
               return {
                 index,
