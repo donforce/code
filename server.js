@@ -578,7 +578,7 @@ const queueChannel = supabase
 // Mutex para evitar procesamiento simultáneo
 let isProcessingQueue = false;
 
-// Optimized queue processing with minimal logging
+// Optimized queue processing with minimal logging (keep lightweight for production)
 async function processAllPendingQueues() {
   // Mutex: evitar procesamiento simultáneo (timeout de 30 segundos)
   if (isProcessingQueue) {
