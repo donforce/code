@@ -1365,13 +1365,20 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
       "🔍 [WHATSAPP] userData.whatsapp_number:",
       userData.whatsapp_number
     );
-    const twilioWhatsAppNumber = userData.whatsapp_number
-      .replace("whatsapp:", "")
-      .replace(/^\+/, "");
-    console.log(
-      "✅ [WHATSAPP] Número de WhatsApp del usuario normalizado:",
-      twilioWhatsAppNumber
-    );
+    let twilioWhatsAppNumber = (userData.whatsapp_number || "").trim();
+
+    if (twilioWhatsAppNumber.startsWith("whatsapp:")) {
+      twilioWhatsAppNumber = twilioWhatsAppNumber.replace("whatsapp:", "");
+    }
+
+    if (!twilioWhatsAppNumber.startsWith("+")) {
+      twilioWhatsAppNumber = `+${twilioWhatsAppNumber.replace(/^\+/, "")}`;
+    }
+
+    console.log("✅ [WHATSAPP] Número de WhatsApp del usuario normalizado:", {
+      original: userData.whatsapp_number,
+      normalized: twilioWhatsAppNumber,
+    });
 
     // 5. Inicializar cliente de Twilio
     console.log("🔍 [WHATSAPP] Paso 5: Inicializando cliente de Twilio...");

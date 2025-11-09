@@ -2556,7 +2556,6 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
 
   reply.type("text/xml").send(twimlResponse);
 });
-
 // Your existing WebSocket endpoint registration
 fastify.register(async (fastifyInstance) => {
   // Add incoming media stream endpoint
@@ -3978,7 +3977,6 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                       }
                     }
                     break;
-
                   case "voicemail_detected":
                     console.log("📞 [VOICEMAIL] Voicemail detected");
 
@@ -5426,7 +5424,6 @@ fastify.post("/emergency-cleanup-user/:userId", async (request, reply) => {
     return reply.code(500).send({ error: "Internal server error" });
   }
 });
-
 // Twilio incoming call endpoint for AI assistant
 fastify.all("/twilio/incoming-call", async (request, reply) => {
   try {
@@ -6210,7 +6207,6 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
     return reply.code(500).send({ error: "Internal server error" });
   }
 });
-
 // API Integration endpoints for leads
 fastify.post("/api/integration/leads", async (request, reply) => {
   try {
@@ -6975,7 +6971,6 @@ fastify.get("/api/integration/leads", async (request, reply) => {
   }
 });
 */
-
 // Endpoint para obtener estado de la cola
 fastify.get("/api/queue-status", async (request, reply) => {
   try {
@@ -7703,7 +7698,6 @@ function getMonthNumber(monthName) {
 
   return monthMap[monthName.toLowerCase()] || -1;
 }
-
 // Function to create calendar event
 async function createCalendarEvent(scheduledCallInfo, call) {
   try {
@@ -7856,7 +7850,14 @@ async function createCalendarEvent(scheduledCallInfo, call) {
           { method: "email", minutes: 1 * 60 }, // 1 hour before
           { method: "popup", minutes: 1 * 60 }, // 1 hour before
           { method: "popup", minutes: 15 }, // 15 minutes before
+          { method: "email", minutes: 15 }, // 15 minutes before
         ],
+      },
+      conferenceData: {
+        createRequest: {
+          requestId: `meet-${crypto.randomUUID()}`,
+          conferenceSolutionKey: { type: "hangoutsMeet" },
+        },
       },
     };
 
@@ -7873,6 +7874,7 @@ async function createCalendarEvent(scheduledCallInfo, call) {
       calendarId: "primary",
       resource: event,
       sendUpdates: "all",
+      conferenceDataVersion: 1,
     });
 
     // console.log("✅ [CALENDAR] Event created successfully:", {
@@ -7887,7 +7889,8 @@ async function createCalendarEvent(scheduledCallInfo, call) {
       .from("calls")
       .update({
         calendar_event_id: calendarResponse.data.id,
-        calendar_event_link: calendarResponse.data.htmlLink,
+        calendar_event_link:
+          calendarResponse.data.hangoutLink || calendarResponse.data.htmlLink,
         appointment_date: scheduledCallInfo.date,
         appointment_time: scheduledCallInfo.time,
         appointment_datetime: eventDate.toISOString(),
@@ -8426,7 +8429,6 @@ async function analyzeTranscriptAndGenerateInsights(
     return { summary: null, commercialSuggestion: null, detailedResult: null };
   }
 }
-
 // Add webhook endpoint for Stripe (handles user_subscriptions directly)
 fastify.post("/webhook/stripe", async (request, reply) => {
   try {
