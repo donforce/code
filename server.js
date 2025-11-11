@@ -3375,7 +3375,7 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                 processing_config: {
                   enable_streaming: true,
                   enable_early_termination: true,
-                  response_delay_threshold: 0.5,
+                  response_delay_threshold: 0.45,
                   enable_realtime_processing: true,
                   enable_instant_response: true,
                 },
@@ -3383,11 +3383,11 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                 interruption_settings: {
                   enabled: true,
                   sensitivity: "low",
-                  min_duration: 0.5,
+                  min_duration: 0.6,
                   max_duration: 2.5,
                   cooldown_period: 0.5,
                   interruption_threshold: 0.6,
-                  silence_duration: 0.4,
+                  silence_duration: 0.6,
                 },
               },
               dynamic_variables: {
