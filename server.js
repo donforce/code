@@ -3373,21 +3373,21 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                 },
                 // 🚀 OPTIMIZADO: Configuraciones para reducir latencia de respuesta
                 processing_config: {
-                  enable_streaming: true, // Habilitar streaming para respuestas más rápidas
-                  enable_early_termination: true, // Terminación temprana para respuestas más ágiles
-                  response_delay_threshold: 0.2, // 🚀 OPTIMIZADO: 0.2 segundos para balance velocidad/calidad
-                  enable_realtime_processing: true, // Procesamiento en tiempo real
-                  enable_instant_response: true, // Respuesta instantánea
+                  enable_streaming: true,
+                  enable_early_termination: true,
+                  response_delay_threshold: 0.5,
+                  enable_realtime_processing: true,
+                  enable_instant_response: true,
                 },
 
                 interruption_settings: {
                   enabled: true,
-                  sensitivity: "low", // Sensibilidad baja para reducir falsos positivos
-                  min_duration: 0.3, // Reducido a 0.3s para respuesta más rápida
-                  max_duration: 2.5, // Aumentado para permitir interrupciones más largas
-                  cooldown_period: 0.5, // Reducido para recuperación más rápida
-                  interruption_threshold: 0.6, // Umbral más alto para interrupciones
-                  silence_duration: 0.2, // Detección de silencio más rápida
+                  sensitivity: "low",
+                  min_duration: 0.5,
+                  max_duration: 2.5,
+                  cooldown_period: 0.5,
+                  interruption_threshold: 0.6,
+                  silence_duration: 0.4,
                 },
               },
               dynamic_variables: {
