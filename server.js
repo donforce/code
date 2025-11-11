@@ -2185,6 +2185,81 @@ fastify.get("/", async (_, reply) => {
 
 const twilioClient = new Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
+const normalizeDigits = (value = "") =>
+  String(value || "").replace(/[^0-9]/g, "");
+
+async function resolveUserOutboundNumber(userId, leadNumber) {
+  if (!userId) return null;
+
+  try {
+    const { data, error } = await supabase
+      .from("twilio_phone_numbers")
+      .select("phone_number, call_prefixes, priority, is_active, status")
+      .eq("user_id", userId)
+      .order("priority", { ascending: true });
+
+    if (error) {
+      console.error(
+        "❌ [OUTBOUND-CALL] Error fetching user routing numbers:",
+        error
+      );
+      return null;
+    }
+
+    if (!data || data.length === 0) {
+      return null;
+    }
+
+    const leadDigits = normalizeDigits(leadNumber);
+    const activeNumbers = data.filter(
+      (entry) =>
+        entry &&
+        (entry.is_active ?? true) &&
+        (entry.status ?? "active") === "active" &&
+        entry.phone_number
+    );
+
+    if (leadDigits) {
+      for (const entry of activeNumbers) {
+        const prefixes = Array.isArray(entry.call_prefixes)
+          ? entry.call_prefixes
+          : [];
+        if (
+          prefixes.some((prefix) =>
+            leadDigits.startsWith(normalizeDigits(prefix))
+          )
+        ) {
+          console.log("[OUTBOUND-CALL] Routing by prefix", {
+            userId,
+            phoneNumber: entry.phone_number,
+            prefixes,
+          });
+          return entry.phone_number;
+        }
+      }
+    }
+
+    const fallback = activeNumbers.find(
+      (entry) => !entry.call_prefixes || entry.call_prefixes.length === 0
+    );
+
+    if (fallback?.phone_number) {
+      console.log("[OUTBOUND-CALL] Using fallback routing number", {
+        userId,
+        phoneNumber: fallback.phone_number,
+      });
+      return fallback.phone_number;
+    }
+  } catch (routingError) {
+    console.error(
+      "❌ [OUTBOUND-CALL] Unexpected error resolving routing number:",
+      routingError
+    );
+  }
+
+  return null;
+}
+
 async function getSignedUrl(options = {}) {
   const { agentId = ELEVENLABS_AGENT_ID } = options;
   const response = await fetch(
@@ -2214,6 +2289,7 @@ fastify.post("/outbound-call", async (request, reply) => {
     client_id,
     user_id,
     language,
+    from_phone_number,
   } = request.body;
 
   console.log("🌐 [OUTBOUND-CALL] Idioma recibido:", language);
@@ -2308,6 +2384,21 @@ fastify.post("/outbound-call", async (request, reply) => {
     });
   } else {
     console.log("[API] Using default Twilio number:", fromPhoneNumber);
+  }
+
+  const resolvedRoutingNumber = await resolveUserOutboundNumber(
+    user_id,
+    number
+  );
+
+  if (resolvedRoutingNumber) {
+    fromPhoneNumber = resolvedRoutingNumber;
+  } else if (from_phone_number) {
+    console.log("[OUTBOUND-CALL] Using provided override number", {
+      userId: user_id,
+      phoneNumber: from_phone_number,
+    });
+    fromPhoneNumber = from_phone_number;
   }
 
   // Create agent_name from first_name and last_name
