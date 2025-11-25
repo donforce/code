@@ -6183,31 +6183,6 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
               // Usar la función reutilizable para programar el retry
               await scheduleVoicemailRetry(callDataBefore);
             }
-
-            // 🆕 ENVIAR WEBHOOK DESPUÉS DE GUARDAR EL ANÁLISIS COMPLETO
-            console.log(
-              "📤 [ANALYSIS] Sending webhook with complete data including transcript_summary_es"
-            );
-
-            // Obtener call_sid para enviar el webhook
-            const { data: callForWebhook, error: webhookError } = await supabase
-              .from("calls")
-              .select("call_sid")
-              .eq("conversation_id", conversation_id)
-              .single();
-
-            if (callForWebhook && callForWebhook.call_sid) {
-              console.log(
-                "📤 [ANALYSIS] Call SID found:",
-                callForWebhook.call_sid
-              );
-              sendCallCompletionData(supabase, callForWebhook.call_sid);
-            } else {
-              console.warn("⚠️ [ANALYSIS] Call SID not found for webhook");
-              if (webhookError) {
-                console.error("❌ [ANALYSIS] Webhook error:", webhookError);
-              }
-            }
           }
         }
       } else {
@@ -6281,12 +6256,64 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
       );
     }
 
+    // 🆕 ENVIAR WEBHOOK DESPUÉS DE CREAR EL EVENTO DE CALENDARIO (si existe)
+    // Esto asegura que los datos de appointment_datetime, appointment_date, y appointment_time
+    // ya estén guardados en la BD cuando se lea para el webhook
+    // Nota: El webhook se envía solo si hubo análisis exitoso (comportamiento original)
+    // pero ahora se envía después del procesamiento de calendario para incluir datos de appointment
+    try {
+      // Verificar si hubo análisis exitoso antes de enviar el webhook
+      const { data: callForWebhookCheck } = await supabase
+        .from("calls")
+        .select(
+          "call_sid, transcript_summary_es, detailed_result, commercial_suggestion"
+        )
+        .eq("conversation_id", conversation_id)
+        .single();
+
+      // Solo enviar webhook si hay análisis (comportamiento original)
+      if (
+        callForWebhookCheck &&
+        (callForWebhookCheck.transcript_summary_es ||
+          callForWebhookCheck.detailed_result ||
+          callForWebhookCheck.commercial_suggestion)
+      ) {
+        console.log(
+          "📤 [WEBHOOK] Sending webhook with complete data including appointment info (if available)"
+        );
+
+        // Obtener call_sid para enviar el webhook
+        const { data: callForWebhook, error: webhookError } = await supabase
+          .from("calls")
+          .select("call_sid")
+          .eq("conversation_id", conversation_id)
+          .single();
+
+        if (callForWebhook && callForWebhook.call_sid) {
+          console.log("📤 [WEBHOOK] Call SID found:", callForWebhook.call_sid);
+          sendCallCompletionData(supabase, callForWebhook.call_sid);
+        } else {
+          console.warn("⚠️ [WEBHOOK] Call SID not found for webhook");
+          if (webhookError) {
+            console.error("❌ [WEBHOOK] Webhook error:", webhookError);
+          }
+        }
+      } else {
+        console.log(
+          "ℹ️ [WEBHOOK] No analysis data found, skipping webhook (original behavior)"
+        );
+      }
+    } catch (webhookCheckError) {
+      console.error(
+        "❌ [WEBHOOK] Error checking for analysis before sending webhook:",
+        webhookCheckError
+      );
+    }
+
     // Note: Worker is released in Twilio status webhook, not here
     console.log(
       "ℹ️ [ELEVENLABS] Call processing complete - worker will be released by Twilio status webhook"
     );
-
-    // Webhook ya enviado después de guardar el análisis completo
 
     return reply.send({
       success: true,
