@@ -39,6 +39,18 @@ async function sendWebhookData(supabase, callData, leadData, userData) {
         error_code: callData.error_code,
         error_message: callData.error_message,
         transcript_summary_es: callData.transcript_summary_es, // 🆕 Resumen de IA en español
+        recording_sid: callData.recording_sid || null, // 🆕 SID de la grabación
+        // 🆕 Información de cita agendada (si existe)
+        appointment:
+          callData.appointment_datetime ||
+          callData.appointment_date ||
+          callData.appointment_time
+            ? {
+                date: callData.appointment_date || null,
+                time: callData.appointment_time || null,
+                datetime: callData.appointment_datetime || null,
+              }
+            : null,
       },
       lead: {
         id: leadData.id,
