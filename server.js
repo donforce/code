@@ -6531,6 +6531,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
         external_id,
         language = "es",
         clasificacion,
+        last_name,
       } = leadData; // Campo clasificacion agregado
 
       // Normalizar auto_call para manejar diferentes tipos de entrada
@@ -6582,6 +6583,17 @@ fastify.post("/api/integration/leads", async (request, reply) => {
         ? cleanPhone
         : `+${cleanPhone}`;
 
+      // Extraer last_name si no viene explícitamente
+      // Si viene last_name en el body, usarlo; si no, extraerlo del campo name
+      let extractedLastName = last_name || null;
+      if (!extractedLastName && name && name.trim().includes(" ")) {
+        // Extraer todo después del primer espacio como last_name
+        const nameParts = name.trim().split(/\s+/);
+        if (nameParts.length > 1) {
+          extractedLastName = nameParts.slice(1).join(" ");
+        }
+      }
+
       processedLeads.push({
         index: i,
         data: {
@@ -6594,6 +6606,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
           external_id: external_id || null,
           language,
           clasificacion: clasificacion || null,
+          last_name: extractedLastName,
         },
       });
     }
@@ -6666,6 +6679,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                   external_id: data.external_id,
                   language: data.language,
                   clasificacion: data.clasificacion,
+                  last_name: data.last_name,
                   updated_at: new Date().toISOString(),
                 })
                 .eq("id", existingLead.id)
@@ -6784,6 +6798,7 @@ fastify.post("/api/integration/leads", async (request, reply) => {
                   external_id: data.external_id,
                   language: data.language,
                   clasificacion: data.clasificacion,
+                  last_name: data.last_name,
                   created_at: new Date().toISOString(),
                   updated_at: new Date().toISOString(),
                 })
