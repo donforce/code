@@ -8208,183 +8208,172 @@ async function analyzeTranscriptAndGenerateInsights(
     const modelName = process.env.OPENAI_MODEL || "gpt-5-mini";
     console.log("🤖 [ANALYSIS] Using model:", modelName);
     console.log("🔑 [ANALYSIS] OpenAI API Key present:", !!OPENAI_API_KEY);
-    console.log("🔍 [ANALYSIS] About to call OpenAI API...");
+    console.log("🔍 [ANALYSIS] About to call OpenAI Responses API...");
+
+    // Preparar instrucciones (equivalente al mensaje system)
+    const instructions = `Eres un asistente experto que analiza el RESULTADO FINAL de llamadas comerciales.
+
+INSTRUCCIONES:
+1. Lee la transcripción completa
+2. Analiza los DATOS ADICIONALES (razón de fin, duración, etc.)
+3. Determina el RESULTADO FINAL basado en lo que REALMENTE PASÓ
+4. Genera un resumen CONCISO que incluya las respuestas a las preguntas enviadas (máximo 250 palabras)
+5. Sugiere el próximo paso comercial (máximo 50 palabras)
+
+IMPORTANTE PARA EL RESUMEN:
+- El resumen DEBE incluir las respuestas específicas que dio el cliente a las preguntas
+- Menciona qué información proporcionó el cliente (presupuesto, ubicación, tiempo, etc.)
+- Incluye detalles relevantes sobre sus necesidades o preferencias
+- Si el cliente no respondió ciertas preguntas, indícalo
+- El resumen debe ser útil para el seguimiento comercial
+
+PREGUNTAS ENVIADAS AL CLIENTE:
+${
+  questions
+    ? questions.map((q, index) => `${index + 1}. ${q.question_text}`).join("\n")
+    : "No se especificaron preguntas personalizadas"
+}
+
+INSTRUCCIONES ESPECÍFICAS:
+- Identifica en la transcripción las respuestas a cada pregunta enviada
+- En el resumen, menciona específicamente qué respondió el cliente a cada pregunta
+- Si el cliente no respondió alguna pregunta, indícalo claramente
+- Organiza la información de manera clara y estructurada
+
+CRITERIOS ESPECÍFICOS PARA CADA RESULTADO:
+
+🎯 "Buzón de Voz" - CUANDO:
+- El resumen menciona "buzón de voz", "voicemail", "mensaje automático"
+- Se detecta un buzón de voz o sistema de mensajes
+- No hubo conversación humana real
+- El cliente no respondió y se detectó buzón de voz
+- La llamada fue interceptada por un sistema de buzón de voz
+- El usuario fue redirigido a un menú telefónico
+- Se conectó a un menú telefónico con opciones para grabar o solicitar retorno de llamada
+- El usuario respondió con números/opciones de menú telefónico
+- Problemas con reconocimiento de entrada en sistema telefónico automático
+- Sistema telefónico automático sin interacción humana real
+
+🎯 "No Contestó" - CUANDO:
+- El teléfono suena pero nadie contesta
+- No hay conversación ni se detecta buzón de voz
+- Duración muy corta sin interacción
+
+🎯 "Línea Ocupada" - CUANDO:
+- Se escucha tono de ocupado
+- end_reason indica línea ocupada
+
+🎯 "Teléfono Inválido" - CUANDO:
+- El número no existe o está mal formado
+- end_reason indica número inválido
+
+🎯 "Llamada Cortada" - CUANDO:
+- La llamada se corta abruptamente
+- end_reason indica desconexión inesperada
+- Duración muy corta sin conversación
+
+🎯 "Cita Agendada" - CUANDO:
+- El resumen menciona que se agendó una cita
+- Se confirma fecha y hora específica
+- El cliente aceptó agendar una reunión
+- Se menciona "agendó", "cita", "reunión" con detalles específicos
+
+🎯 "Cliente No Interesado" - SOLO cuando:
+- El cliente dice EXPLÍCITAMENTE que no está interesado
+- Rechaza la oferta de forma clara
+- Dice "no me interesa", "no quiero", etc.
+
+🎯 "Cliente Interesado" - SOLO cuando:
+- El cliente muestra interés claro
+- Pregunta por detalles, precios, etc.
+- Dice que le interesa pero no agenda
+
+🎯 "Cliente con Objeciones" - SOLO cuando:
+- El cliente está indeciso o tiene dudas
+- Menciona objeciones pero no rechaza completamente
+- Dice "déjame pensarlo", "no estoy seguro", etc.
+- Muestra interés pero no se compromete
+
+🎯 "Conversación Falló" - SOLO cuando:
+- Hubo un fallo técnico en la llamada
+- Problemas de conexión o audio
+- Error en el sistema que impidió la conversación
+- Fallo en la tecnología de la llamada
+
+REGLAS CRÍTICAS DE ALINEACIÓN:
+⚠️ EL RESULTADO DEBE ESTAR ALINEADO CON EL RESUMEN ⚠️
+
+1. PRIORIDAD MÁXIMA: Si el resumen dice "buzón de voz", "mensaje automático", "sistema telefónico automático", "no hubo respuesta del cliente", "no se escuchó ninguna respuesta", "fue detectado como un buzón de voz", "interceptada por un buzón de voz", "menú telefónico", "opciones de menú", "no hubo interacción humana", "no hubo conversación efectiva" → RESULTADO: "Buzón de Voz"
+
+2. Si el resumen dice "se agendó", "cita agendada", "viernes 26 de septiembre", "se confirmó una cita", "aceptó agendar", incluye fecha y hora específica → RESULTADO: "Cita Agendada"
+
+3. Si el resumen dice "no contestó", "no respondió", "se cortó abruptamente", "llamada cortada", "se desconectó", "colgó" → RESULTADO: "Sin Respuesta"
+
+4. Si el cliente proporciona información específica (presupuesto, ubicación, tiempo) → RESULTADO: "Cliente Interesado"
+
+5. Si el cliente muestra dudas o indecisión → RESULTADO: "Cliente con Objeciones"
+
+6. Si el cliente rechaza explícitamente → RESULTADO: "Cliente No Interesado"
+
+⚠️ CRÍTICO: NO uses "Exitosa" si el resumen indica buzón de voz, falta de respuesta o cita agendada.
+
+ANÁLISIS ESPECÍFICO:
+- Lee PRIMERO el resumen para identificar palabras clave
+- El end_reason "Client disconnected: 1005" indica que el cliente colgó
+- Si el cliente colgó durante la conversación, considera el contexto
+- Duración corta (<10 segundos) sin conversación = "No Contestó" (SOLO si no es buzón de voz)
+- Duración media con conversación = analiza el contenido
+- Duración larga con conversación = analiza el resultado final
+
+IMPORTANTE: El RESULTADO debe estar ALINEADO con el RESUMEN.
+Si el resumen dice "buzón de voz", el resultado DEBE ser "Buzón de Voz".
+Si el resumen dice "se agendó una cita", el resultado DEBE ser "Cita Agendada".
+Si el resumen dice "no hubo respuesta", el resultado DEBE ser "Sin Respuesta".
+
+Formato EXACTO:
+RESUMEN:
+[resultado simple y directo de la llamada]
+
+SUGERENCIA:
+[próximo paso específico]
+
+RESULTADO:
+[uno de los resultados posibles listados arriba - DEBE coincidir con el resumen]`;
+
+    // Preparar input (equivalente al mensaje user)
+    const input = `Analiza el resultado de esta llamada:
+
+TRANSCRIPCIÓN:
+${fullTranscript}
+
+RESUMEN ORIGINAL:
+${originalSummary || "No disponible"}
+
+DATOS ADICIONALES:
+${
+  callData
+    ? `
+Razón de fin: ${callData.end_reason || "No disponible"}
+Estado de conexión: ${callData.connection_status || "No disponible"}
+Duración: ${callData.duration || 0} segundos
+Turnos de conversación: ${callData.turn_count || 0}
+Llamada exitosa: ${callData.call_successful || "No disponible"}
+Cita agendada: ${callData.calendar_event_id ? "Sí" : "No"}
+`
+    : "No disponibles"
+}`;
 
     let response;
     try {
-      response = await openai.chat.completions.create({
+      // Usar Responses API en lugar de chat.completions
+      const req = {
         model: modelName,
-        messages: [
-          {
-            role: "system",
-            content: `Eres un asistente experto que analiza el RESULTADO FINAL de llamadas comerciales.
-        
-        INSTRUCCIONES:
-        1. Lee la transcripción completa
-        2. Analiza los DATOS ADICIONALES (razón de fin, duración, etc.)
-        3. Determina el RESULTADO FINAL basado en lo que REALMENTE PASÓ
-        4. Genera un resumen CONCISO que incluya las respuestas a las preguntas enviadas (máximo 250 palabras)
-        5. Sugiere el próximo paso comercial (máximo 50 palabras)
-        
-        IMPORTANTE PARA EL RESUMEN:
-        - El resumen DEBE incluir las respuestas específicas que dio el cliente a las preguntas
-        - Menciona qué información proporcionó el cliente (presupuesto, ubicación, tiempo, etc.)
-        - Incluye detalles relevantes sobre sus necesidades o preferencias
-        - Si el cliente no respondió ciertas preguntas, indícalo
-        - El resumen debe ser útil para el seguimiento comercial
-        
-        PREGUNTAS ENVIADAS AL CLIENTE:
-        ${
-          questions
-            ? questions
-                .map((q, index) => `${index + 1}. ${q.question_text}`)
-                .join("\n")
-            : "No se especificaron preguntas personalizadas"
-        }
-        
-        INSTRUCCIONES ESPECÍFICAS:
-        - Identifica en la transcripción las respuestas a cada pregunta enviada
-        - En el resumen, menciona específicamente qué respondió el cliente a cada pregunta
-        - Si el cliente no respondió alguna pregunta, indícalo claramente
-        - Organiza la información de manera clara y estructurada
-        
-        CRITERIOS ESPECÍFICOS PARA CADA RESULTADO:
-        
-        🎯 "Buzón de Voz" - CUANDO:
-        - El resumen menciona "buzón de voz", "voicemail", "mensaje automático"
-        - Se detecta un buzón de voz o sistema de mensajes
-        - No hubo conversación humana real
-        - El cliente no respondió y se detectó buzón de voz
-        - La llamada fue interceptada por un sistema de buzón de voz
-        - El usuario fue redirigido a un menú telefónico
-        - Se conectó a un menú telefónico con opciones para grabar o solicitar retorno de llamada
-        - El usuario respondió con números/opciones de menú telefónico
-        - Problemas con reconocimiento de entrada en sistema telefónico automático
-        - Sistema telefónico automático sin interacción humana real
-        
-        🎯 "No Contestó" - CUANDO:
-        - El teléfono suena pero nadie contesta
-        - No hay conversación ni se detecta buzón de voz
-        - Duración muy corta sin interacción
-        
-        🎯 "Línea Ocupada" - CUANDO:
-        - Se escucha tono de ocupado
-        - end_reason indica línea ocupada
-        
-        🎯 "Teléfono Inválido" - CUANDO:
-        - El número no existe o está mal formado
-        - end_reason indica número inválido
-        
-        🎯 "Llamada Cortada" - CUANDO:
-        - La llamada se corta abruptamente
-        - end_reason indica desconexión inesperada
-        - Duración muy corta sin conversación
-        
-        🎯 "Cita Agendada" - CUANDO:
-        - El resumen menciona que se agendó una cita
-        - Se confirma fecha y hora específica
-        - El cliente aceptó agendar una reunión
-        - Se menciona "agendó", "cita", "reunión" con detalles específicos
-        
-        🎯 "Cliente No Interesado" - SOLO cuando:
-        - El cliente dice EXPLÍCITAMENTE que no está interesado
-        - Rechaza la oferta de forma clara
-        - Dice "no me interesa", "no quiero", etc.
-        
-        🎯 "Cliente Interesado" - SOLO cuando:
-        - El cliente muestra interés claro
-        - Pregunta por detalles, precios, etc.
-        - Dice que le interesa pero no agenda
-        
-        🎯 "Cliente con Objeciones" - SOLO cuando:
-        - El cliente está indeciso o tiene dudas
-        - Menciona objeciones pero no rechaza completamente
-        - Dice "déjame pensarlo", "no estoy seguro", etc.
-        - Muestra interés pero no se compromete
-        
+        instructions: instructions,
+        input: input,
+      };
 
-        
-        🎯 "Conversación Falló" - SOLO cuando:
-        - Hubo un fallo técnico en la llamada
-        - Problemas de conexión o audio
-        - Error en el sistema que impidió la conversación
-        - Fallo en la tecnología de la llamada
-        
-        REGLAS CRÍTICAS DE ALINEACIÓN:
-        ⚠️ EL RESULTADO DEBE ESTAR ALINEADO CON EL RESUMEN ⚠️
-        
-        1. PRIORIDAD MÁXIMA: Si el resumen dice "buzón de voz", "mensaje automático", "sistema telefónico automático", "no hubo respuesta del cliente", "no se escuchó ninguna respuesta", "fue detectado como un buzón de voz", "interceptada por un buzón de voz", "menú telefónico", "opciones de menú", "no hubo interacción humana", "no hubo conversación efectiva" → RESULTADO: "Buzón de Voz"
-        
-        2. Si el resumen dice "se agendó", "cita agendada", "viernes 26 de septiembre", "se confirmó una cita", "aceptó agendar", incluye fecha y hora específica → RESULTADO: "Cita Agendada"
-        
-        3. Si el resumen dice "no contestó", "no respondió", "se cortó abruptamente", "llamada cortada", "se desconectó", "colgó" → RESULTADO: "Sin Respuesta"
-        
-        4. Si el cliente proporciona información específica (presupuesto, ubicación, tiempo) → RESULTADO: "Cliente Interesado"
-        
-        5. Si el cliente muestra dudas o indecisión → RESULTADO: "Cliente con Objeciones"
-        
-        6. Si el cliente rechaza explícitamente → RESULTADO: "Cliente No Interesado"
-        
-        ⚠️ CRÍTICO: NO uses "Exitosa" si el resumen indica buzón de voz, falta de respuesta o cita agendada.
-        3. Si el cliente dice explícitamente que no está interesado → "Cliente No Interesado"
-        4. Si el cliente muestra interés pero no agenda → "Cliente Interesado"
-        5. Si el cliente está indeciso → "Cliente con Objeciones"
-        6. Duración corta sin conversación ni buzón de voz → "No Contestó"
-        7. Problemas técnicos → "Llamada Fallida"
-        
-        ANÁLISIS ESPECÍFICO:
-        - Lee PRIMERO el resumen para identificar palabras clave
-        - El end_reason "Client disconnected: 1005" indica que el cliente colgó
-        - Si el cliente colgó durante la conversación, considera el contexto
-        - Duración corta (<10 segundos) sin conversación = "No Contestó" (SOLO si no es buzón de voz)
-        - Duración media con conversación = analiza el contenido
-        - Duración larga con conversación = analiza el resultado final
-        
-        IMPORTANTE: El RESULTADO debe estar ALINEADO con el RESUMEN.
-        Si el resumen dice "buzón de voz", el resultado DEBE ser "Buzón de Voz".
-        Si el resumen dice "se agendó una cita", el resultado DEBE ser "Cita Agendada".
-        Si el resumen dice "no hubo respuesta", el resultado DEBE ser "Sin Respuesta".
-        
-        Formato EXACTO:
-        RESUMEN:
-        [resultado simple y directo de la llamada]
-        
-        SUGERENCIA:
-        [próximo paso específico]
-        
-        RESULTADO:
-        [uno de los resultados posibles listados arriba - DEBE coincidir con el resumen]`,
-          },
-
-          {
-            role: "user",
-            content: `Analiza el resultado de esta llamada:
-        
-        TRANSCRIPCIÓN:
-        ${fullTranscript}
-        
-        RESUMEN ORIGINAL:
-        ${originalSummary || "No disponible"}
-        
-        DATOS ADICIONALES:
-        ${
-          callData
-            ? `
-        Razón de fin: ${callData.end_reason || "No disponible"}
-        Estado de conexión: ${callData.connection_status || "No disponible"}
-        Duración: ${callData.duration || 0} segundos
-        Turnos de conversación: ${callData.turn_count || 0}
-        Llamada exitosa: ${callData.call_successful || "No disponible"}
-        Cita agendada: ${callData.calendar_event_id ? "Sí" : "No"}
-        `
-            : "No disponibles"
-        }`,
-          },
-        ],
-        max_completion_tokens: 500,
-        // temperature no soportado por gpt-5-mini (solo acepta valor por defecto 1)
-      });
-      console.log("✅ [ANALYSIS] OpenAI API call successful");
+      response = await openai.responses.create(req);
+      console.log("✅ [ANALYSIS] OpenAI Responses API call successful");
     } catch (apiError) {
       console.error("❌ [ANALYSIS] OpenAI API Error Details:", {
         message: apiError.message,
@@ -8403,63 +8392,38 @@ async function analyzeTranscriptAndGenerateInsights(
       JSON.stringify(response, null, 2)
     );
     console.log("🔍 [ANALYSIS] OpenAI response structure:", {
-      hasChoices: !!response.choices,
-      choicesLength: response.choices?.length || 0,
       responseId: response.id,
-      model: response.model,
-      usage: response.usage,
-      firstChoice: response.choices?.[0]
-        ? {
-            index: response.choices[0].index,
-            finishReason: response.choices[0].finish_reason,
-            hasMessage: !!response.choices[0].message,
-            messageRole: response.choices[0].message?.role,
-            hasContent: !!response.choices[0].message?.content,
-            contentLength: response.choices[0].message?.content?.length || 0,
-            contentPreview:
-              response.choices[0].message?.content?.substring(0, 200) || "N/A",
-            fullContent: response.choices[0].message?.content || null,
-          }
-        : null,
+      hasOutputText: !!response.output_text,
+      outputTextLength: response.output_text?.length || 0,
+      hasOutput: !!response.output,
+      outputType: Array.isArray(response.output)
+        ? "array"
+        : typeof response.output,
+      outputLength: Array.isArray(response.output) ? response.output.length : 0,
+      outputPreview:
+        response.output_text?.substring(0, 200) ||
+        (Array.isArray(response.output) &&
+          response.output[0]?.content?.[0]?.text?.substring(0, 200)) ||
+        "N/A",
     });
 
-    const analysisResult = response.choices[0]?.message?.content?.trim();
-
-    // Verificar finish_reason para detectar problemas
-    const finishReason = response.choices?.[0]?.finish_reason;
-    if (finishReason && finishReason !== "stop") {
-      console.warn("⚠️ [ANALYSIS] Unexpected finish_reason:", finishReason, {
-        reason: finishReason,
-        meaning:
-          finishReason === "length"
-            ? "Response was cut off (max tokens reached)"
-            : finishReason === "content_filter"
-            ? "Content was filtered by OpenAI"
-            : finishReason === "tool_calls"
-            ? "Model requested tool calls"
-            : "Unknown reason",
-      });
-    }
+    // Responses API puede devolver el texto en output_text o en output array
+    const analysisResult =
+      response.output_text?.trim() ||
+      (Array.isArray(response.output) &&
+        response.output[0]?.content?.[0]?.text?.trim()) ||
+      null;
 
     if (!analysisResult || analysisResult.length === 0) {
       console.error("❌ [ANALYSIS] Empty response from OpenAI:", {
-        hasChoices: !!response.choices,
-        choicesLength: response.choices?.length || 0,
-        finishReason: finishReason,
-        hasMessage: !!response.choices?.[0]?.message,
-        hasContent: !!response.choices?.[0]?.message?.content,
-        contentValue: response.choices?.[0]?.message?.content,
-        usage: response.usage,
-        model: response.model,
+        responseId: response.id,
+        hasOutputText: !!response.output_text,
+        outputTextValue: response.output_text,
+        hasOutput: !!response.output,
+        outputValue: response.output,
+        outputType: typeof response.output,
       });
 
-      // Si finish_reason es "length", aumentar max_completion_tokens en el futuro
-      if (finishReason === "length") {
-        console.error(
-          "❌ [ANALYSIS] Response was truncated due to max_completion_tokens limit"
-        );
-      }
-
       return {
         summary: null,
         commercialSuggestion: null,
@@ -8467,50 +8431,41 @@ async function analyzeTranscriptAndGenerateInsights(
       };
     }
 
-    if (analysisResult) {
-      console.log("✅ [ANALYSIS] Analysis completed successfully");
-      console.log("🔍 [ANALYSIS] Raw OpenAI response:", analysisResult);
+    console.log("✅ [ANALYSIS] Analysis completed successfully");
+    console.log("🔍 [ANALYSIS] Raw OpenAI response:", analysisResult);
 
-      // Parse the response to extract summary, commercial suggestion, and detailed result
-      const summaryMatch = analysisResult.match(
-        /RESUMEN:\s*([\s\S]*?)(?=SUGERENCIA:|RESULTADO:|$)/i
-      );
-      const suggestionMatch = analysisResult.match(
-        /SUGERENCIA:\s*([\s\S]*?)(?=RESULTADO:|$)/i
-      );
-      const resultMatch = analysisResult.match(/RESULTADO:\s*([\s\S]*?)$/i);
+    // Parse the response to extract summary, commercial suggestion, and detailed result
+    const summaryMatch = analysisResult.match(
+      /RESUMEN:\s*([\s\S]*?)(?=SUGERENCIA:|RESULTADO:|$)/i
+    );
+    const suggestionMatch = analysisResult.match(
+      /SUGERENCIA:\s*([\s\S]*?)(?=RESULTADO:|$)/i
+    );
+    const resultMatch = analysisResult.match(/RESULTADO:\s*([\s\S]*?)$/i);
 
-      const summary = summaryMatch ? summaryMatch[1].trim() : null;
-      const commercialSuggestion = suggestionMatch
-        ? suggestionMatch[1].trim()
-        : null;
-      const detailedResult = resultMatch ? resultMatch[1].trim() : null;
+    const summary = summaryMatch ? summaryMatch[1].trim() : null;
+    const commercialSuggestion = suggestionMatch
+      ? suggestionMatch[1].trim()
+      : null;
+    const detailedResult = resultMatch ? resultMatch[1].trim() : null;
 
-      console.log("🔍 [ANALYSIS] Summary match:", !!summaryMatch);
-      console.log("🔍 [ANALYSIS] Suggestion match:", !!suggestionMatch);
-      console.log("🔍 [ANALYSIS] Result match:", !!resultMatch);
+    console.log("🔍 [ANALYSIS] Summary match:", !!summaryMatch);
+    console.log("🔍 [ANALYSIS] Suggestion match:", !!suggestionMatch);
+    console.log("🔍 [ANALYSIS] Result match:", !!resultMatch);
 
-      console.log(
-        "📝 [ANALYSIS] Summary length:",
-        summary?.length || 0,
-        "characters"
-      );
-      console.log(
-        "💡 [ANALYSIS] Commercial suggestion length:",
-        commercialSuggestion?.length || 0,
-        "characters"
-      );
-      console.log("🎯 [ANALYSIS] Detailed result:", detailedResult);
+    console.log(
+      "📝 [ANALYSIS] Summary length:",
+      summary?.length || 0,
+      "characters"
+    );
+    console.log(
+      "💡 [ANALYSIS] Commercial suggestion length:",
+      commercialSuggestion?.length || 0,
+      "characters"
+    );
+    console.log("🎯 [ANALYSIS] Detailed result:", detailedResult);
 
-      return { summary, commercialSuggestion, detailedResult };
-    } else {
-      console.log("❌ [ANALYSIS] No analysis result received from OpenAI");
-      return {
-        summary: null,
-        commercialSuggestion: null,
-        detailedResult: null,
-      };
-    }
+    return { summary, commercialSuggestion, detailedResult };
   } catch (error) {
     console.error("❌ [ANALYSIS] Error analyzing transcript:", {
       message: error.message,
