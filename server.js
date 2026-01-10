@@ -6235,16 +6235,15 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
         .eq("conversation_id", conversation_id)
         .single();
 
-      // Solo enviar webhook si hay análisis (comportamiento original)
-      if (
-        callForWebhookCheck &&
-        (callForWebhookCheck.transcript_summary_es ||
-          callForWebhookCheck.detailed_result ||
-          callForWebhookCheck.commercial_suggestion)
-      ) {
-        console.log(
-          "📤 [WEBHOOK] Sending webhook with complete data including appointment info (if available)"
-        );
+      // Enviar webhook siempre que haya call_sid (incluso sin análisis completo)
+      // Esto permite que los webhooks se envíen aunque el análisis falle
+      if (callForWebhookCheck) {
+        console.log("🔍 [WEBHOOK] Call data for webhook check:", {
+          hasCallSid: !!callForWebhookCheck.call_sid,
+          hasTranscriptSummary: !!callForWebhookCheck.transcript_summary_es,
+          hasDetailedResult: !!callForWebhookCheck.detailed_result,
+          hasCommercialSuggestion: !!callForWebhookCheck.commercial_suggestion,
+        });
 
         // Obtener call_sid para enviar el webhook
         const { data: callForWebhook, error: webhookError } = await supabase
@@ -6254,6 +6253,21 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
           .single();
 
         if (callForWebhook && callForWebhook.call_sid) {
+          const hasAnalysis =
+            callForWebhookCheck.transcript_summary_es ||
+            callForWebhookCheck.detailed_result ||
+            callForWebhookCheck.commercial_suggestion;
+
+          if (hasAnalysis) {
+            console.log(
+              "📤 [WEBHOOK] Sending webhook with complete data including appointment info (if available)"
+            );
+          } else {
+            console.log(
+              "📤 [WEBHOOK] Sending webhook without analysis data (analysis may have failed)"
+            );
+          }
+
           console.log("📤 [WEBHOOK] Call SID found:", callForWebhook.call_sid);
           sendCallCompletionData(supabase, callForWebhook.call_sid);
         } else {
@@ -6263,9 +6277,7 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
           }
         }
       } else {
-        console.log(
-          "ℹ️ [WEBHOOK] No analysis data found, skipping webhook (original behavior)"
-        );
+        console.log("ℹ️ [WEBHOOK] No call data found for webhook check");
       }
     } catch (webhookCheckError) {
       console.error(
@@ -8192,12 +8204,20 @@ async function analyzeTranscriptAndGenerateInsights(
       "characters"
     );
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-5-mini",
-      messages: [
-        {
-          role: "system",
-          content: `Eres un asistente experto que analiza el RESULTADO FINAL de llamadas comerciales.
+    // Usar variable de entorno para el modelo, con fallback a gpt-5-mini
+    const modelName = process.env.OPENAI_MODEL || "gpt-5-mini";
+    console.log("🤖 [ANALYSIS] Using model:", modelName);
+    console.log("🔑 [ANALYSIS] OpenAI API Key present:", !!OPENAI_API_KEY);
+    console.log("🔍 [ANALYSIS] About to call OpenAI API...");
+
+    let response;
+    try {
+      response = await openai.chat.completions.create({
+        model: modelName,
+        messages: [
+          {
+            role: "system",
+            content: `Eres un asistente experto que analiza el RESULTADO FINAL de llamadas comerciales.
         
         INSTRUCCIONES:
         1. Lee la transcripción completa
@@ -8334,11 +8354,11 @@ async function analyzeTranscriptAndGenerateInsights(
         
         RESULTADO:
         [uno de los resultados posibles listados arriba - DEBE coincidir con el resumen]`,
-        },
+          },
 
-        {
-          role: "user",
-          content: `Analiza el resultado de esta llamada:
+          {
+            role: "user",
+            content: `Analiza el resultado de esta llamada:
         
         TRANSCRIPCIÓN:
         ${fullTranscript}
@@ -8359,13 +8379,93 @@ async function analyzeTranscriptAndGenerateInsights(
         `
             : "No disponibles"
         }`,
-        },
-      ],
-      max_completion_tokens: 500,
-      // temperature no soportado por gpt-5-mini (solo acepta valor por defecto 1)
+          },
+        ],
+        max_completion_tokens: 500,
+        // temperature no soportado por gpt-5-mini (solo acepta valor por defecto 1)
+      });
+      console.log("✅ [ANALYSIS] OpenAI API call successful");
+    } catch (apiError) {
+      console.error("❌ [ANALYSIS] OpenAI API Error Details:", {
+        message: apiError.message,
+        status: apiError.status,
+        code: apiError.code,
+        type: apiError.type,
+        error: apiError.error,
+        stack: apiError.stack,
+      });
+      throw apiError; // Re-lanzar para que se capture en el catch externo
+    }
+
+    // Log completo de la respuesta para diagnóstico
+    console.log(
+      "🔍 [ANALYSIS] Full OpenAI response:",
+      JSON.stringify(response, null, 2)
+    );
+    console.log("🔍 [ANALYSIS] OpenAI response structure:", {
+      hasChoices: !!response.choices,
+      choicesLength: response.choices?.length || 0,
+      responseId: response.id,
+      model: response.model,
+      usage: response.usage,
+      firstChoice: response.choices?.[0]
+        ? {
+            index: response.choices[0].index,
+            finishReason: response.choices[0].finish_reason,
+            hasMessage: !!response.choices[0].message,
+            messageRole: response.choices[0].message?.role,
+            hasContent: !!response.choices[0].message?.content,
+            contentLength: response.choices[0].message?.content?.length || 0,
+            contentPreview:
+              response.choices[0].message?.content?.substring(0, 200) || "N/A",
+            fullContent: response.choices[0].message?.content || null,
+          }
+        : null,
     });
 
     const analysisResult = response.choices[0]?.message?.content?.trim();
+
+    // Verificar finish_reason para detectar problemas
+    const finishReason = response.choices?.[0]?.finish_reason;
+    if (finishReason && finishReason !== "stop") {
+      console.warn("⚠️ [ANALYSIS] Unexpected finish_reason:", finishReason, {
+        reason: finishReason,
+        meaning:
+          finishReason === "length"
+            ? "Response was cut off (max tokens reached)"
+            : finishReason === "content_filter"
+            ? "Content was filtered by OpenAI"
+            : finishReason === "tool_calls"
+            ? "Model requested tool calls"
+            : "Unknown reason",
+      });
+    }
+
+    if (!analysisResult || analysisResult.length === 0) {
+      console.error("❌ [ANALYSIS] Empty response from OpenAI:", {
+        hasChoices: !!response.choices,
+        choicesLength: response.choices?.length || 0,
+        finishReason: finishReason,
+        hasMessage: !!response.choices?.[0]?.message,
+        hasContent: !!response.choices?.[0]?.message?.content,
+        contentValue: response.choices?.[0]?.message?.content,
+        usage: response.usage,
+        model: response.model,
+      });
+
+      // Si finish_reason es "length", aumentar max_completion_tokens en el futuro
+      if (finishReason === "length") {
+        console.error(
+          "❌ [ANALYSIS] Response was truncated due to max_completion_tokens limit"
+        );
+      }
+
+      return {
+        summary: null,
+        commercialSuggestion: null,
+        detailedResult: null,
+      };
+    }
 
     if (analysisResult) {
       console.log("✅ [ANALYSIS] Analysis completed successfully");
@@ -8412,7 +8512,29 @@ async function analyzeTranscriptAndGenerateInsights(
       };
     }
   } catch (error) {
-    console.error("❌ [ANALYSIS] Error analyzing transcript:", error);
+    console.error("❌ [ANALYSIS] Error analyzing transcript:", {
+      message: error.message,
+      status: error.status,
+      code: error.code,
+      type: error.type,
+      error: error.error,
+      stack: error.stack,
+    });
+
+    // Si es un error de modelo no encontrado, proporcionar sugerencias
+    if (
+      error.status === 404 ||
+      error.code === "model_not_found" ||
+      error.message?.includes("does not exist")
+    ) {
+      console.error(
+        "❌ [ANALYSIS] Modelo no encontrado. Verifica que el modelo especificado existe en OpenAI."
+      );
+      console.error(
+        "❌ [ANALYSIS] Modelos comunes: gpt-4o, gpt-4o-mini, gpt-4-turbo"
+      );
+    }
+
     return { summary: null, commercialSuggestion: null, detailedResult: null };
   }
 }
