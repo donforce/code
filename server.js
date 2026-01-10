@@ -8493,7 +8493,7 @@ async function analyzeTranscriptAndGenerateInsights(
         },
       ],
       max_completion_tokens: 500,
-      temperature: 0.3,
+      // temperature no soportado por gpt-5-mini (solo acepta valor por defecto 1)
     });
 
     const analysisResult = response.choices[0]?.message?.content?.trim();
