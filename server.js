@@ -982,12 +982,10 @@ async function checkGoogleCalendarAvailability(userId) {
     }
 
     if (!calendarSettings?.calendar_enabled) {
-      console.log(`[Calendar] Calendario no habilitado para usuario ${userId}`);
       return { available: false, reason: "Calendar not enabled" };
     }
 
     if (!calendarSettings?.access_token) {
-      console.log(`[Calendar] No hay token de acceso para usuario ${userId}`);
       return { available: false, reason: "No access token" };
     }
 
@@ -1045,7 +1043,6 @@ async function checkGoogleCalendarAvailability(userId) {
         );
         calendarSettings.access_token = credentials.access_token;
       } else {
-        console.log(`[Calendar] Token válido para usuario ${userId}`);
       }
     } catch (tokenError) {
       console.error(
@@ -1168,7 +1165,6 @@ async function getCalendarAvailabilitySummary(userId) {
     console.log(
       "[Calendar][SUMMARY] ===== INICIO DE RESUMEN DE DISPONIBILIDAD ====="
     );
-    console.log(`[Calendar][SUMMARY] Usuario: ${userId}`);
 
     // Obtener configuración del calendario del usuario
     const { data: calendarSettings, error: settingsError } = await supabase
@@ -1254,14 +1250,11 @@ async function getCalendarAvailabilitySummary(userId) {
             })
             .eq("user_id", userId);
           calendarConfig.access_token = credentials.access_token;
-          console.log(`[Calendar][SUMMARY] ✅ Token renovado correctamente.`);
         } else {
-          console.log(`[Calendar][SUMMARY] ❌ No se pudo renovar el token.`);
           return null;
         }
       } else {
         const tokenInfo = await tokenInfoResponse.json();
-        console.log(`[Calendar][SUMMARY] ✅ Token válido. Info:`, tokenInfo);
       }
     } catch (tokenError) {
       console.error(
@@ -1528,9 +1521,6 @@ async function processQueueItem(queueItem, workerId = "unknown") {
         "."
       )}.`;
 
-      console.log("📅 [Calendar] Disponibilidad por defecto en texto:");
-      console.log(defaultText);
-
       availabilityJson = {
         workerId: workerId,
         summary: {
@@ -1610,9 +1600,6 @@ async function processQueueItem(queueItem, workerId = "unknown") {
         .join(", ");
 
       finalText = `Los días y horarios disponibles son ${availabilityText}.`;
-
-      console.log("📅 [Calendar] Disponibilidad en texto:");
-      console.log(finalText);
 
       // Mantener el JSON para ElevenLabs pero no imprimirlo
       availabilityJson = {
@@ -2525,9 +2512,6 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
     script_id,
   } = request.query;
 
-  console.log(`🔊 [TWiML] Received user_voice_id: "${user_voice_id}"`);
-  console.log("📝 [TWiML] Script ID recibido:", script_id);
-
   // 🔍 LOGS DETALLADOS PARA DEBUGGING DE SCRIPT
   console.log("🔍 [SERVER_SCRIPT] All parameters received:", {
     custom_llm_prompt: custom_llm_prompt ? "Present" : "Not present",
@@ -2576,22 +2560,14 @@ fastify.all("/outbound-call-twiml", async (request, reply) => {
           `📝 [TWiML] ⚠️ SCRIPT SOURCE: DEFAULT - No script content found for script_id: ${scriptIdToUse}, using default content`
         );
       }
-    } catch (error) {
-      console.error(`📝 [TWiML] Error fetching script content:`, error);
-    }
+    } catch (error) {}
   } else {
     console.log(
       `📝 [TWiML] ⚠️ SCRIPT SOURCE: HARDCODED - No script_id provided and no DEFAULT_SCRIPT_ID, using hardcoded default content`
     );
   }
 
-  // Log final del script que se enviará a ElevenLabs
-  console.log(`📝 [TWiML] 🎯 FINAL SCRIPT FOR ELEVENLABS:`, {
-    scriptId: scriptIdToUse || "none",
-    promptLength: scriptPrompt?.length || 0,
-    firstMessageLength: scriptFirstMessage?.length || 0,
-    promptPreview: scriptPrompt?.substring(0, 100) + "..." || "none",
-  });
+  // Script configurado para enviar a ElevenLabs
 
   // Función para escapar caracteres especiales en XML
   const escapeXml = (str) => {
@@ -3317,15 +3293,6 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
             // ...
 
             // 🚀 OPTIMIZACIONES TTS APLICADAS PARA VELOCIDAD MÁXIMA
-            console.log(
-              "🚀 [TTS_OPTIMIZATION] Aplicando configuraciones balanceadas velocidad/calidad:"
-            );
-            console.log(
-              "   - streaming_latency: 0.15s (bajo pero con calidad)"
-            );
-            console.log("   - chunk_size: 768 (balanceado)");
-            console.log("   - audio_quality: high (calidad alta)");
-            console.log("   - stability: 0.7 (alta para voz estable)");
             console.log("   - similarity_boost: 0.75 (alto para voz natural)");
             console.log("   - style: 0.4 (moderado para voz natural)");
             console.log("   - use_speaker_boost: true (para claridad)");
@@ -3795,8 +3762,6 @@ Other client data not part of the conversation: {{client_phone}}{{client_email}}
                     break;
 
                   case "conversation_summary":
-                    console.log("📝 [SUMMARY] Conversation completed");
-
                     // Save transcript summary to database
                     if (callSid) {
                       try {
@@ -6247,7 +6212,6 @@ fastify.post("/webhook/elevenlabs", async (request, reply) => {
         // Try to create calendar event (this may fail if calendar not connected)
         await createCalendarEvent(scheduledCallInfo, callData?.[0]);
       } else {
-        console.log("ℹ️ [CALENDAR] No scheduled call detected in webhook data");
       }
     } catch (calendarError) {
       console.error(
@@ -7286,7 +7250,6 @@ async function checkForScheduledCall(webhookData, call) {
       // );
 
       // Get lead information
-      console.log("🔍 [CALENDAR] Lead ID from call:", call.lead_id);
 
       // Check if lead_id exists before querying
       if (!call.lead_id) {
@@ -7303,29 +7266,13 @@ async function checkForScheduledCall(webhookData, call) {
         .single();
 
       if (leadError || !lead) {
-        console.error("❌ [CALENDAR] Error fetching lead:", leadError);
-        console.error("❌ [CALENDAR] Lead data:", lead);
-        console.error("❌ [CALENDAR] Call lead_id:", call.lead_id);
         return null;
       }
 
       const leadData = lead; // .single() devuelve directamente el objeto
 
-      console.log("✅ [CALENDAR] Lead data retrieved:", {
-        leadData: leadData,
-        name: leadData?.name,
-        phone: leadData?.phone,
-        email: leadData?.email,
-        allKeys: leadData ? Object.keys(leadData) : "no leadData",
-      });
-
       // Validar que los datos del lead existen
       if (!leadData.name || !leadData.phone || !leadData.email) {
-        console.error("❌ [CALENDAR] Lead data incomplete:", {
-          name: leadData.name,
-          phone: leadData.phone,
-          email: leadData.email,
-        });
         // Intentar obtener desde to_number si está disponible
         if (call.to_number && !leadData.phone) {
           leadData.phone = call.to_number;
@@ -7350,15 +7297,6 @@ async function checkForScheduledCall(webhookData, call) {
         clientEmail: clientEmail,
       };
 
-      console.log("🎉 [CALENDAR] ===== FINAL RESULT =====");
-      console.log("📅 [CALENDAR] Date:", result.date);
-      console.log("⏰ [CALENDAR] Time:", result.time);
-      console.log("🌍 [CALENDAR] Timezone:", result.timezone);
-      console.log("👤 [CALENDAR] Client Name:", result.clientName);
-      console.log("📞 [CALENDAR] Client Phone:", result.clientPhone);
-      console.log("📧 [CALENDAR] Client Email:", result.clientEmail);
-      console.log("📝 [CALENDAR] Title:", result.title);
-      console.log("📄 [CALENDAR] Description:", result.description);
       console.log(
         "🔍 [CALENDAR] ===== FIN DE BÚSQUEDA DE LLAMADA PROGRAMADA ====="
       );
@@ -7460,8 +7398,6 @@ async function extractDateTimeFromSummary(summary) {
     let extractedDate = null;
     let extractedTime = null;
 
-    console.log("🔍 [CALENDAR][EXTRACT] Searching for date patterns...");
-
     // Extract date
     for (const datePattern of datePatterns) {
       const matches = [...text.matchAll(datePattern.pattern)];
@@ -7486,51 +7422,23 @@ async function extractDateTimeFromSummary(summary) {
       }
     }
 
-    console.log("🔍 [CALENDAR][EXTRACT] Searching for time patterns...");
-
     // Extract time
     for (const timePattern of timePatterns) {
       const matches = [...text.matchAll(timePattern.pattern)];
       if (matches.length > 0) {
         const match = matches[0];
-        console.log(
-          `⏰ [CALENDAR][EXTRACT] Time pattern found: ${timePattern.type}`,
-          match
-        );
 
         extractedTime = parseTimeFromMatch(match, timePattern.type);
         if (extractedTime) {
-          console.log(
-            `✅ [CALENDAR][EXTRACT] Time extracted: ${extractedTime}`
-          );
           break;
         } else {
-          console.log(
-            `❌ [CALENDAR][EXTRACT] Failed to parse time from pattern: ${timePattern.type}`
-          );
         }
       }
     }
 
     if (!extractedDate || !extractedTime) {
-      console.log(
-        "❌ [CALENDAR][EXTRACT] Could not extract complete date/time information"
-      );
-      console.log("📅 [CALENDAR][EXTRACT] Extracted date:", extractedDate);
-      console.log("⏰ [CALENDAR][EXTRACT] Extracted time:", extractedTime);
-      console.log(
-        "🔍 [CALENDAR][EXTRACT] ===== FIN DE EXTRACCIÓN DE FECHA/HORA (INCOMPLETA) ====="
-      );
       return null;
     }
-
-    console.log(
-      "✅ [CALENDAR][EXTRACT] Successfully extracted date and time:",
-      {
-        date: extractedDate,
-        time: extractedTime,
-      }
-    );
 
     const result = {
       date: extractedDate,
@@ -7541,20 +7449,8 @@ async function extractDateTimeFromSummary(summary) {
       attendees: [],
     };
 
-    console.log("🎉 [CALENDAR][EXTRACT] ===== RESULTADO FINAL =====");
-    console.log("📅 [CALENDAR][EXTRACT] Date:", result.date);
-    console.log("⏰ [CALENDAR][EXTRACT] Time:", result.time);
-    console.log("🌍 [CALENDAR][EXTRACT] Timezone:", result.timezone);
-    console.log(
-      "🔍 [CALENDAR][EXTRACT] ===== FIN DE EXTRACCIÓN DE FECHA/HORA ====="
-    );
-
     return result;
   } catch (error) {
-    console.error("❌ [CALENDAR][EXTRACT] Error extracting date/time:", error);
-    console.log(
-      "🔍 [CALENDAR][EXTRACT] ===== FIN DE EXTRACCIÓN DE FECHA/HORA (ERROR) ====="
-    );
     return null;
   }
 }
@@ -7689,7 +7585,6 @@ function parseDateFromMatch(match, type) {
         return null;
     }
   } catch (error) {
-    console.error("❌ [CALENDAR] Error parsing date:", error);
     return null;
   }
 }
@@ -7780,7 +7675,6 @@ function parseTimeFromMatch(match, type) {
         return null;
     }
   } catch (error) {
-    console.error("❌ [CALENDAR] Error parsing time:", error);
     return null;
   }
 }
@@ -7819,8 +7713,6 @@ function getMonthNumber(monthName) {
 // Function to create calendar event
 async function createCalendarEvent(scheduledCallInfo, call) {
   try {
-    console.log("📅 [CALENDAR] Creating calendar event...");
-
     // Get user calendar settings
     const { data: calendarSettings, error: settingsError } = await supabase
       .from("user_calendar_settings")
@@ -7843,7 +7735,6 @@ async function createCalendarEvent(scheduledCallInfo, call) {
     const calendarConfig = calendarSettings[0];
 
     if (!calendarConfig.calendar_enabled) {
-      console.log("ℹ️ [CALENDAR] Calendar not enabled for user:", call.user_id);
       return;
     }
 
@@ -7860,7 +7751,6 @@ async function createCalendarEvent(scheduledCallInfo, call) {
       );
 
       if (!tokenInfoResponse.ok) {
-        console.log("🔄 [CALENDAR] Token expired, refreshing...");
         const { google } = await import("googleapis");
         const oauth2Client = new google.auth.OAuth2(
           process.env.GOOGLE_CLIENT_ID,
@@ -7875,7 +7765,6 @@ async function createCalendarEvent(scheduledCallInfo, call) {
         const { credentials } = await oauth2Client.refreshAccessToken();
 
         if (!credentials.access_token) {
-          console.error("❌ [CALENDAR] Failed to refresh token");
           return;
         }
 
@@ -7891,10 +7780,8 @@ async function createCalendarEvent(scheduledCallInfo, call) {
           .eq("user_id", call.user_id);
 
         calendarConfig.access_token = credentials.access_token;
-        console.log("✅ [CALENDAR] Token refreshed successfully");
       }
     } catch (tokenError) {
-      console.error("❌ [CALENDAR] Error refreshing token:", tokenError);
       return;
     }
 
@@ -7917,8 +7804,6 @@ async function createCalendarEvent(scheduledCallInfo, call) {
       calendarConfig.calendar_timezone ||
       "America/New_York";
 
-    console.log("🔍 [CALENDAR] User timezone:", userTimeZone);
-
     const dateTimeString = `${scheduledCallInfo.date}T${scheduledCallInfo.time}:00`;
 
     // Descomponer la fecha y hora para evitar ambigüedad con zonas horarias locales
@@ -7935,13 +7820,6 @@ async function createCalendarEvent(scheduledCallInfo, call) {
 
     const startDateTime = formatDateForGoogleCalendar(eventDate);
     const endDateTime = formatDateForGoogleCalendar(endDate);
-
-    console.log("🔍 [CALENDAR] Date calculations:", {
-      originalDate: `${scheduledCallInfo.date}T${scheduledCallInfo.time}`,
-      userTimeZone: userTimeZone,
-      startDateTimeFormatted: startDateTime,
-      endDateTimeFormatted: endDateTime,
-    });
 
     // CORREGIDO: Usar el email real del cliente como invitado
     const attendees = [];
@@ -7978,15 +7856,6 @@ async function createCalendarEvent(scheduledCallInfo, call) {
         },
       },
     };
-
-    console.log("📅 [CALENDAR] Creating event:", {
-      title: event.summary,
-      start: event.start.dateTime,
-      end: event.end.dateTime,
-      timezone: userTimeZone,
-      attendees: event.attendees.length,
-      description: event.description,
-    });
 
     const calendarResponse = await calendar.events.insert({
       calendarId: "primary",
@@ -9514,12 +9383,6 @@ fastify.post("/api/leads/unmark-invalid-phone", async (request, reply) => {
 // Twilio recording status callback endpoint
 fastify.post("/twilio-recording-status", async (request, reply) => {
   try {
-    console.log("🎙️ [TWILIO RECORDING] Recording status callback received");
-    console.log(
-      "🎙️ [TWILIO RECORDING] Body:",
-      JSON.stringify(request.body, null, 2)
-    );
-
     const {
       CallSid,
       RecordingSid,
@@ -9532,22 +9395,11 @@ fastify.post("/twilio-recording-status", async (request, reply) => {
     } = request.body;
 
     if (!CallSid || !RecordingSid) {
-      console.error("❌ [TWILIO RECORDING] CallSid and RecordingSid required");
+      // CallSid and RecordingSid required
       return reply
         .code(400)
         .send({ error: "CallSid and RecordingSid required" });
     }
-
-    console.log("🎙️ [TWILIO RECORDING] Processing recording:", {
-      CallSid,
-      RecordingSid,
-      RecordingUrl,
-      RecordingDuration,
-      RecordingStatus,
-      RecordingChannels,
-      RecordingSource,
-      AccountSid,
-    });
 
     // Verificar si la grabación viene de una subcuenta
     let isFromSubaccount = false;
@@ -9771,58 +9623,20 @@ async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
     // callData es un array, tomar el primer elemento
     const call = callData && callData.length > 0 ? callData[0] : null;
 
-    console.log(`🎙️ [RECORDING DOWNLOAD] Call data from DB for ${callSid}:`, {
-      callDataLength: callData ? callData.length : 0,
-      call: call
-        ? {
-            user_id: call.user_id,
-            users: call.users
-              ? {
-                  twilio_subaccount_sid: call.users.twilio_subaccount_sid
-                    ? call.users.twilio_subaccount_sid.substring(0, 10) + "..."
-                    : null,
-                  has_twilio_auth_token: !!call.users.twilio_auth_token,
-                  auth_token_length: call.users.twilio_auth_token
-                    ? call.users.twilio_auth_token.length
-                    : 0,
-                }
-              : null,
-          }
-        : null,
-    });
-
     if (call?.users?.twilio_subaccount_sid && call?.users?.twilio_auth_token) {
       // Usar las credenciales de la subcuenta del usuario
       accountSid = call.users.twilio_subaccount_sid;
       authToken = call.users.twilio_auth_token;
       twilioClientToUse = new Twilio(accountSid, authToken);
 
-      console.log(
-        `🎙️ [RECORDING DOWNLOAD] Using user's subaccount for call ${callSid}:`,
-        {
-          userId: call.user_id,
-          subaccountSid: accountSid,
-          hasAuthToken: !!authToken,
-          authTokenLength: authToken ? authToken.length : 0,
-        }
-      );
+      // Using user's subaccount
     } else {
-      console.log(
-        `🎙️ [RECORDING DOWNLOAD] Using main account for call ${callSid}`
-      );
+      // Using main account
     }
 
     // Usar el cliente correcto para obtener la grabación con autenticación
     const recording = await twilioClientToUse.recordings(recordingSid).fetch();
     const extension = recording.mediaFormat || "wav"; // fallback
-
-    console.log(`🎙️ [RECORDING DOWNLOAD] Recording info for ${callSid}:`, {
-      recordingSid,
-      accountSid,
-      recordingUri: recording.uri,
-      mediaFormat: recording.mediaFormat,
-      extension,
-    });
 
     // Usar la URL original que viene de Twilio
     const actualRecordingUrl = `https://api.twilio.com${recording.uri.replace(
@@ -9830,29 +9644,12 @@ async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
       `.${extension}`
     )}`;
 
-    console.log(`🎙️ [RECORDING DOWNLOAD] Using URL: ${actualRecordingUrl}`);
-
-    console.log(
-      `🎙️ [RECORDING DOWNLOAD] Attempting download with credentials:`,
-      {
-        accountSid: accountSid.substring(0, 10) + "...",
-        authTokenLength: authToken.length,
-        url: actualRecordingUrl,
-      }
-    );
-
     const response = await fetch(actualRecordingUrl, {
       headers: {
         Authorization:
           "Basic " +
           Buffer.from(`${accountSid}:${authToken}`).toString("base64"),
       },
-    });
-
-    console.log(`🎙️ [RECORDING DOWNLOAD] Download response:`, {
-      status: response.status,
-      statusText: response.statusText,
-      ok: response.ok,
     });
 
     if (!response.ok) {
@@ -9863,10 +9660,6 @@ async function downloadAndStoreRecording(recordingUrl, callSid, recordingSid) {
 
     const audioBuffer = await response.arrayBuffer();
     const audioData = Buffer.from(audioBuffer);
-
-    console.log(
-      `🎙️ [RECORDING DOWNLOAD] Downloaded ${audioData.length} bytes for call ${callSid}`
-    );
 
     // Generar nombre único para el archivo
     const fileName = `recordings/${callSid}_${recordingSid}.${extension}`;
