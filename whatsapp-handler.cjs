@@ -1778,7 +1778,7 @@ async function sendWhatsAppMetaEvents(
         {
           event_name: eventName,
           event_time: currentTime,
-          event_id: `whatsapp-${conversation.id}-${eventName}-${Date.now()}`,
+          event_id: conversation.id, // ID de la conversación
           action_source: "messaging",
           event_source_url: "https://orquest-ai.com/",
           user_data: {
@@ -1817,7 +1817,7 @@ async function sendWhatsAppMetaEvents(
     // Enviar a cada integración de Meta
     const metaPromises = integrations.map(async (integration) => {
       try {
-        const metaUrl = `https://graph.facebook.com/v18.0/${integration.meta_pixel_id}/events?access_token=${integration.meta_access_token}`;
+        const metaUrl = `https://graph.facebook.com/v20.0/${integration.meta_pixel_id}/events?access_token=${integration.meta_access_token}`;
 
         const response = await fetch(metaUrl, {
           method: "POST",

@@ -394,15 +394,15 @@ async function sendMetaEvents(supabase, callData, leadData, userData) {
     // Identificador externo: ID de la BD del lead (sin hash) - +28% calidad
     userDataPayload.external_id = leadData.id; // UUID del lead en nuestra BD
 
-    // Generar event_id único una sola vez
-    const uniqueEventId = `${leadData.id}-${eventName}-${Date.now()}`;
+    // event_id es el ID de la llamada
+    const callEventId = callData.id || callData.call_sid;
 
     const metaPayload = {
       data: [
         {
           event_name: eventName,
           event_time: validEventTime, // Timestamp en formato Unix (validado)
-          event_id: uniqueEventId, // Agregar timestamp para unicidad
+          event_id: callEventId, // ID de la llamada
           action_source: "phone_call",
           event_source_url: "https://orquest-ai.com/", // URL requerida para algunos eventos
           user_data: userDataPayload,
@@ -447,7 +447,7 @@ async function sendMetaEvents(supabase, callData, leadData, userData) {
         event_name: eventName,
         event_time: validEventTime,
         event_time_readable: new Date(validEventTime * 1000).toISOString(),
-        event_id: uniqueEventId,
+        event_id: callEventId,
         user_data: userDataPayload,
         user_data_keys: Object.keys(userDataPayload),
         lead_data: {
@@ -474,7 +474,7 @@ async function sendMetaEvents(supabase, callData, leadData, userData) {
           user_id: userData.id,
           webhook_integration_id: integration.id,
           webhook_name: `${integration.name} (Meta Pixel)`,
-          webhook_url: `https://graph.facebook.com/v18.0/${integration.meta_pixel_id}/events`,
+          webhook_url: `https://graph.facebook.com/v20.0/${integration.meta_pixel_id}/events`,
           call_id: callData.id,
           call_sid: callData.call_sid,
           lead_id: leadData.id,
@@ -547,7 +547,7 @@ async function sendMetaEvents(supabase, callData, leadData, userData) {
           JSON.stringify(metaPayload, null, 2)
         );
 
-        const metaUrl = `https://graph.facebook.com/v18.0/${integration.meta_pixel_id}/events?access_token=${integration.meta_access_token}`;
+        const metaUrl = `https://graph.facebook.com/v20.0/${integration.meta_pixel_id}/events?access_token=${integration.meta_access_token}`;
 
         // Enviar request con timeout
         const controller = new AbortController();
