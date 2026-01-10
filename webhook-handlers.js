@@ -277,15 +277,75 @@ async function sendMetaEvents(supabase, callData, leadData, userData) {
       `[META] Found ${integrations.length} active Meta integration(s) for user ${userData.id}`
     );
 
-    // Determinar el evento basado en el resultado de la llamada
-    let eventName = "Lead";
-    if (callData.result === "success") {
-      eventName = "Lead";
-    } else if (callData.result === "not_answered") {
-      eventName = "Lead";
-    } else if (callData.result === "failed") {
-      eventName = "Lead";
+    // Determinar el evento y valor basado en detailed_result para optimización de campañas
+    // Usar detailed_result si está disponible, sino usar result
+    const detailedResult =
+      callData.detailed_result || callData.result || "unknown";
+
+    let eventName = "Lead"; // Por defecto
+    let eventValue = 0; // Valor del evento para optimización
+    let shouldSendEvent = true; // Si debemos enviar el evento
+
+    // Mapear detailed_result a eventos de Meta para mejor optimización
+    // Usando eventos estándar recomendados por Meta para optimización de campañas
+    switch (detailedResult) {
+      case "Cita Agendada":
+        // Schedule es el evento perfecto para citas agendadas (Booking/Appointment)
+        eventName = "Schedule";
+        eventValue = 100; // Alto valor - conversión principal
+        break;
+
+      case "Cliente Interesado":
+        // CompleteRegistration indica que el cliente completó un paso importante (mostró interés)
+        eventName = "CompleteRegistration";
+        eventValue = 50; // Valor medio-alto - lead calificado
+        break;
+
+      case "Cliente con Objeciones":
+        // Lead estándar para leads con potencial pero que necesitan seguimiento
+        eventName = "Lead";
+        eventValue = 25; // Valor bajo-medio
+        break;
+
+      case "Conversación Exitosa":
+        // Contact es para contacto efectivo entre cliente y negocio
+        eventName = "Contact";
+        eventValue = 30; // Valor medio
+        break;
+
+      case "Cliente No Interesado":
+      case "Buzón de Voz":
+      case "No Contestó":
+      case "Sin Respuesta":
+      case "Llamada Cortada":
+      case "Línea Ocupada":
+      case "Teléfono Inválido":
+      case "Conversación Falló":
+        // No enviar eventos de baja calidad para no contaminar la optimización
+        shouldSendEvent = false;
+        console.log(
+          `[META] Skipping event for low-quality result: ${detailedResult}`
+        );
+        break;
+
+      default:
+        // Para otros casos (success básico, etc.), enviar Lead estándar
+        eventName = "Lead";
+        eventValue = 10; // Valor bajo - lead básico
+        break;
     }
+
+    // Si no debemos enviar el evento, salir temprano
+    if (!shouldSendEvent) {
+      console.log(
+        `[META] Not sending event for result: ${detailedResult} (low quality)`
+      );
+      return;
+    }
+
+    console.log(
+      `[META] Event mapping - Result: "${detailedResult}" → Event: "${eventName}" (Value: ${eventValue})`
+    );
 
     // Preparar el payload de Meta Events
     // Validar que event_time no esté en el futuro (Meta rechaza eventos > 7 días en el futuro o > 1 hora en el pasado)
@@ -311,30 +371,96 @@ async function sendMetaEvents(supabase, callData, leadData, userData) {
       }
     }
 
+    // Construir user_data y limpiar campos undefined (Meta rechaza campos undefined)
+    const userDataPayload = {};
+
+    // Datos básicos (hasheados)
+    if (leadData.email) {
+      userDataPayload.em = hashEmail(leadData.email);
+    }
+    if (leadData.phone) {
+      userDataPayload.ph = hashPhone(leadData.phone);
+    }
+
+    // Nombre y apellido (hash) - +15% calidad cada uno
+    // first_name viene del campo 'name' en la BD
+    if (leadData.name) {
+      userDataPayload.fn = hashEmail(leadData.name.split(" ")[0]); // Primera palabra del nombre
+    }
+    if (leadData.last_name) {
+      userDataPayload.ln = hashEmail(leadData.last_name);
+    }
+
+    // Identificador externo: ID de la BD del lead (sin hash) - +28% calidad
+    userDataPayload.external_id = leadData.id; // UUID del lead en nuestra BD
+
+    // Generar event_id único una sola vez
+    const uniqueEventId = `${leadData.id}-${eventName}-${Date.now()}`;
+
     const metaPayload = {
       data: [
         {
           event_name: eventName,
           event_time: validEventTime, // Timestamp en formato Unix (validado)
-          event_id: `${leadData.id}-${eventName}-${Date.now()}`, // Agregar timestamp para unicidad
+          event_id: uniqueEventId, // Agregar timestamp para unicidad
           action_source: "phone_call",
           event_source_url: "https://orquest-ai.com/", // URL requerida para algunos eventos
-          user_data: {
-            em: leadData.email ? hashEmail(leadData.email) : undefined,
-            ph: leadData.phone ? hashPhone(leadData.phone) : undefined,
-            // Remover lead_id de user_data (no es estándar de Meta)
-          },
+          user_data: userDataPayload,
           custom_data: {
+            // Valor del evento para optimización de campañas
+            value: eventValue,
+            currency: "USD", // O configurable por usuario
+
+            // Información del lead
             lead_event_source: "OAI",
             event_source: "Orquesta",
+            lead_id: leadData.id,
+
+            // Métricas de la llamada
             call_duration: callData.duration || 0,
             call_result: callData.result || "unknown",
+            detailed_result: detailedResult, // Resultado detallado para análisis
             call_status: callData.status || "unknown",
-            lead_id: leadData.id, // Mover lead_id a custom_data
+
+            // Calidad del lead (para análisis avanzado)
+            lead_quality:
+              detailedResult === "Cita Agendada"
+                ? "high"
+                : detailedResult === "Cliente Interesado"
+                ? "medium-high"
+                : detailedResult === "Cliente con Objeciones"
+                ? "medium"
+                : detailedResult === "Conversación Exitosa"
+                ? "medium-low"
+                : "low",
           },
         },
       ],
     };
+
+    // Logging detallado del payload completo antes de enviarlo
+    console.log(
+      `[META] 📤 Sending event payload for call ${
+        callData.call_sid || callData.id
+      }:`,
+      {
+        event_name: eventName,
+        event_time: validEventTime,
+        event_time_readable: new Date(validEventTime * 1000).toISOString(),
+        event_id: uniqueEventId,
+        user_data: userDataPayload,
+        user_data_keys: Object.keys(userDataPayload),
+        lead_data: {
+          id: leadData.id,
+          name: leadData.name,
+          last_name: leadData.last_name || "N/A",
+          email: leadData.email ? "***" : "N/A",
+          phone: leadData.phone ? "***" : "N/A",
+        },
+        custom_data_value: eventValue,
+        detailed_result: detailedResult,
+      }
+    );
 
     // 🆕 FUNCIÓN PARA LOGGING ASÍNCRONO DE META EVENTS
     const logMetaEvent = async (
@@ -411,10 +537,14 @@ async function sendMetaEvents(supabase, callData, leadData, userData) {
 
       try {
         console.log(
-          `[META] Sending event to pixel ${integration.meta_pixel_id} for integration: ${integration.name}`
+          `[META] 📤 Sending event to pixel ${integration.meta_pixel_id} for integration: ${integration.name}`
         );
         console.log(
           `[META] Integration ID: ${integration.id}, User ID: ${userData.id}`
+        );
+        console.log(
+          `[META] 📋 Full payload being sent:`,
+          JSON.stringify(metaPayload, null, 2)
         );
 
         const metaUrl = `https://graph.facebook.com/v18.0/${integration.meta_pixel_id}/events?access_token=${integration.meta_access_token}`;
@@ -439,9 +569,16 @@ async function sendMetaEvents(supabase, callData, leadData, userData) {
         if (response.ok) {
           const result = JSON.parse(responseBody);
           console.log(
-            `[META] Successfully sent event to pixel ${integration.meta_pixel_id}:`,
+            `[META] ✅ Successfully sent event to pixel ${integration.meta_pixel_id}:`,
             result
           );
+          console.log(`[META] 📊 Event details:`, {
+            event_name: eventName,
+            events_received: result.events_received,
+            fbtrace_id: result.fbtrace_id,
+            pixel_id: integration.meta_pixel_id,
+            note: "Events may take a few minutes to appear in Meta Events Manager",
+          });
 
           // 🆕 LOGGING ASÍNCRONO - No esperar respuesta
           const executionTime = Date.now() - startTime;

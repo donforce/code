@@ -2,6 +2,7 @@
 const twilio = require("twilio"); // Or, for ESM: import twilio from "twilio";
 const OpenAI = require("openai");
 const { createClient } = require("@supabase/supabase-js");
+const crypto = require("crypto");
 require("dotenv").config();
 
 // Configuración de OpenAI
@@ -620,6 +621,24 @@ async function generateAIResponse(supabase, userMessage, conversation) {
     // Importar tools
     const tools = require("./whatsapp-tools.cjs");
 
+    // Obtener datos del usuario (necesario para eventos de Meta)
+    let userData = null;
+    if (conversation.user_id) {
+      try {
+        const { data: user, error: userError } = await supabase
+          .from("users")
+          .select("id, email, first_name, last_name")
+          .eq("id", conversation.user_id)
+          .single();
+
+        if (user && !userError) {
+          userData = user;
+        }
+      } catch (error) {
+        console.warn("⚠️ [OPENAI] Error obteniendo datos del usuario:", error);
+      }
+    }
+
     // Obtener datos del LEAD con el que se está generando la conversación
     let leadData = null;
     let leadContext = "";
@@ -633,6 +652,7 @@ async function generateAIResponse(supabase, userMessage, conversation) {
             `
             id,
             name,
+            last_name,
             phone,
             email,
             source,
@@ -943,6 +963,27 @@ POLÍTICA DE RESPUESTA:
         leadData.name || "Cliente"
       );
     }
+
+    // 🆕 Detectar eventos para Meta y enviarlos
+    // Ejecutar de forma asíncrona para no bloquear la respuesta
+    setImmediate(async () => {
+      try {
+        await sendWhatsAppMetaEvents(
+          supabase,
+          finalResponse,
+          conversation,
+          leadData,
+          userData,
+          BOOKING_LINK
+        );
+      } catch (metaError) {
+        console.error(
+          "❌ [WHATSAPP META] Error sending Meta events:",
+          metaError
+        );
+      }
+    });
+
     return finalResponse;
   } catch (error) {
     console.error("❌ [OPENAI] Error (Responses):", error);
@@ -1649,6 +1690,184 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
       error: error.message,
     };
   }
+}
+
+// 🆕 Función para enviar eventos a Meta desde WhatsApp
+async function sendWhatsAppMetaEvents(
+  supabase,
+  messageContent,
+  conversation,
+  leadData,
+  userData,
+  bookingLink
+) {
+  try {
+    // Solo enviar si hay lead y usuario
+    if (!leadData || !userData) {
+      return;
+    }
+
+    // Obtener integraciones con Meta Events activas
+    const { data: integrations, error } = await supabase
+      .from("webhook_integrations")
+      .select("*")
+      .eq("user_id", userData.id)
+      .eq("is_active", true)
+      .eq("include_meta_events", true)
+      .not("meta_access_token", "is", null)
+      .not("meta_pixel_id", "is", null);
+
+    if (error || !integrations || integrations.length === 0) {
+      return; // No hay integraciones de Meta, salir silenciosamente
+    }
+
+    // Detectar si se envió el link de booking
+    const bookingLinkSent = messageContent.includes(bookingLink);
+
+    // Detectar interés (palabras clave que indican interés)
+    const interestKeywords = [
+      "interesado",
+      "me interesa",
+      "quiero",
+      "precio",
+      "costo",
+      "cuánto",
+      "información",
+      "demo",
+      "agendar",
+      "cita",
+      "reunión",
+      "contratar",
+      "servicio",
+      "producto",
+    ];
+    const messageLower = messageContent.toLowerCase();
+    const hasInterest = interestKeywords.some((keyword) =>
+      messageLower.includes(keyword)
+    );
+
+    let eventName = null;
+    let eventValue = 0;
+
+    // Determinar evento basado en detección
+    if (bookingLinkSent) {
+      // Si se envió el link, es Schedule (cita agendada)
+      eventName = "Schedule";
+      eventValue = 100;
+      console.log(
+        `[WHATSAPP META] 📅 Detected booking link sent → Schedule event`
+      );
+    } else if (hasInterest) {
+      // Si hay interés pero no se envió link, es CompleteRegistration
+      eventName = "CompleteRegistration";
+      eventValue = 50;
+      console.log(
+        `[WHATSAPP META] ✅ Detected interest → CompleteRegistration event`
+      );
+    }
+
+    // Si no hay evento que enviar, salir
+    if (!eventName) {
+      return;
+    }
+
+    // Preparar payload de Meta
+    const currentTime = Math.floor(Date.now() / 1000);
+    const metaPayload = {
+      data: [
+        {
+          event_name: eventName,
+          event_time: currentTime,
+          event_id: `whatsapp-${conversation.id}-${eventName}-${Date.now()}`,
+          action_source: "messaging",
+          event_source_url: "https://orquest-ai.com/",
+          user_data: {
+            // Datos básicos (hasheados)
+            ...(leadData.email && leadData.email.trim()
+              ? { em: hashEmail(leadData.email) }
+              : {}),
+            ...(leadData.phone && leadData.phone.trim()
+              ? { ph: hashPhone(leadData.phone) }
+              : {}),
+
+            // Nombre y apellido (hash) - +15% calidad cada uno
+            // first_name viene del campo 'name' en la BD
+            ...(leadData.name
+              ? { fn: hashEmail(leadData.name.split(" ")[0]) } // Primera palabra del nombre
+              : {}),
+            ...(leadData.last_name
+              ? { ln: hashEmail(leadData.last_name) }
+              : {}),
+
+            // Identificador externo: ID de la BD del lead (sin hash) - +28% calidad
+            external_id: leadData.id, // UUID del lead en nuestra BD
+          },
+          custom_data: {
+            value: eventValue,
+            currency: "USD",
+            messaging_channel: "whatsapp",
+            conversation_id: conversation.id,
+            lead_id: leadData.id,
+            event_source: "OrquestAI WhatsApp",
+          },
+        },
+      ],
+    };
+
+    // Enviar a cada integración de Meta
+    const metaPromises = integrations.map(async (integration) => {
+      try {
+        const metaUrl = `https://graph.facebook.com/v18.0/${integration.meta_pixel_id}/events?access_token=${integration.meta_access_token}`;
+
+        const response = await fetch(metaUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(metaPayload),
+        });
+
+        const responseBody = await response.text();
+
+        if (response.ok) {
+          const result = JSON.parse(responseBody);
+          console.log(
+            `[WHATSAPP META] ✅ Event ${eventName} sent to pixel ${integration.meta_pixel_id}:`,
+            result
+          );
+        } else {
+          console.error(
+            `[WHATSAPP META] ❌ Failed to send event to pixel ${integration.meta_pixel_id}:`,
+            response.status,
+            responseBody
+          );
+        }
+      } catch (err) {
+        console.error(
+          `[WHATSAPP META] ❌ Error sending event to pixel ${integration.meta_pixel_id}:`,
+          err.message
+        );
+      }
+    });
+
+    await Promise.allSettled(metaPromises);
+  } catch (error) {
+    console.error("[WHATSAPP META] Error in sendWhatsAppMetaEvents:", error);
+  }
+}
+
+// Función auxiliar para hashear email
+function hashEmail(email) {
+  return crypto
+    .createHash("sha256")
+    .update(email.toLowerCase().trim())
+    .digest("hex");
+}
+
+// Función auxiliar para hashear teléfono
+function hashPhone(phone) {
+  const cleanPhone = phone.replace(/\D/g, "");
+  return crypto.createHash("sha256").update(cleanPhone).digest("hex");
 }
 
 console.log("📱 [WHATSAPP] Módulo de WhatsApp cargado exitosamente");
