@@ -9,7 +9,10 @@ import { Resend } from "resend";
 import os from "os";
 import { performance } from "perf_hooks";
 import crypto from "crypto";
-import { sendCallCompletionData } from "./webhook-handlers.js";
+import {
+  sendCallCompletionData,
+  sendUserMetaEvents,
+} from "./webhook-handlers.js";
 import {
   handleWhatsAppMessage,
   sendDefaultTemplateToNewLead,
@@ -6970,6 +6973,208 @@ fastify.post("/api/integration/leads", async (request, reply) => {
     }
   } catch (error) {
     console.error("❌ [API] Error en POST /api/integration/leads:", error);
+    return reply.code(500).send({
+      error: "Error interno del servidor",
+      message: "Error inesperado al procesar la petición",
+    });
+  }
+});
+
+// Endpoint admin para enviar eventos de usuarios a Meta
+fastify.post("/api/admin/send-users-meta-events", async (request, reply) => {
+  try {
+    console.log("📤 [ADMIN META] Sending user events to Meta requested");
+
+    // Verificar API key
+    const apiKey =
+      request.headers["x-api-key"] ||
+      request.headers.authorization?.replace("Bearer ", "");
+
+    if (!apiKey) {
+      return reply.code(401).send({
+        error: "API key requerida",
+        message: "Se requiere autenticación para esta operación",
+      });
+    }
+
+    // Validar API key y verificar que el usuario sea admin
+    const { data: apiKeyData, error: apiKeyError } = await supabase
+      .from("api_keys")
+      .select("user_id, is_active")
+      .eq("api_key", apiKey)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (
+      apiKeyError ||
+      !apiKeyData ||
+      apiKeyData.length === 0 ||
+      !apiKeyData[0].is_active
+    ) {
+      return reply.code(401).send({
+        error: "API key inválida o inactiva",
+        message: "Verifica que tu API key sea correcta y esté activa",
+      });
+    }
+
+    const adminUserId = apiKeyData[0].user_id;
+
+    // Verificar que el usuario sea admin
+    const { data: adminUser, error: adminError } = await supabase
+      .from("users")
+      .select("is_admin")
+      .eq("id", adminUserId)
+      .single();
+
+    if (adminError || !adminUser?.is_admin) {
+      return reply.code(403).send({
+        error: "Acceso denegado",
+        message: "Esta operación requiere permisos de administrador",
+      });
+    }
+
+    console.log("✅ [ADMIN META] Admin verified, starting user events send");
+
+    // Import Stripe dinámicamente
+    const Stripe = (await import("stripe")).default;
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+      apiVersion: "2025-04-30.basil",
+    });
+
+    // Obtener todos los usuarios activos
+    const { data: users, error: usersError } = await supabase
+      .from("users")
+      .select(
+        "id, email, phone, first_name, last_name, stripe_customer_id, location, emergency_city, emergency_state, emergency_zip_code, emergency_country, terms_accepted_ip, calendar_access_consent_ip, automated_calls_consent_ip, consent_user_agent, consent_timezone"
+      )
+      .eq("is_active", true);
+
+    if (usersError) {
+      console.error("❌ [ADMIN META] Error fetching users:", usersError);
+      return reply.code(500).send({
+        error: "Error al obtener usuarios",
+        message: usersError.message,
+      });
+    }
+
+    if (!users || users.length === 0) {
+      return reply.send({
+        success: true,
+        message: "No hay usuarios activos para procesar",
+        data: { total: 0, successful: 0, failed: 0 },
+      });
+    }
+
+    console.log(`📊 [ADMIN META] Processing ${users.length} users`);
+
+    const results = {
+      total: users.length,
+      successful: 0,
+      failed: 0,
+      purchase: 0,
+      completeRegistration: 0,
+      errors: [],
+    };
+
+    // Procesar usuarios en lotes
+    const batchSize = 10;
+    for (let i = 0; i < users.length; i += batchSize) {
+      const batch = users.slice(i, i + batchSize);
+
+      const batchPromises = batch.map(async (user) => {
+        try {
+          // Verificar si el usuario ha tenido suscripción en algún momento (no solo activa)
+          // Obtener la suscripción con updated_at más reciente
+          const { data: subscription, error: subError } = await supabase
+            .from("user_subscriptions")
+            .select("price_per_month")
+            .eq("user_id", user.id)
+            .order("updated_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          let eventName = "CompleteRegistration";
+          let eventValue = 50;
+
+          // Si ha tenido suscripción en algún momento (aunque ya no esté activa), enviar Purchase
+          if (subscription && !subError) {
+            eventName = "Purchase";
+
+            // Usar el price_per_month de la suscripción con updated_at más reciente
+            const price = parseFloat(subscription.price_per_month) || 0;
+
+            if (price > 0) {
+              eventValue = price;
+              console.log(
+                `💰 [ADMIN META] User ${user.id}: Found subscription with price_per_month: $${eventValue} (most recent updated_at)`
+              );
+            } else {
+              eventValue = 100; // Valor por defecto si no hay precio válido
+              console.log(
+                `⚠️ [ADMIN META] User ${user.id}: Subscription found but no valid price_per_month, using default value`
+              );
+            }
+          }
+
+          // Enviar evento a Meta
+          const result = await sendUserMetaEvents(
+            supabase,
+            user,
+            eventName,
+            eventValue
+          );
+
+          if (result.success) {
+            results.successful++;
+            if (eventName === "Purchase") {
+              results.purchase++;
+            } else {
+              results.completeRegistration++;
+            }
+            console.log(
+              `✅ [ADMIN META] User ${user.id}: ${eventName} event sent successfully`
+            );
+          } else {
+            results.failed++;
+            results.errors.push({
+              user_id: user.id,
+              error: result.error || "Unknown error",
+            });
+            console.error(
+              `❌ [ADMIN META] User ${user.id}: Failed to send ${eventName} event:`,
+              result.error
+            );
+          }
+        } catch (error) {
+          results.failed++;
+          results.errors.push({
+            user_id: user.id,
+            error: error.message || "Unknown error",
+          });
+          console.error(
+            `❌ [ADMIN META] Error processing user ${user.id}:`,
+            error
+          );
+        }
+      });
+
+      await Promise.allSettled(batchPromises);
+
+      // Pequeña pausa entre lotes para evitar rate limits
+      if (i + batchSize < users.length) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+
+    console.log("✅ [ADMIN META] User events send completed:", results);
+
+    return reply.send({
+      success: true,
+      message: `Procesamiento completado. ${results.successful} exitosos, ${results.failed} errores`,
+      data: results,
+    });
+  } catch (error) {
+    console.error("❌ [ADMIN META] Error en send-users-meta-events:", error);
     return reply.code(500).send({
       error: "Error interno del servidor",
       message: "Error inesperado al procesar la petición",

@@ -665,6 +665,55 @@ function hashPhone(phone) {
   return crypto.createHash("sha256").update(cleanPhone).digest("hex");
 }
 
+// Función auxiliar para convertir nombres de países a códigos ISO 2 letras
+function getCountryCode(country) {
+  if (!country) return null;
+
+  // Si ya es un código ISO de 2 letras, retornarlo en mayúsculas
+  if (country.length === 2) {
+    return country.toUpperCase();
+  }
+
+  // Mapeo de nombres comunes a códigos ISO (países de habla española)
+  const countryMap = {
+    // Estados Unidos
+    "estados unidos": "US",
+    "united states": "US",
+    // Latinoamérica
+    argentina: "AR",
+    bolivia: "BO",
+    chile: "CL",
+    colombia: "CO",
+    "costa rica": "CR",
+    cuba: "CU",
+    "república dominicana": "DO",
+    "dominican republic": "DO",
+    ecuador: "EC",
+    "el salvador": "SV",
+    guatemala: "GT",
+    honduras: "HN",
+    méxico: "MX",
+    mexico: "MX",
+    nicaragua: "NI",
+    panamá: "PA",
+    panama: "PA",
+    paraguay: "PY",
+    perú: "PE",
+    peru: "PE",
+    "puerto rico": "PR",
+    uruguay: "UY",
+    venezuela: "VE",
+    // España y otros países de habla española
+    españa: "ES",
+    spain: "ES",
+    "guinea ecuatorial": "GQ",
+    "equatorial guinea": "GQ",
+  };
+
+  const normalizedCountry = country.toLowerCase().trim();
+  return countryMap[normalizedCountry] || null;
+}
+
 // Función principal para enviar datos de forma asíncrona después de completar una llamada
 async function sendCallCompletionData(supabase, callSid) {
   try {
@@ -733,10 +782,209 @@ async function sendCallCompletionData(supabase, callSid) {
   }
 }
 
+// Función para enviar eventos de usuarios a Meta (Purchase o CompleteRegistration)
+async function sendUserMetaEvents(
+  supabase,
+  userData,
+  eventName,
+  eventValue = 0
+) {
+  try {
+    // Obtener integraciones con Meta Events activas
+    const { data: integrations, error } = await supabase
+      .from("webhook_integrations")
+      .select("*")
+      .eq("user_id", userData.id)
+      .eq("is_active", true)
+      .eq("include_meta_events", true)
+      .not("meta_access_token", "is", null)
+      .not("meta_pixel_id", "is", null);
+
+    if (error) {
+      console.error("[META USER] Error fetching Meta integrations:", error);
+      return { success: false, error: error.message };
+    }
+
+    if (!integrations || integrations.length === 0) {
+      console.log(
+        "[META USER] No active Meta integrations found for user:",
+        userData.id
+      );
+      return { success: false, error: "No Meta integrations found" };
+    }
+
+    console.log(
+      `[META USER] Found ${integrations.length} active Meta integration(s) for user ${userData.id}`
+    );
+
+    // Validar event_name
+    if (eventName !== "Purchase" && eventName !== "CompleteRegistration") {
+      console.error(
+        `[META USER] Invalid event_name: ${eventName}. Must be Purchase or CompleteRegistration`
+      );
+      return { success: false, error: "Invalid event_name" };
+    }
+
+    // Timestamp actual
+    const currentTime = Math.floor(Date.now() / 1000);
+
+    // Construir user_data y limpiar campos undefined
+    const userDataPayload = {};
+
+    // Datos básicos (hasheados)
+    if (userData.email) {
+      userDataPayload.em = hashEmail(userData.email);
+    }
+    if (userData.phone) {
+      userDataPayload.ph = hashPhone(userData.phone);
+    }
+
+    // Nombre y apellido (hash)
+    if (userData.first_name) {
+      userDataPayload.fn = hashEmail(userData.first_name);
+    }
+    if (userData.last_name) {
+      userDataPayload.ln = hashEmail(userData.last_name);
+    }
+
+    // Ubicación (hash) - usar emergency_address si está disponible
+    if (userData.emergency_city) {
+      userDataPayload.ct = hashEmail(userData.emergency_city);
+    }
+    if (userData.emergency_state) {
+      userDataPayload.st = hashEmail(userData.emergency_state);
+    }
+    if (userData.emergency_zip_code) {
+      userDataPayload.zp = hashEmail(userData.emergency_zip_code);
+    }
+    // country no se hashea, se envía como código ISO 2 letras
+    if (userData.emergency_country) {
+      // Convertir nombres de países a códigos ISO si es necesario
+      const countryCode =
+        userData.emergency_country.length === 2
+          ? userData.emergency_country.toUpperCase()
+          : getCountryCode(userData.emergency_country);
+      if (countryCode) {
+        userDataPayload.country = countryCode;
+      }
+    }
+
+    // IP del cliente (sin hash) - usar la IP más reciente disponible
+    if (userData.terms_accepted_ip) {
+      userDataPayload.client_ip_address = userData.terms_accepted_ip;
+    } else if (userData.calendar_access_consent_ip) {
+      userDataPayload.client_ip_address = userData.calendar_access_consent_ip;
+    } else if (userData.automated_calls_consent_ip) {
+      userDataPayload.client_ip_address = userData.automated_calls_consent_ip;
+    }
+
+    // User agent del cliente (sin hash)
+    if (userData.consent_user_agent) {
+      userDataPayload.client_user_agent = userData.consent_user_agent;
+    }
+
+    // Identificador externo: ID del usuario (sin hash)
+    userDataPayload.external_id = userData.id;
+
+    // event_id es único por usuario Y tipo de evento
+    // Meta trata eventos con diferentes event_name como eventos separados,
+    // así que usamos user.id + event_name para permitir ambos tipos de eventos
+    // pero evitar duplicados del mismo tipo
+    const userEventId = `${userData.id}-${eventName}`;
+
+    const metaPayload = {
+      data: [
+        {
+          event_name: eventName,
+          event_time: currentTime,
+          event_id: userEventId, // ID del usuario - único por usuario (1 evento por usuario)
+          action_source: "website",
+          event_source_url: "https://orquest-ai.com/",
+          user_data: userDataPayload,
+          custom_data: {
+            value: eventValue,
+            currency: "USD",
+            user_id: userData.id,
+            event_source: "OrquestAI Admin",
+          },
+        },
+      ],
+    };
+
+    // Logging detallado
+    console.log(
+      `[META USER] 📤 Sending event ${eventName} for user ${userData.id}:`,
+      {
+        event_name: eventName,
+        event_time: currentTime,
+        event_time_readable: new Date(currentTime * 1000).toISOString(),
+        event_id: userEventId,
+        user_data_keys: Object.keys(userDataPayload),
+        value: eventValue,
+        integrations_count: integrations.length,
+      }
+    );
+
+    // Enviar a todas las integraciones de Meta activas del usuario (1 evento por usuario, mismo event_id)
+    const metaPromises = integrations.map(async (integration) => {
+      const startTime = Date.now();
+      let response = null;
+      let error = null;
+
+      try {
+        const metaUrl = `https://graph.facebook.com/v20.0/${integration.meta_pixel_id}/events?access_token=${integration.meta_access_token}`;
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+        response = await fetch(metaUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(metaPayload),
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        const responseBody = await response.text();
+
+        if (response.ok) {
+          const result = JSON.parse(responseBody);
+          console.log(
+            `[META USER] ✅ Successfully sent event ${eventName} to pixel ${integration.meta_pixel_id}:`,
+            result
+          );
+        } else {
+          console.error(
+            `[META USER] ❌ Failed to send event to pixel ${integration.meta_pixel_id}: ${response.status}`,
+            responseBody
+          );
+        }
+      } catch (err) {
+        error = err;
+        console.error(
+          `[META USER] ❌ Error sending event to pixel ${integration.meta_pixel_id}:`,
+          err.message
+        );
+      }
+    });
+
+    await Promise.allSettled(metaPromises);
+
+    return { success: true };
+  } catch (error) {
+    console.error("[META USER] Error in sendUserMetaEvents:", error);
+    return { success: false, error: error.message };
+  }
+}
+
 export {
   sendCallCompletionData,
   sendWebhookData,
   sendMetaEvents,
+  sendUserMetaEvents,
   hashEmail,
   hashPhone,
 };
