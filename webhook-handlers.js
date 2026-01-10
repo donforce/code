@@ -263,9 +263,19 @@ async function sendMetaEvents(supabase, callData, leadData, userData) {
     }
 
     if (!integrations || integrations.length === 0) {
-      console.log("[META] No active Meta integrations found");
+      console.log(
+        "[META] No active Meta integrations found for user:",
+        userData.id
+      );
+      console.log(
+        "[META] To enable Meta events, create an integration with include_meta_events=true"
+      );
       return;
     }
+
+    console.log(
+      `[META] Found ${integrations.length} active Meta integration(s) for user ${userData.id}`
+    );
 
     // Determinar el evento basado en el resultado de la llamada
     let eventName = "Lead";
@@ -278,27 +288,49 @@ async function sendMetaEvents(supabase, callData, leadData, userData) {
     }
 
     // Preparar el payload de Meta Events
+    // Validar que event_time no esté en el futuro (Meta rechaza eventos > 7 días en el futuro o > 1 hora en el pasado)
+    const currentTime = Math.floor(Date.now() / 1000);
+    const maxPastTime = currentTime - 1 * 60 * 60; // Máximo 1 hora en el pasado
+    const maxFutureTime = currentTime + 7 * 24 * 60 * 60; // Máximo 7 días en el futuro
+
+    // Usar el tiempo actual si el timestamp está fuera del rango válido
+    // Meta acepta eventos hasta 7 días en el futuro o 1 hora en el pasado
+    let validEventTime = currentTime;
+
+    // Si callData tiene created_at, intentar usarlo (pero validado)
+    if (callData.created_at) {
+      const callTime = Math.floor(
+        new Date(callData.created_at).getTime() / 1000
+      );
+      if (callTime >= maxPastTime && callTime <= maxFutureTime) {
+        validEventTime = callTime;
+      } else {
+        console.warn(
+          `[META] Call timestamp ${callTime} out of valid range (${maxPastTime} - ${maxFutureTime}), using current time ${currentTime}`
+        );
+      }
+    }
+
     const metaPayload = {
       data: [
         {
           event_name: eventName,
-          event_time: Math.floor(Date.now() / 1000), // Timestamp en formato Unix
-          event_id: `${leadData.id}-${eventName}`,
+          event_time: validEventTime, // Timestamp en formato Unix (validado)
+          event_id: `${leadData.id}-${eventName}-${Date.now()}`, // Agregar timestamp para unicidad
           action_source: "phone_call",
+          event_source_url: "https://orquest-ai.com/", // URL requerida para algunos eventos
           user_data: {
             em: leadData.email ? hashEmail(leadData.email) : undefined,
             ph: leadData.phone ? hashPhone(leadData.phone) : undefined,
-            lead_id: leadData.id,
+            // Remover lead_id de user_data (no es estándar de Meta)
           },
           custom_data: {
             lead_event_source: "OAI",
             event_source: "Orquesta",
-            call_duration: callData.duration,
-            call_result: callData.result,
-            call_status: callData.status,
-          },
-          original_event_data: {
-            event_name: eventName,
+            call_duration: callData.duration || 0,
+            call_result: callData.result || "unknown",
+            call_status: callData.status || "unknown",
+            lead_id: leadData.id, // Mover lead_id a custom_data
           },
         },
       ],
@@ -379,7 +411,10 @@ async function sendMetaEvents(supabase, callData, leadData, userData) {
 
       try {
         console.log(
-          `[META] Sending event to pixel ${integration.meta_pixel_id}`
+          `[META] Sending event to pixel ${integration.meta_pixel_id} for integration: ${integration.name}`
+        );
+        console.log(
+          `[META] Integration ID: ${integration.id}, User ID: ${userData.id}`
         );
 
         const metaUrl = `https://graph.facebook.com/v18.0/${integration.meta_pixel_id}/events?access_token=${integration.meta_access_token}`;
@@ -421,10 +456,21 @@ async function sendMetaEvents(supabase, callData, leadData, userData) {
             executionTime
           );
         } else {
-          console.error(
-            `[META] Failed to send event to pixel ${integration.meta_pixel_id}: ${response.status} ${response.statusText}`,
-            responseBody
-          );
+          // Intentar parsear el error de Meta para mejor debugging
+          let errorDetails = responseBody;
+          try {
+            const errorJson = JSON.parse(responseBody);
+            errorDetails = JSON.stringify(errorJson, null, 2);
+            console.error(
+              `[META] Failed to send event to pixel ${integration.meta_pixel_id}: ${response.status} ${response.statusText}`,
+              errorDetails
+            );
+          } catch (e) {
+            console.error(
+              `[META] Failed to send event to pixel ${integration.meta_pixel_id}: ${response.status} ${response.statusText}`,
+              responseBody
+            );
+          }
 
           // 🆕 LOGGING ASÍNCRONO DEL ERROR - No esperar respuesta
           const executionTime = Date.now() - startTime;
