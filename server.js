@@ -7035,19 +7035,33 @@ fastify.post("/api/admin/send-users-meta-events", async (request, reply) => {
 
     console.log("✅ [ADMIN META] Admin verified, starting user events send");
 
+    // Obtener parámetros del body
+    const body = request.body || {};
+    const targetUserId = body.target_user_id || null;
+    const adminUserIdForIntegrations = adminUserId; // Usar las integraciones del admin
+
     // Import Stripe dinámicamente
     const Stripe = (await import("stripe")).default;
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
       apiVersion: "2025-04-30.basil",
     });
 
-    // Obtener todos los usuarios activos
-    const { data: users, error: usersError } = await supabase
+    // Obtener usuarios: uno específico o todos los activos
+    let usersQuery = supabase
       .from("users")
       .select(
         "id, email, phone, first_name, last_name, stripe_customer_id, location, emergency_city, emergency_state, emergency_zip_code, emergency_country, terms_accepted_ip, calendar_access_consent_ip, automated_calls_consent_ip, consent_user_agent, consent_timezone"
-      )
-      .eq("is_active", true);
+      );
+
+    if (targetUserId) {
+      // Solo un usuario específico
+      usersQuery = usersQuery.eq("id", targetUserId);
+    } else {
+      // Todos los usuarios activos
+      usersQuery = usersQuery.eq("is_active", true);
+    }
+
+    const { data: users, error: usersError } = await usersQuery;
 
     if (usersError) {
       console.error("❌ [ADMIN META] Error fetching users:", usersError);
@@ -7060,12 +7074,18 @@ fastify.post("/api/admin/send-users-meta-events", async (request, reply) => {
     if (!users || users.length === 0) {
       return reply.send({
         success: true,
-        message: "No hay usuarios activos para procesar",
+        message: targetUserId
+          ? "Usuario no encontrado"
+          : "No hay usuarios activos para procesar",
         data: { total: 0, successful: 0, failed: 0 },
       });
     }
 
-    console.log(`📊 [ADMIN META] Processing ${users.length} users`);
+    console.log(
+      `📊 [ADMIN META] Processing ${users.length} user(s)${
+        targetUserId ? ` (target: ${targetUserId})` : ""
+      } using integrations from admin ${adminUserIdForIntegrations}`
+    );
 
     const results = {
       total: users.length,
@@ -7116,12 +7136,13 @@ fastify.post("/api/admin/send-users-meta-events", async (request, reply) => {
             }
           }
 
-          // Enviar evento a Meta
+          // Enviar evento a Meta usando las integraciones del admin
           const result = await sendUserMetaEvents(
             supabase,
             user,
             eventName,
-            eventValue
+            eventValue,
+            adminUserIdForIntegrations // Usar integraciones del admin, no del usuario objetivo
           );
 
           if (result.success) {

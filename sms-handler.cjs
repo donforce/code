@@ -2,6 +2,7 @@
 const twilio = require("twilio"); // Or, for ESM: import twilio from "twilio";
 const OpenAI = require("openai");
 const { createClient } = require("@supabase/supabase-js");
+const crypto = require("crypto");
 require("dotenv").config();
 
 // Configuración de OpenAI
@@ -88,6 +89,11 @@ async function handleSMSMessage(supabase, request, reply) {
       // Obtener user_id del request (puede venir del token JWT)
       const userId = request.user?.id || null;
 
+      // BOOKING_LINK para eventos Meta
+      const BOOKING_LINK =
+        process.env.ORQUESTAI_BOOKING_LINK ||
+        "https://api.leadconnectorhq.com/widget/booking/xHzIB6FXahMqESj5Lf0e";
+
       // Buscar o crear conversación en la base de datos
       const conversation = await getOrCreateConversation(
         supabase,
@@ -129,6 +135,52 @@ async function handleSMSMessage(supabase, request, reply) {
 
         // Actualizar conversación
         await updateConversation(supabase, conversation.id, aiResponse);
+
+        // 🆕 Detectar eventos para Meta y enviarlos
+        // Ejecutar de forma asíncrona para no bloquear la respuesta
+        setImmediate(async () => {
+          try {
+            // Obtener userData y leadData para eventos Meta
+            let userDataForMeta = null;
+            if (conversation.user_id) {
+              const { data: user } = await supabase
+                .from("users")
+                .select("id, email, first_name, last_name")
+                .eq("id", conversation.user_id)
+                .single();
+              if (user) userDataForMeta = user;
+            }
+
+            // Buscar lead por phone_number
+            let leadDataForMeta = null;
+            if (fromNumber && conversation.user_id) {
+              const { data: leads } = await supabase
+                .from("leads")
+                .select("id, name, last_name, phone, email")
+                .eq("phone", fromNumber)
+                .eq("user_id", conversation.user_id)
+                .order("created_at", { ascending: false })
+                .limit(1);
+              if (leads && leads.length > 0) {
+                leadDataForMeta = leads[0];
+              }
+            }
+
+            await sendSMSMetaEvents(
+              supabase,
+              aiResponse,
+              conversation,
+              leadDataForMeta,
+              userDataForMeta,
+              BOOKING_LINK
+            );
+          } catch (metaError) {
+            console.error(
+              "❌ [SMS META] Error sending Meta events:",
+              metaError
+            );
+          }
+        });
 
         console.log("✅ [SMS] Respuesta enviada y guardada exitosamente");
       } catch (sendError) {
@@ -856,6 +908,184 @@ async function getEngagementMetrics(userId = null) {
     console.error("❌ [SMS] Error obteniendo métricas de engagement:", error);
     throw error;
   }
+}
+
+// 🆕 Función para enviar eventos a Meta desde SMS
+async function sendSMSMetaEvents(
+  supabase,
+  messageContent,
+  conversation,
+  leadData,
+  userData,
+  bookingLink
+) {
+  try {
+    // Solo enviar si hay lead y usuario
+    if (!leadData || !userData) {
+      return;
+    }
+
+    // Obtener integraciones con Meta Events activas
+    const { data: integrations, error } = await supabase
+      .from("webhook_integrations")
+      .select("*")
+      .eq("user_id", userData.id)
+      .eq("is_active", true)
+      .eq("include_meta_events", true)
+      .not("meta_access_token", "is", null)
+      .not("meta_pixel_id", "is", null);
+
+    if (error || !integrations || integrations.length === 0) {
+      return; // No hay integraciones de Meta, salir silenciosamente
+    }
+
+    // Detectar si se envió el link de booking
+    const bookingLinkSent = messageContent.includes(bookingLink);
+
+    // Detectar interés (palabras clave que indican interés)
+    const interestKeywords = [
+      "interesado",
+      "me interesa",
+      "quiero",
+      "precio",
+      "costo",
+      "cuánto",
+      "información",
+      "demo",
+      "agendar",
+      "cita",
+      "reunión",
+      "contratar",
+      "servicio",
+      "producto",
+    ];
+    const messageLower = messageContent.toLowerCase();
+    const hasInterest = interestKeywords.some((keyword) =>
+      messageLower.includes(keyword)
+    );
+
+    let eventName = null;
+    let eventValue = 0;
+
+    // Determinar evento basado en detección
+    if (bookingLinkSent) {
+      // Si se envió el link, es Schedule (cita agendada)
+      eventName = "Schedule";
+      eventValue = 100;
+      console.log(
+        `[SMS META] 📅 Detected booking link sent → Schedule event`
+      );
+    } else if (hasInterest) {
+      // Si hay interés pero no se envió link, es CompleteRegistration
+      eventName = "CompleteRegistration";
+      eventValue = 50;
+      console.log(
+        `[SMS META] ✅ Detected interest → CompleteRegistration event`
+      );
+    }
+
+    // Si no hay evento que enviar, salir
+    if (!eventName) {
+      return;
+    }
+
+    // Preparar payload de Meta
+    const currentTime = Math.floor(Date.now() / 1000);
+    const metaPayload = {
+      data: [
+        {
+          event_name: eventName,
+          event_time: currentTime,
+          event_id: conversation.id, // ID de la conversación
+          action_source: "messaging",
+          event_source_url: "https://orquest-ai.com/",
+          user_data: {
+            // Datos básicos (hasheados)
+            ...(leadData.email && leadData.email.trim()
+              ? { em: hashEmail(leadData.email) }
+              : {}),
+            ...(leadData.phone && leadData.phone.trim()
+              ? { ph: hashPhone(leadData.phone) }
+              : {}),
+
+            // Nombre y apellido (hash) - +15% calidad cada uno
+            // first_name viene del campo 'name' en la BD
+            ...(leadData.name
+              ? { fn: hashEmail(leadData.name.split(" ")[0]) } // Primera palabra del nombre
+              : {}),
+            ...(leadData.last_name
+              ? { ln: hashEmail(leadData.last_name) }
+              : {}),
+
+            // Identificador externo: ID de la BD del lead (sin hash) - +28% calidad
+            external_id: leadData.id, // UUID del lead en nuestra BD
+          },
+          custom_data: {
+            value: eventValue,
+            currency: "USD",
+            messaging_channel: "sms",
+            conversation_id: conversation.id,
+            lead_id: leadData.id,
+            event_source: "OrquestAI SMS",
+          },
+        },
+      ],
+    };
+
+    // Enviar a cada integración de Meta
+    const metaPromises = integrations.map(async (integration) => {
+      try {
+        const metaUrl = `https://graph.facebook.com/v20.0/${integration.meta_pixel_id}/events?access_token=${integration.meta_access_token}`;
+
+        const response = await fetch(metaUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(metaPayload),
+        });
+
+        const responseBody = await response.text();
+
+        if (response.ok) {
+          const result = JSON.parse(responseBody);
+          console.log(
+            `[SMS META] ✅ Event ${eventName} sent to pixel ${integration.meta_pixel_id}:`,
+            result
+          );
+        } else {
+          console.error(
+            `[SMS META] ❌ Failed to send event to pixel ${integration.meta_pixel_id}:`,
+            response.status,
+            responseBody
+          );
+        }
+      } catch (err) {
+        console.error(
+          `[SMS META] ❌ Error sending event to pixel ${integration.meta_pixel_id}:`,
+          err.message
+        );
+      }
+    });
+
+    await Promise.allSettled(metaPromises);
+  } catch (error) {
+    console.error("[SMS META] Error in sendSMSMetaEvents:", error);
+  }
+}
+
+// Función auxiliar para hashear email
+function hashEmail(email) {
+  return crypto
+    .createHash("sha256")
+    .update(email.toLowerCase().trim())
+    .digest("hex");
+}
+
+// Función auxiliar para hashear teléfono
+function hashPhone(phone) {
+  const cleanPhone = phone.replace(/\D/g, "");
+  return crypto.createHash("sha256").update(cleanPhone).digest("hex");
 }
 
 console.log("📱 [SMS] Módulo de SMS cargado exitosamente");

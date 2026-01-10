@@ -787,14 +787,18 @@ async function sendUserMetaEvents(
   supabase,
   userData,
   eventName,
-  eventValue = 0
+  eventValue = 0,
+  adminUserIdForIntegrations = null // Si se proporciona, usar integraciones del admin en lugar del usuario objetivo
 ) {
   try {
+    // Usar integraciones del admin si se proporciona, sino del usuario objetivo
+    const integrationUserId = adminUserIdForIntegrations || userData.id;
+
     // Obtener integraciones con Meta Events activas
     const { data: integrations, error } = await supabase
       .from("webhook_integrations")
       .select("*")
-      .eq("user_id", userData.id)
+      .eq("user_id", integrationUserId)
       .eq("is_active", true)
       .eq("include_meta_events", true)
       .not("meta_access_token", "is", null)
@@ -807,14 +811,13 @@ async function sendUserMetaEvents(
 
     if (!integrations || integrations.length === 0) {
       console.log(
-        "[META USER] No active Meta integrations found for user:",
-        userData.id
+        `[META USER] No active Meta integrations found for integration user: ${integrationUserId}`
       );
       return { success: false, error: "No Meta integrations found" };
     }
 
     console.log(
-      `[META USER] Found ${integrations.length} active Meta integration(s) for user ${userData.id}`
+      `[META USER] Found ${integrations.length} active Meta integration(s) for integration user ${integrationUserId}, sending event for target user ${userData.id}`
     );
 
     // Validar event_name
