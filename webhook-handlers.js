@@ -860,7 +860,7 @@ async function sendUserMetaEvents(
     if (userData.emergency_zip_code) {
       userDataPayload.zp = hashEmail(userData.emergency_zip_code);
     }
-    // country no se hashea, se envía como código ISO 2 letras
+    // country debe estar hasheado según el error de Meta (aunque es inusual)
     if (userData.emergency_country) {
       // Convertir nombres de países a códigos ISO si es necesario
       const countryCode =
@@ -868,7 +868,8 @@ async function sendUserMetaEvents(
           ? userData.emergency_country.toUpperCase()
           : getCountryCode(userData.emergency_country);
       if (countryCode) {
-        userDataPayload.country = countryCode;
+        // Meta requiere que country esté hasheado (error 2804016)
+        userDataPayload.country = hashEmail(countryCode);
       }
     }
 
@@ -888,6 +889,14 @@ async function sendUserMetaEvents(
 
     // Identificador externo: ID del usuario (sin hash)
     userDataPayload.external_id = userData.id;
+
+    // Filtrar campos undefined/null/empty antes de enviar (Meta rechaza campos vacíos)
+    const cleanedUserData = {};
+    for (const [key, value] of Object.entries(userDataPayload)) {
+      if (value !== undefined && value !== null && value !== "") {
+        cleanedUserData[key] = value;
+      }
+    }
 
     // event_id es único por usuario Y tipo de evento
     // Meta trata eventos con diferentes event_name como eventos separados,
