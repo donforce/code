@@ -8734,6 +8734,154 @@ Cita agendada: ${callData.calendar_event_id ? "Sí" : "No"}
     return { summary: null, commercialSuggestion: null, detailedResult: null };
   }
 }
+// Endpoint para detectar primer login y enviar CompleteRegistration a Meta
+// Función helper para obtener un admin con integraciones de Meta activas
+async function getAdminWithMetaIntegrations() {
+  try {
+    // Buscar el primer admin con integraciones de Meta activas
+    const { data: admins, error: adminsError } = await supabase
+      .from("users")
+      .select("id")
+      .eq("is_admin", true)
+      .eq("is_active", true)
+      .limit(10);
+
+    if (adminsError || !admins || admins.length === 0) {
+      console.error("[META ADMIN] No se encontraron admins activos");
+      return null;
+    }
+
+    // Buscar el primer admin que tenga integraciones de Meta activas
+    for (const admin of admins) {
+      const { data: integrations, error: integrationsError } = await supabase
+        .from("webhook_integrations")
+        .select("id")
+        .eq("user_id", admin.id)
+        .eq("is_active", true)
+        .eq("include_meta_events", true)
+        .not("meta_access_token", "is", null)
+        .not("meta_pixel_id", "is", null)
+        .limit(1);
+
+      if (!integrationsError && integrations && integrations.length > 0) {
+        console.log(
+          `[META ADMIN] Admin encontrado con integraciones de Meta: ${admin.id}`
+        );
+        return admin.id;
+      }
+    }
+
+    console.error(
+      "[META ADMIN] No se encontró ningún admin con integraciones de Meta activas"
+    );
+    return null;
+  } catch (error) {
+    console.error(
+      "[META ADMIN] Error buscando admin con integraciones:",
+      error
+    );
+    return null;
+  }
+}
+
+fastify.post("/api/user/first-login-meta-event", async (request, reply) => {
+  try {
+    const { user_id } = request.body;
+
+    if (!user_id) {
+      return reply.code(400).send({
+        error: "user_id requerido",
+        message: "Se requiere el ID del usuario",
+      });
+    }
+
+    // Obtener datos del usuario
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select(
+        "id, email, phone, first_name, last_name, location, emergency_city, emergency_state, emergency_zip_code, emergency_country, terms_accepted_ip, calendar_access_consent_ip, automated_calls_consent_ip, consent_user_agent, consent_timezone, created_at, last_login"
+      )
+      .eq("id", user_id)
+      .single();
+
+    if (userError || !userData) {
+      return reply.code(404).send({
+        error: "Usuario no encontrado",
+        message: "No se encontró el usuario con el ID proporcionado",
+      });
+    }
+
+    // Verificar si es el primer login comparando created_at con last_login
+    // Si last_login es NULL o está muy cerca de created_at (menos de 5 minutos), es el primer login
+    const createdAt = new Date(userData.created_at);
+    const lastLogin = userData.last_login
+      ? new Date(userData.last_login)
+      : null;
+    const timeDiff = lastLogin
+      ? Math.abs(lastLogin.getTime() - createdAt.getTime())
+      : 0;
+    const isFirstLogin = !lastLogin || timeDiff < 5 * 60 * 1000; // 5 minutos
+
+    if (!isFirstLogin) {
+      return reply.send({
+        success: false,
+        message: "No es el primer login",
+        created_at: userData.created_at,
+        last_login: userData.last_login,
+      });
+    }
+
+    // Obtener admin con integraciones de Meta para usar sus configuraciones
+    const adminUserIdForIntegrations = await getAdminWithMetaIntegrations();
+
+    if (!adminUserIdForIntegrations) {
+      console.warn(
+        `[FIRST LOGIN] No se encontró admin con integraciones de Meta para usuario ${user_id}. Evento CompleteRegistration no enviado.`
+      );
+      return reply.send({
+        success: true,
+        message:
+          "Primer login detectado, pero no se pudo enviar evento a Meta (no hay admin con integraciones configuradas)",
+      });
+    }
+
+    // Enviar evento CompleteRegistration a Meta usando las integraciones del admin
+    try {
+      await sendUserMetaEvents(
+        supabase,
+        userData,
+        "CompleteRegistration",
+        60,
+        adminUserIdForIntegrations // Usar integraciones del admin
+      );
+      console.log(
+        `[FIRST LOGIN] Evento CompleteRegistration enviado a Meta para usuario ${user_id} usando integraciones del admin ${adminUserIdForIntegrations}`
+      );
+      return reply.send({
+        success: true,
+        message: "Evento CompleteRegistration enviado a Meta",
+      });
+    } catch (metaError) {
+      console.error(
+        "[FIRST LOGIN] Error enviando evento CompleteRegistration a Meta:",
+        metaError
+      );
+      // No fallar el flujo si hay error enviando a Meta, solo loggear y continuar
+      return reply.send({
+        success: true,
+        message:
+          "Primer login detectado, pero hubo un error al enviar evento a Meta",
+      });
+    }
+  } catch (error) {
+    console.error("[FIRST LOGIN] Error:", error);
+    return reply.code(500).send({
+      error: "Error interno del servidor",
+      message: error.message,
+    });
+  }
+});
+
 // Add webhook endpoint for Stripe (handles user_subscriptions directly)
 fastify.post("/webhook/stripe", async (request, reply) => {
   try {
@@ -8990,6 +9138,48 @@ async function handleCheckoutSessionCompleted(session, stripe) {
         "a",
         planCredits
       );
+
+      // Enviar evento Purchase a Meta usando integraciones del admin
+      try {
+        // Obtener datos completos del usuario para Meta (incluyendo campos de ubicación)
+        const { data: fullUserData } = await supabase
+          .from("users")
+          .select(
+            "id, email, phone, first_name, last_name, location, emergency_city, emergency_state, emergency_zip_code, emergency_country, terms_accepted_ip, calendar_access_consent_ip, automated_calls_consent_ip, consent_user_agent, consent_timezone"
+          )
+          .eq("id", user.id)
+          .single();
+
+        if (fullUserData) {
+          // Obtener admin con integraciones de Meta para usar sus configuraciones
+          const adminUserIdForIntegrations =
+            await getAdminWithMetaIntegrations();
+
+          if (adminUserIdForIntegrations) {
+            const purchaseValue = subscriptionPrice || 0;
+            await sendUserMetaEvents(
+              supabase,
+              fullUserData,
+              "Purchase",
+              purchaseValue,
+              adminUserIdForIntegrations // Usar integraciones del admin
+            );
+            console.log(
+              `[STRIPE] Evento Purchase enviado a Meta para usuario ${user.id} - Valor: $${purchaseValue} usando integraciones del admin ${adminUserIdForIntegrations}`
+            );
+          } else {
+            console.warn(
+              `[STRIPE] No se encontró admin con integraciones de Meta para enviar evento Purchase para usuario ${user.id}`
+            );
+          }
+        }
+      } catch (metaError) {
+        console.error(
+          "[STRIPE] Error enviando evento Purchase a Meta:",
+          metaError
+        );
+        // No fallar el proceso si hay error en Meta
+      }
     }
 
     console.log("[STRIPE] Usuario y suscripción actualizados correctamente", {
@@ -9188,6 +9378,47 @@ async function handleInvoicePaymentSucceeded(invoice, stripe) {
       "a",
       planCredits
     );
+
+    // 7. Enviar evento Purchase a Meta usando integraciones del admin
+    try {
+      // Obtener datos completos del usuario para Meta (incluyendo campos de ubicación)
+      const { data: fullUserData } = await supabase
+        .from("users")
+        .select(
+          "id, email, phone, first_name, last_name, location, emergency_city, emergency_state, emergency_zip_code, emergency_country, terms_accepted_ip, calendar_access_consent_ip, automated_calls_consent_ip, consent_user_agent, consent_timezone"
+        )
+        .eq("id", user.id)
+        .single();
+
+      if (fullUserData) {
+        // Obtener admin con integraciones de Meta para usar sus configuraciones
+        const adminUserIdForIntegrations = await getAdminWithMetaIntegrations();
+
+        if (adminUserIdForIntegrations) {
+          const purchaseValue = subscriptionPrice || 0;
+          await sendUserMetaEvents(
+            supabase,
+            fullUserData,
+            "Purchase",
+            purchaseValue,
+            adminUserIdForIntegrations // Usar integraciones del admin
+          );
+          console.log(
+            `[STRIPE] Evento Purchase enviado a Meta para usuario ${user.id} - Valor: $${purchaseValue} usando integraciones del admin ${adminUserIdForIntegrations}`
+          );
+        } else {
+          console.warn(
+            `[STRIPE] No se encontró admin con integraciones de Meta para enviar evento Purchase para usuario ${user.id}`
+          );
+        }
+      }
+    } catch (metaError) {
+      console.error(
+        "[STRIPE] Error enviando evento Purchase a Meta:",
+        metaError
+      );
+      // No fallar el proceso si hay error en Meta
+    }
   } catch (error) {
     console.error("[STRIPE] Error in handleInvoicePaymentSucceeded:", error);
   }
