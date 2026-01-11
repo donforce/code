@@ -937,6 +937,12 @@ async function sendUserMetaEvents(
       }
     );
 
+    // Logging del payload completo antes de enviar
+    console.log(
+      `[META USER] 📋 Full payload being sent to Meta for ${eventName}:`,
+      JSON.stringify(metaPayload, null, 2)
+    );
+
     // Enviar a todas las integraciones de Meta activas del usuario (1 evento por usuario, mismo event_id)
     const metaPromises = integrations.map(async (integration) => {
       const startTime = Date.now();
@@ -945,6 +951,10 @@ async function sendUserMetaEvents(
 
       try {
         const metaUrl = `https://graph.facebook.com/v20.0/${integration.meta_pixel_id}/events?access_token=${integration.meta_access_token}`;
+
+        console.log(
+          `[META USER] 🚀 Sending ${eventName} event to pixel ${integration.meta_pixel_id} for user ${userData.id}`
+        );
 
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 10000);
