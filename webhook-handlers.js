@@ -912,7 +912,7 @@ async function sendUserMetaEvents(
           event_id: userEventId, // ID del usuario - único por usuario (1 evento por usuario)
           action_source: "website",
           event_source_url: "https://orquest-ai.com/",
-          user_data: userDataPayload,
+          user_data: cleanedUserData, // Usar datos limpiados (sin campos vacíos)
           custom_data: {
             value: eventValue,
             currency: "USD",
@@ -923,25 +923,75 @@ async function sendUserMetaEvents(
       ],
     };
 
-    // Logging detallado
+    // Logging del payload completo que se ENVÍA a Meta (sin respuestas)
     console.log(
-      `[META USER] 📤 Sending event ${eventName} for user ${userData.id}:`,
-      {
-        event_name: eventName,
-        event_time: currentTime,
-        event_time_readable: new Date(currentTime * 1000).toISOString(),
-        event_id: userEventId,
-        user_data_keys: Object.keys(userDataPayload),
-        value: eventValue,
-        integrations_count: integrations.length,
-      }
+      `[META USER] 📤 PAYLOAD ENVIADO a Meta - Evento: ${eventName}, Usuario: ${userData.id}:`
     );
+    console.log(JSON.stringify(metaPayload, null, 2));
 
-    // Logging del payload completo antes de enviar
-    console.log(
-      `[META USER] 📋 Full payload being sent to Meta for ${eventName}:`,
-      JSON.stringify(metaPayload, null, 2)
-    );
+    // Función para guardar logs de eventos de usuarios
+    const logUserMetaEvent = async (
+      integration,
+      response,
+      error,
+      executionTime
+    ) => {
+      try {
+        const logData = {
+          user_id: integrationUserId, // Usuario que tiene la integración (admin o usuario objetivo)
+          webhook_integration_id: integration.id,
+          webhook_name: `${integration.name} (Meta Pixel - User Event)`,
+          webhook_url: `https://graph.facebook.com/v20.0/${integration.meta_pixel_id}/events`,
+          call_id: null,
+          call_sid: null,
+          lead_id: null,
+          request_payload: metaPayload,
+          execution_time_ms: executionTime,
+          created_at: new Date().toISOString(),
+        };
+
+        if (error) {
+          logData.error_message = error.message || error.toString();
+          logData.response_status = null;
+          logData.response_body = null;
+          logData.response_headers = null;
+        } else if (response) {
+          logData.response_status = response.status;
+          logData.response_body = response.body || null;
+          logData.response_headers = response.headers || null;
+          logData.error_message = null;
+        }
+
+        // INSERTAR LOG DE FORMA ASÍNCRONA (no esperar respuesta)
+        setImmediate(async () => {
+          try {
+            const { error: logError } = await supabase
+              .from("webhook_logs")
+              .insert(logData);
+
+            if (logError) {
+              console.error(
+                `[META USER LOG] Error saving log for ${integration.name}:`,
+                logError
+              );
+            } else {
+              console.log(
+                `[META USER LOG] Log saved for ${integration.name} - Status: ${
+                  logData.response_status || "ERROR"
+                }`
+              );
+            }
+          } catch (logErr) {
+            console.error(
+              `[META USER LOG] Exception saving log for ${integration.name}:`,
+              logErr
+            );
+          }
+        });
+      } catch (logErr) {
+        console.error(`[META USER LOG] Error in logUserMetaEvent:`, logErr);
+      }
+    };
 
     // Enviar a todas las integraciones de Meta activas del usuario (1 evento por usuario, mismo event_id)
     const metaPromises = integrations.map(async (integration) => {
@@ -971,25 +1021,63 @@ async function sendUserMetaEvents(
         clearTimeout(timeoutId);
 
         const responseBody = await response.text();
+        const executionTime = Date.now() - startTime;
 
         if (response.ok) {
           const result = JSON.parse(responseBody);
           console.log(
-            `[META USER] ✅ Successfully sent event ${eventName} to pixel ${integration.meta_pixel_id}:`,
-            result
+            `[META USER] ✅ Evento ${eventName} enviado exitosamente a pixel ${
+              integration.meta_pixel_id
+            } - events_received: ${result.events_received || 0}`
+          );
+
+          // Guardar log de éxito
+          await logUserMetaEvent(
+            integration,
+            {
+              status: response.status,
+              body: result,
+              headers: Object.fromEntries(response.headers.entries()),
+            },
+            null,
+            executionTime
           );
         } else {
+          let errorBody;
+          try {
+            errorBody = JSON.parse(responseBody);
+          } catch (e) {
+            errorBody = responseBody;
+          }
+
           console.error(
             `[META USER] ❌ Failed to send event to pixel ${integration.meta_pixel_id}: ${response.status}`,
-            responseBody
+            errorBody
+          );
+
+          // Guardar log de error
+          await logUserMetaEvent(
+            integration,
+            {
+              status: response.status,
+              body: errorBody,
+              headers: Object.fromEntries(response.headers.entries()),
+            },
+            null,
+            executionTime
           );
         }
       } catch (err) {
         error = err;
+        const executionTime = Date.now() - startTime;
+
         console.error(
           `[META USER] ❌ Error sending event to pixel ${integration.meta_pixel_id}:`,
           err.message
         );
+
+        // Guardar log de excepción
+        await logUserMetaEvent(integration, null, err, executionTime);
       }
     });
 
