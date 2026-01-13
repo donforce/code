@@ -581,6 +581,7 @@ const queueChannel = supabase
 
 // Mutex para evitar procesamiento simultáneo
 let isProcessingQueue = false;
+let isProcessingSequences = false;
 
 // Optimized queue processing with minimal logging (keep lightweight for production)
 async function processAllPendingQueues() {
@@ -803,6 +804,189 @@ async function processAllPendingQueues() {
     isProcessingQueue = false;
   }
 }
+
+// ============================================================
+// Sistema de Secuencias de Mensajes
+// ============================================================
+// Procesamiento de secuencias pendientes con try-catch robusto
+// para asegurar que errores no afecten el procesamiento de llamadas
+async function processPendingSequences() {
+  // Mutex: evitar procesamiento simultáneo (timeout de 30 segundos)
+  if (isProcessingSequences) {
+    return;
+  }
+
+  isProcessingSequences = true;
+
+  // Timeout de seguridad para liberar el mutex
+  const mutexTimeout = setTimeout(() => {
+    console.warn(
+      `[Sequences] ⚠️ Mutex timeout - forcing release at ${new Date().toISOString()}`
+    );
+    isProcessingSequences = false;
+  }, 30000); // 30 segundos máximo
+
+  try {
+    const now = new Date().toISOString();
+
+    // Obtener lead_sequences activos que están listos para el siguiente paso
+    const { data: pendingSequences, error } = await supabase
+      .from("lead_sequences")
+      .select(
+        `
+        *,
+        message_sequences!inner(
+          id,
+          user_id,
+          is_active
+        ),
+        leads(
+          id,
+          name,
+          phone,
+          email
+        )
+      `
+      )
+      .eq("status", "active")
+      .lte("next_step_scheduled_at", now)
+      .limit(50); // Limitar para no sobrecargar
+
+    if (error) {
+      console.error("[Sequences] ❌ Error fetching pending sequences:", error);
+      return;
+    }
+
+    if (!pendingSequences || pendingSequences.length === 0) {
+      return;
+    }
+
+    // Procesar cada secuencia pendiente
+    for (const leadSequence of pendingSequences) {
+      try {
+        // Verificar que la secuencia esté activa
+        if (!leadSequence.message_sequences?.is_active) {
+          // Marcar como cancelled si la secuencia no está activa
+          await supabase
+            .from("lead_sequences")
+            .update({
+              status: "cancelled",
+              updated_at: now,
+            })
+            .eq("id", leadSequence.id);
+          continue;
+        }
+
+        // Obtener el paso actual
+        const { data: currentStep, error: stepError } = await supabase
+          .from("sequence_steps")
+          .select("*")
+          .eq("sequence_id", leadSequence.sequence_id)
+          .eq("step_order", leadSequence.current_step_order)
+          .single();
+
+        if (stepError || !currentStep) {
+          // Paso no encontrado, marcar como completed
+          await supabase
+            .from("lead_sequences")
+            .update({
+              status: "completed",
+              updated_at: now,
+            })
+            .eq("id", leadSequence.id);
+          continue;
+        }
+
+        // TODO: Aquí se enviará el mensaje/llamada según el tipo de paso
+        // Por ahora solo actualizamos el estado para mantenerlo seguro
+        // El envío real de mensajes se implementará en una siguiente fase
+
+        // Registrar ejecución (por ahora sin envío real)
+        await supabase.from("sequence_step_executions").insert({
+          lead_sequence_id: leadSequence.id,
+          step_order: currentStep.step_order,
+          executed_at: now,
+          status: "success",
+        });
+
+        // Buscar el siguiente paso
+        const { data: nextStep, error: nextStepError } = await supabase
+          .from("sequence_steps")
+          .select("*")
+          .eq("sequence_id", leadSequence.sequence_id)
+          .eq("step_order", leadSequence.current_step_order + 1)
+          .single();
+
+        if (nextStepError || !nextStep) {
+          // No hay más pasos, marcar como completed
+          await supabase
+            .from("lead_sequences")
+            .update({
+              status: "completed",
+              updated_at: now,
+            })
+            .eq("id", leadSequence.id);
+        } else {
+          // Programar siguiente paso
+          const nextStepTime = new Date(
+            Date.now() + (nextStep.delay_hours || 0) * 60 * 60 * 1000
+          );
+
+          await supabase
+            .from("lead_sequences")
+            .update({
+              current_step_order: nextStep.step_order,
+              next_step_scheduled_at: nextStepTime.toISOString(),
+              updated_at: now,
+            })
+            .eq("id", leadSequence.id);
+        }
+      } catch (sequenceError) {
+        // Error procesando una secuencia específica - loguear pero continuar
+        console.error(
+          `[Sequences] ❌ Error processing sequence ${leadSequence.id}:`,
+          sequenceError
+        );
+        // No interrumpimos el procesamiento de otras secuencias
+      }
+    }
+  } catch (error) {
+    // Error general - loguear pero no interrumpir
+    console.error("[Sequences] ❌ Error in sequence processing:", error);
+  } finally {
+    // Limpiar timeout y liberar el mutex
+    clearTimeout(mutexTimeout);
+    isProcessingSequences = false;
+  }
+}
+
+// Función wrapper para procesar tanto llamadas como secuencias
+// Usa try-catch independiente para cada función para asegurar que
+// errores en una no afecten la otra
+async function processAllScheduledTasks() {
+  // Procesar cola de llamadas (función existente)
+  try {
+    await processAllPendingQueues();
+  } catch (error) {
+    // Error en procesamiento de llamadas - loguear pero continuar
+    console.error(
+      "[Queue] ❌ Error in processAllPendingQueues (non-critical):",
+      error
+    );
+  }
+
+  // Procesar secuencias de mensajes (nueva función)
+  try {
+    await processPendingSequences();
+  } catch (error) {
+    // Error en procesamiento de secuencias - loguear pero no interrumpir llamadas
+    console.error(
+      "[Sequences] ❌ Error in processPendingSequences (non-critical):",
+      error
+    );
+  }
+}
+
 // Optimized queue item processing with minimal logging
 async function processQueueItemWithRetry(queueItem, attempt = 1) {
   const workerId = `worker_${Date.now()}_${Math.random()
@@ -932,15 +1116,20 @@ console.log(
   `[Queue] Setting up optimized queue processing interval: ${QUEUE_INTERVAL}ms`
 );
 
-const queueInterval = setInterval(processAllPendingQueues, QUEUE_INTERVAL);
+// Usar función wrapper que procesa tanto llamadas como secuencias
+const queueInterval = setInterval(processAllScheduledTasks, QUEUE_INTERVAL);
 
 // Clean up interval on shutdown
 process.on("SIGTERM", () => clearInterval(queueInterval));
 process.on("SIGINT", () => clearInterval(queueInterval));
 
 // Process queues on startup
-
 processAllPendingQueues();
+
+// Process sequences on startup (con try-catch para no interrumpir si falla)
+processPendingSequences().catch((error) => {
+  console.error("[Sequences] Error on startup (non-critical):", error);
+});
 
 // Add this function at the top with other utility functions
 async function cancelPendingCalls(userId, reason) {
