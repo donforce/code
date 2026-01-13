@@ -245,13 +245,22 @@ async function sendWebhookData(supabase, callData, leadData, userData) {
 }
 
 // Función para enviar eventos a Meta/Facebook de forma asíncrona
-async function sendMetaEvents(supabase, callData, leadData, userData) {
+async function sendMetaEvents(
+  supabase,
+  callData,
+  leadData,
+  userData,
+  adminUserIdForIntegrations = null
+) {
   try {
+    // Usar integraciones del admin si se proporciona, sino del usuario de la llamada
+    const integrationUserId = adminUserIdForIntegrations || userData.id;
+
     // Obtener integraciones con Meta Events activas
     const { data: integrations, error } = await supabase
       .from("webhook_integrations")
       .select("*")
-      .eq("user_id", userData.id)
+      .eq("user_id", integrationUserId)
       .eq("is_active", true)
       .eq("include_meta_events", true)
       .not("meta_access_token", "is", null)

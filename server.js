@@ -12,6 +12,7 @@ import crypto from "crypto";
 import {
   sendCallCompletionData,
   sendUserMetaEvents,
+  sendMetaEvents,
 } from "./webhook-handlers.js";
 import {
   handleWhatsAppMessage,
@@ -7196,6 +7197,158 @@ fastify.post("/api/admin/send-users-meta-events", async (request, reply) => {
     });
   } catch (error) {
     console.error("❌ [ADMIN META] Error en send-users-meta-events:", error);
+    return reply.code(500).send({
+      error: "Error interno del servidor",
+      message: "Error inesperado al procesar la petición",
+    });
+  }
+});
+
+// Endpoint para enviar eventos Meta de una llamada específica usando integraciones del admin
+fastify.post("/api/admin/send-call-meta-events", async (request, reply) => {
+  try {
+    console.log("📤 [ADMIN META CALL] Sending call event to Meta requested");
+
+    // Verificar API key
+    const apiKey =
+      request.headers["x-api-key"] ||
+      request.headers.authorization?.replace("Bearer ", "");
+
+    if (!apiKey) {
+      return reply.code(401).send({
+        error: "API key requerida",
+        message: "Se requiere autenticación para esta operación",
+      });
+    }
+
+    // Validar API key y verificar que el usuario sea admin
+    const { data: apiKeyData, error: apiKeyError } = await supabase
+      .from("api_keys")
+      .select("user_id, is_active")
+      .eq("api_key", apiKey)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (
+      apiKeyError ||
+      !apiKeyData ||
+      apiKeyData.length === 0 ||
+      !apiKeyData[0].is_active
+    ) {
+      return reply.code(401).send({
+        error: "API key inválida o inactiva",
+        message: "Verifica que tu API key sea correcta y esté activa",
+      });
+    }
+
+    const adminUserId = apiKeyData[0].user_id;
+
+    // Verificar que el usuario sea admin
+    const { data: adminUser, error: adminError } = await supabase
+      .from("users")
+      .select("is_admin")
+      .eq("id", adminUserId)
+      .single();
+
+    if (adminError || !adminUser?.is_admin) {
+      return reply.code(403).send({
+        error: "Acceso denegado",
+        message: "Esta operación requiere permisos de administrador",
+      });
+    }
+
+    // Obtener call_id del body
+    const { call_id } = request.body;
+
+    if (!call_id) {
+      return reply.code(400).send({
+        error: "call_id requerido",
+        message: "Se requiere call_id para enviar eventos Meta",
+      });
+    }
+
+    // Obtener datos de la llamada
+    const { data: callData, error: callError } = await supabase
+      .from("calls")
+      .select("*")
+      .eq("id", call_id)
+      .single();
+
+    if (callError || !callData) {
+      console.error("❌ [ADMIN META CALL] Error fetching call:", callError);
+      return reply.code(404).send({
+        error: "Llamada no encontrada",
+        message: "No se encontró la llamada con el ID proporcionado",
+      });
+    }
+
+    // Obtener datos del lead
+    const { data: leadData, error: leadError } = await supabase
+      .from("leads")
+      .select("*")
+      .eq("id", callData.lead_id)
+      .single();
+
+    if (leadError || !leadData) {
+      console.error("❌ [ADMIN META CALL] Error fetching lead:", leadError);
+      return reply.code(404).send({
+        error: "Lead no encontrado",
+        message: "No se encontró el lead asociado a esta llamada",
+      });
+    }
+
+    // Obtener datos del usuario
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", callData.user_id)
+      .single();
+
+    if (userError || !userData) {
+      console.error("❌ [ADMIN META CALL] Error fetching user:", userError);
+      return reply.code(404).send({
+        error: "Usuario no encontrado",
+        message: "No se encontró el usuario asociado a esta llamada",
+      });
+    }
+
+    // Enviar eventos a Meta usando las integraciones del admin
+    try {
+      await sendMetaEvents(
+        supabase,
+        callData,
+        leadData,
+        userData,
+        adminUserId // Usar integraciones del admin
+      );
+
+      console.log(
+        `✅ [ADMIN META CALL] Eventos Meta enviados para llamada ${call_id} usando integraciones del admin ${adminUserId}`
+      );
+
+      return reply.send({
+        success: true,
+        message: "Eventos Meta enviados exitosamente",
+        data: {
+          call_id: call_id,
+          admin_user_id: adminUserId,
+        },
+      });
+    } catch (metaError) {
+      console.error(
+        "❌ [ADMIN META CALL] Error enviando eventos Meta:",
+        metaError
+      );
+      return reply.code(500).send({
+        error: "Error al enviar eventos Meta",
+        message: metaError.message || "Error inesperado al enviar eventos",
+      });
+    }
+  } catch (error) {
+    console.error(
+      "❌ [ADMIN META CALL] Error en send-call-meta-events:",
+      error
+    );
     return reply.code(500).send({
       error: "Error interno del servidor",
       message: "Error inesperado al procesar la petición",
