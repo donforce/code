@@ -813,9 +813,11 @@ async function processAllPendingQueues() {
 async function processPendingSequences() {
   // Mutex: evitar procesamiento simultáneo (timeout de 30 segundos)
   if (isProcessingSequences) {
+    console.log("[Sequences] ⏸️ Already processing sequences, skipping...");
     return;
   }
 
+  console.log("[Sequences] 🔄 Starting sequence processing...");
   isProcessingSequences = true;
 
   // Timeout de seguridad para liberar el mutex
@@ -828,6 +830,7 @@ async function processPendingSequences() {
 
   try {
     const now = new Date().toISOString();
+    console.log(`[Sequences] 📅 Checking for sequences ready at: ${now}`);
 
     // Obtener lead_sequences activos que están listos para el siguiente paso
     const { data: pendingSequences, error } = await supabase
@@ -858,14 +861,37 @@ async function processPendingSequences() {
     }
 
     if (!pendingSequences || pendingSequences.length === 0) {
+      console.log("[Sequences] ✅ No pending sequences to process");
       return;
     }
+
+    console.log(
+      `[Sequences] 📊 Found ${pendingSequences.length} pending sequence(s) to process`
+    );
 
     // Procesar cada secuencia pendiente
     for (const leadSequence of pendingSequences) {
       try {
+        const leadName =
+          leadSequence.leads?.name ||
+          leadSequence.leads?.phone ||
+          leadSequence.lead_id;
+        const sequenceName =
+          leadSequence.message_sequences?.id || leadSequence.sequence_id;
+
+        console.log(`[Sequences] 🔍 Processing sequence:`, {
+          lead_sequence_id: leadSequence.id,
+          sequence_id: sequenceName,
+          lead: leadName,
+          current_step_order: leadSequence.current_step_order,
+          next_scheduled_at: leadSequence.next_step_scheduled_at,
+        });
+
         // Verificar que la secuencia esté activa
         if (!leadSequence.message_sequences?.is_active) {
+          console.log(
+            `[Sequences] ⚠️ Sequence ${sequenceName} is not active, cancelling lead sequence ${leadSequence.id}`
+          );
           // Marcar como cancelled si la secuencia no está activa
           await supabase
             .from("lead_sequences")
@@ -878,6 +904,9 @@ async function processPendingSequences() {
         }
 
         // Obtener el paso actual
+        console.log(
+          `[Sequences] 📋 Fetching step ${leadSequence.current_step_order} for sequence ${sequenceName}`
+        );
         const { data: currentStep, error: stepError } = await supabase
           .from("sequence_steps")
           .select("*")
@@ -886,6 +915,9 @@ async function processPendingSequences() {
           .single();
 
         if (stepError || !currentStep) {
+          console.log(
+            `[Sequences] ❌ Step ${leadSequence.current_step_order} not found for sequence ${sequenceName}, marking as completed`
+          );
           // Paso no encontrado, marcar como completed
           await supabase
             .from("lead_sequences")
@@ -897,42 +929,126 @@ async function processPendingSequences() {
           continue;
         }
 
+        // Calcular delay en minutos (priorizar delay_minutes, fallback a delay_hours * 60)
+        const delayMinutes =
+          currentStep.delay_minutes !== undefined
+            ? currentStep.delay_minutes
+            : (currentStep.delay_hours || 0) * 60;
+
+        console.log(`[Sequences] ✅ Step found:`, {
+          step_id: currentStep.id,
+          step_order: currentStep.step_order,
+          step_type: currentStep.step_type,
+          delay_minutes: delayMinutes,
+          delay_hours: currentStep.delay_hours,
+          delay_minutes_direct: currentStep.delay_minutes,
+        });
+
         // TODO: Aquí se enviará el mensaje/llamada según el tipo de paso
         // Por ahora solo actualizamos el estado para mantenerlo seguro
         // El envío real de mensajes se implementará en una siguiente fase
-
-        // Registrar ejecución (por ahora sin envío real)
-        await supabase.from("sequence_step_executions").insert({
-          lead_sequence_id: leadSequence.id,
-          step_order: currentStep.step_order,
-          executed_at: now,
-          status: "success",
+        console.log(
+          `[Sequences] 📤 Executing step ${currentStep.step_order} (${currentStep.step_type}) for lead ${leadName}`
+        );
+        console.log(`[Sequences] Step details:`, {
+          template_id: currentStep.template_id,
+          custom_text: currentStep.custom_text
+            ? currentStep.custom_text.substring(0, 50) + "..."
+            : null,
+          script_id: currentStep.script_id,
         });
 
+        // Registrar ejecución (por ahora sin envío real)
+        const executionResult = await supabase
+          .from("sequence_step_executions")
+          .insert({
+            lead_sequence_id: leadSequence.id,
+            step_order: currentStep.step_order,
+            executed_at: now,
+            status: "success",
+          })
+          .select()
+          .single();
+
+        if (executionResult.error) {
+          console.error(`[Sequences] ❌ Error recording step execution:`, {
+            error: executionResult.error,
+            lead_sequence_id: leadSequence.id,
+            step_order: currentStep.step_order,
+          });
+        } else {
+          console.log(`[Sequences] ✅ Step execution recorded successfully:`, {
+            execution_id: executionResult.data?.id,
+            lead_sequence_id: leadSequence.id,
+            step_order: currentStep.step_order,
+            executed_at: now,
+            status: "success",
+          });
+        }
+
         // Buscar el siguiente paso
+        const nextStepOrder = leadSequence.current_step_order + 1;
+        console.log(`[Sequences] 🔍 Looking for next step: ${nextStepOrder}`);
         const { data: nextStep, error: nextStepError } = await supabase
           .from("sequence_steps")
           .select("*")
           .eq("sequence_id", leadSequence.sequence_id)
-          .eq("step_order", leadSequence.current_step_order + 1)
+          .eq("step_order", nextStepOrder)
           .single();
 
         if (nextStepError || !nextStep) {
+          console.log(`[Sequences] ✅ Sequence completed:`, {
+            lead_sequence_id: leadSequence.id,
+            lead: leadName,
+            sequence_id: sequenceName,
+            final_step_order: leadSequence.current_step_order,
+            completed_at: now,
+          });
           // No hay más pasos, marcar como completed
-          await supabase
+          const { error: updateError } = await supabase
             .from("lead_sequences")
             .update({
               status: "completed",
               updated_at: now,
             })
             .eq("id", leadSequence.id);
-        } else {
-          // Programar siguiente paso
-          const nextStepTime = new Date(
-            Date.now() + (nextStep.delay_hours || 0) * 60 * 60 * 1000
-          );
 
-          await supabase
+          if (updateError) {
+            console.error(
+              `[Sequences] ❌ Error marking sequence as completed:`,
+              updateError
+            );
+          } else {
+            console.log(
+              `[Sequences] ✅ Sequence status updated to 'completed' for lead ${leadName}`
+            );
+          }
+        } else {
+          // Calcular delay en minutos (priorizar delay_minutes, fallback a delay_hours * 60)
+          const delayMinutes =
+            nextStep.delay_minutes !== undefined
+              ? nextStep.delay_minutes
+              : (nextStep.delay_hours || 0) * 60;
+          const delayMs = delayMinutes * 60 * 1000;
+
+          // Programar siguiente paso
+          const nextStepTime = new Date(Date.now() + delayMs);
+
+          console.log(`[Sequences] ⏰ Scheduling next step:`, {
+            lead_sequence_id: leadSequence.id,
+            lead: leadName,
+            current_step_order: leadSequence.current_step_order,
+            next_step_order: nextStep.step_order,
+            next_step_type: nextStep.step_type,
+            delay_minutes: delayMinutes,
+            delay_hours: delayMinutes / 60,
+            delay_days: delayMinutes / (60 * 24),
+            current_time: new Date().toISOString(),
+            scheduled_at: nextStepTime.toISOString(),
+            time_until_execution: `${Math.round(delayMinutes)} minutes`,
+          });
+
+          const { error: scheduleError } = await supabase
             .from("lead_sequences")
             .update({
               current_step_order: nextStep.step_order,
@@ -940,23 +1056,47 @@ async function processPendingSequences() {
               updated_at: now,
             })
             .eq("id", leadSequence.id);
+
+          if (scheduleError) {
+            console.error(`[Sequences] ❌ Error scheduling next step:`, {
+              error: scheduleError,
+              lead_sequence_id: leadSequence.id,
+              next_step_order: nextStep.step_order,
+            });
+          } else {
+            console.log(`[Sequences] ✅ Next step scheduled successfully:`, {
+              lead: leadName,
+              next_step_order: nextStep.step_order,
+              next_step_type: nextStep.step_type,
+              scheduled_at: nextStepTime.toISOString(),
+            });
+          }
         }
       } catch (sequenceError) {
         // Error procesando una secuencia específica - loguear pero continuar
         console.error(
-          `[Sequences] ❌ Error processing sequence ${leadSequence.id}:`,
+          `[Sequences] ❌ Error processing sequence ${
+            leadSequence?.id || "unknown"
+          }:`,
           sequenceError
         );
+        console.error(`[Sequences] Error stack:`, sequenceError?.stack);
         // No interrumpimos el procesamiento de otras secuencias
       }
     }
+
+    console.log(
+      `[Sequences] ✅ Finished processing ${pendingSequences.length} sequence(s)`
+    );
   } catch (error) {
     // Error general - loguear pero no interrumpir
     console.error("[Sequences] ❌ Error in sequence processing:", error);
+    console.error("[Sequences] Error stack:", error?.stack);
   } finally {
     // Limpiar timeout y liberar el mutex
     clearTimeout(mutexTimeout);
     isProcessingSequences = false;
+    console.log("[Sequences] 🏁 Sequence processing cycle completed");
   }
 }
 
