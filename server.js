@@ -944,9 +944,6 @@ async function processPendingSequences() {
           delay_minutes_direct: currentStep.delay_minutes,
         });
 
-        // TODO: Aquí se enviará el mensaje/llamada según el tipo de paso
-        // Por ahora solo actualizamos el estado para mantenerlo seguro
-        // El envío real de mensajes se implementará en una siguiente fase
         console.log(
           `[Sequences] 📤 Executing step ${currentStep.step_order} (${currentStep.step_type}) for lead ${leadName}`
         );
@@ -958,14 +955,206 @@ async function processPendingSequences() {
           script_id: currentStep.script_id,
         });
 
-        // Registrar ejecución (por ahora sin envío real)
+        // Ejecutar el paso según su tipo
+        let executionStatus = "success";
+        let errorMessage = null;
+        let messageSid = null;
+        let callId = null;
+
+        try {
+          const lead = leadSequence.leads;
+          const userId = leadSequence.message_sequences.user_id;
+
+          if (!lead || !lead.phone) {
+            throw new Error("Lead o teléfono no encontrado");
+          }
+
+          if (currentStep.step_type === "whatsapp") {
+            // Obtener datos del usuario y template si existe
+            const { data: userData } = await supabase
+              .from("users")
+              .select("whatsapp_number")
+              .eq("id", userId)
+              .single();
+
+            if (!userData?.whatsapp_number) {
+              throw new Error("Usuario no tiene número de WhatsApp configurado");
+            }
+
+            let messageContent = currentStep.custom_text;
+            
+            // Si hay template_id, obtener el contenido del template
+            if (currentStep.template_id) {
+              const { data: template } = await supabase
+                .from("sequence_templates")
+                .select("content, variables")
+                .eq("id", currentStep.template_id)
+                .single();
+
+              if (template?.content) {
+                messageContent = template.content;
+                // Reemplazar variables básicas {{1}} = nombre, {{2}} = teléfono, {{3}} = email
+                messageContent = messageContent
+                  .replace(/\{\{1\}\}/g, lead.name || "Cliente")
+                  .replace(/\{\{2\}\}/g, lead.phone || "")
+                  .replace(/\{\{3\}\}/g, lead.email || "");
+              }
+            }
+
+            if (!messageContent) {
+              throw new Error("No hay contenido para enviar");
+            }
+
+            // Enviar mensaje WhatsApp
+            const twilioClient = new Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+            const fromNumber = `whatsapp:${userData.whatsapp_number.replace(/^whatsapp:/, "")}`;
+            // Normalizar número: quitar espacios, guiones, y asegurar formato correcto
+            let normalizedPhone = lead.phone.replace(/\s+/g, "").replace(/[-\/]/g, "");
+            if (!normalizedPhone.startsWith("+")) {
+              normalizedPhone = `+${normalizedPhone}`;
+            }
+            normalizedPhone = normalizedPhone.replace(/^whatsapp:/, "");
+            const toNumber = `whatsapp:${normalizedPhone}`;
+
+            console.log(`[Sequences] 📱 Sending WhatsApp message:`, {
+              from: fromNumber,
+              to: toNumber,
+              message_length: messageContent.length,
+            });
+
+            const twilioMessage = await twilioClient.messages.create({
+              from: fromNumber,
+              to: toNumber,
+              body: messageContent,
+            });
+
+            messageSid = twilioMessage.sid;
+            console.log(`[Sequences] ✅ WhatsApp message sent:`, { message_sid: messageSid });
+
+          } else if (currentStep.step_type === "sms") {
+            // Obtener número de Twilio
+            const { data: userData } = await supabase
+              .from("users")
+              .select("phone")
+              .eq("id", userId)
+              .single();
+
+            const twilioPhoneNumber = process.env.TWILIO_PHONE_NUMBER;
+            if (!twilioPhoneNumber) {
+              throw new Error("Número de Twilio no configurado");
+            }
+
+            let messageContent = currentStep.custom_text;
+
+            // Si hay template_id, obtener el contenido del template
+            if (currentStep.template_id) {
+              const { data: template } = await supabase
+                .from("sequence_templates")
+                .select("content, variables")
+                .eq("id", currentStep.template_id)
+                .single();
+
+              if (template?.content) {
+                messageContent = template.content;
+                // Reemplazar variables básicas
+                messageContent = messageContent
+                  .replace(/\{\{1\}\}/g, lead.name || "Cliente")
+                  .replace(/\{\{2\}\}/g, lead.phone || "")
+                  .replace(/\{\{3\}\}/g, lead.email || "");
+              }
+            }
+
+            if (!messageContent) {
+              throw new Error("No hay contenido para enviar");
+            }
+
+            // Enviar mensaje SMS
+            const twilioClient = new Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+            // Normalizar número: quitar espacios, guiones, y asegurar formato correcto
+            let normalizedPhone = lead.phone.replace(/\s+/g, "").replace(/[-\/]/g, "");
+            if (!normalizedPhone.startsWith("+")) {
+              normalizedPhone = `+${normalizedPhone}`;
+            }
+            const toNumber = normalizedPhone;
+
+            console.log(`[Sequences] 💬 Sending SMS message:`, {
+              from: twilioPhoneNumber,
+              to: toNumber,
+              message_length: messageContent.length,
+            });
+
+            const twilioMessage = await twilioClient.messages.create({
+              from: twilioPhoneNumber,
+              to: toNumber,
+              body: messageContent,
+            });
+
+            messageSid = twilioMessage.sid;
+            console.log(`[Sequences] ✅ SMS message sent:`, { message_sid: messageSid });
+
+          } else if (currentStep.step_type === "call") {
+            if (!currentStep.script_id) {
+              throw new Error("Script ID requerido para pasos de llamada");
+            }
+
+            // Obtener última posición en la cola
+            const { data: existingQueue } = await supabase
+              .from("call_queue")
+              .select("queue_position")
+              .order("queue_position", { ascending: false })
+              .limit(1);
+
+            const queuePosition =
+              existingQueue && existingQueue.length > 0
+                ? (existingQueue[0]?.queue_position || 0) + 1
+                : 1;
+
+            // Agregar a la cola de llamadas
+            const { data: queueItem, error: queueError } = await supabase
+              .from("call_queue")
+              .insert({
+                user_id: userId,
+                lead_id: lead.id,
+                script_id: currentStep.script_id,
+                queue_position: queuePosition,
+                status: "pending",
+                scheduled_at: now,
+              })
+              .select()
+              .single();
+
+            if (queueError) {
+              throw new Error(`Error agregando a cola: ${queueError.message}`);
+            }
+
+            callId = queueItem.id;
+            console.log(`[Sequences] 📞 Call added to queue:`, {
+              call_id: callId,
+              queue_position: queuePosition,
+              script_id: currentStep.script_id,
+            });
+          }
+        } catch (sendError: any) {
+          console.error(`[Sequences] ❌ Error executing step:`, {
+            error: sendError.message,
+            step_type: currentStep.step_type,
+            step_order: currentStep.step_order,
+          });
+          executionStatus = "failed";
+          errorMessage = sendError.message;
+        }
+
+        // Registrar ejecución
         const executionResult = await supabase
           .from("sequence_step_executions")
           .insert({
             lead_sequence_id: leadSequence.id,
             step_order: currentStep.step_order,
             executed_at: now,
-            status: "success",
+            status: executionStatus,
+            error_message: errorMessage,
+            message_sid: messageSid,
+            call_id: callId,
           })
           .select()
           .single();
