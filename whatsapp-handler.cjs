@@ -132,10 +132,70 @@ async function handleWhatsAppMessage(supabase, request, reply) {
         });
       }
 
+      // Obtener mensajes desde el último que se envió a OpenAI (is_ai_generated = true)
+      // para incluir todo el contexto en la generación de la respuesta
+      let conversationMessages = [];
+      try {
+        // Buscar el último mensaje generado por IA para saber desde dónde obtener el historial
+        const { data: lastAiMessage } = await supabase
+          .from("whatsapp_messages")
+          .select("created_at, id")
+          .eq("conversation_id", conversation.id)
+          .eq("is_ai_generated", true)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        // Obtener todos los mensajes desde el último mensaje de IA (o todos si no hay mensajes de IA)
+        const messagesQuery = supabase
+          .from("whatsapp_messages")
+          .select("message_content, direction, created_at, is_ai_generated")
+          .eq("conversation_id", conversation.id)
+          .order("created_at", { ascending: true });
+
+        if (lastAiMessage) {
+          // Obtener mensajes creados después del último mensaje de IA
+          messagesQuery.gt("created_at", lastAiMessage.created_at);
+        }
+
+        const { data: recentMessages, error: messagesError } =
+          await messagesQuery;
+
+        if (!messagesError && recentMessages && recentMessages.length > 0) {
+          // Construir contexto con todos los mensajes desde el último de IA
+          conversationMessages = recentMessages.map((msg) => ({
+            role: msg.direction === "incoming" ? "user" : "assistant",
+            content: msg.message_content,
+          }));
+          console.log(
+            `🤖 [OPENAI] Including ${conversationMessages.length} messages since last AI response`
+          );
+        }
+      } catch (messagesError) {
+        console.warn(
+          "⚠️ [OPENAI] Error obtaining conversation history:",
+          messagesError
+        );
+        // Continuar sin historial adicional
+      }
+
+      // Construir input con historial si hay mensajes nuevos
+      let inputMessage = messageBody;
+      if (conversationMessages.length > 0) {
+        // Incluir el historial en el input
+        const historyText = conversationMessages
+          .map(
+            (msg) =>
+              `${msg.role === "user" ? "Usuario" : "Asistente"}: ${msg.content}`
+          )
+          .join("\n");
+        inputMessage = `${historyText}\n\nUsuario: ${messageBody}`;
+      }
+
       // Generar respuesta con OpenAI (solo si auto_respond está habilitado)
       const aiResponse = await generateAIResponse(
         supabase,
-        messageBody,
+        inputMessage,
         conversation
       );
 
@@ -1553,13 +1613,13 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
 
       // 10. Actualizar lead_id y auto_respond en la conversación
       console.log("🔍 [WHATSAPP] Paso 10: Actualizando conversación...");
-      // Para templates predeterminados, desactivar auto_respond (IA apagada)
+      // Para templates predeterminados, activar auto_respond (IA encendida)
       const updateData = {};
       if (!conversation.lead_id && leadData.id) {
         updateData.lead_id = leadData.id;
       }
-      // Desactivar auto_respond para que la IA no responda automáticamente
-      updateData.auto_respond = false;
+      // Activar auto_respond para que la IA responda automáticamente
+      updateData.auto_respond = true;
       updateData.updated_at = new Date().toISOString();
 
       if (Object.keys(updateData).length > 0) {
@@ -1574,7 +1634,7 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
         console.log("✅ [WHATSAPP] Conversación actualizada:", {
           conversationId: conversation.id,
           lead_id: updateData.lead_id || conversation.lead_id,
-          auto_respond: false,
+          auto_respond: true,
         });
       }
 

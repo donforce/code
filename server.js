@@ -1080,6 +1080,78 @@ async function processPendingSequences() {
               console.log(`[Sequences] ✅ WhatsApp message sent:`, {
                 message_sid: messageSid,
               });
+
+              // Si enable_ai es true, buscar o crear conversación y actualizar auto_respond
+              if (currentStep.enable_ai) {
+                try {
+                  // Normalizar números para buscar conversación
+                  const normalizedLeadPhone = normalizedPhone;
+                  const normalizedUserWhatsApp = userData.whatsapp_number
+                    .replace(/^whatsapp:/, "")
+                    .replace(/^\+/, "");
+
+                  // Buscar conversación existente
+                  const { data: existingConv, error: convSearchError } =
+                    await supabase
+                      .from("whatsapp_conversations")
+                      .select("id, auto_respond")
+                      .eq("user_id", userId)
+                      .eq("phone_number", normalizedLeadPhone)
+                      .eq("twilio_number", normalizedUserWhatsApp)
+                      .maybeSingle();
+
+                  if (existingConv) {
+                    // Actualizar auto_respond si es necesario
+                    if (existingConv.auto_respond !== true) {
+                      await supabase
+                        .from("whatsapp_conversations")
+                        .update({
+                          auto_respond: true,
+                          updated_at: new Date().toISOString(),
+                        })
+                        .eq("id", existingConv.id);
+                      console.log(
+                        `[Sequences] ✅ Updated auto_respond = true for conversation: ${existingConv.id}`
+                      );
+                    }
+                  } else {
+                    // Crear nueva conversación con auto_respond = true
+                    const { data: newConv, error: createConvError } =
+                      await supabase
+                        .from("whatsapp_conversations")
+                        .insert({
+                          user_id: userId,
+                          phone_number: normalizedLeadPhone,
+                          twilio_number: normalizedUserWhatsApp,
+                          status: "active",
+                          message_count: 0,
+                          auto_respond: true,
+                          lead_id: lead.id || null,
+                          created_at: new Date().toISOString(),
+                          updated_at: new Date().toISOString(),
+                        })
+                        .select()
+                        .single();
+
+                    if (!createConvError && newConv) {
+                      console.log(
+                        `[Sequences] ✅ Created conversation with auto_respond = true: ${newConv.id}`
+                      );
+                    } else if (createConvError) {
+                      console.error(
+                        `[Sequences] ❌ Error creating conversation:`,
+                        createConvError
+                      );
+                    }
+                  }
+                } catch (autoRespondError) {
+                  console.error(
+                    `[Sequences] ❌ Error updating auto_respond:`,
+                    autoRespondError
+                  );
+                  // No interrumpir el flujo si falla actualizar auto_respond
+                }
+              }
             }
           } else if (currentStep.step_type === "sms") {
             // Obtener número de Twilio
@@ -1277,7 +1349,31 @@ async function processPendingSequences() {
           const delayMs = delayMinutes * 60 * 1000;
 
           // Programar siguiente paso
-          const nextStepTime = new Date(Date.now() + delayMs);
+          let nextStepTime = new Date(Date.now() + delayMs);
+
+          // Ajustar al horario laboral (9 AM - 7 PM)
+          const adjustToBusinessHours = (date) => {
+            const hour = date.getHours();
+            const dateCopy = new Date(date);
+
+            // Si es antes de las 9 AM, mover a las 9 AM del mismo día
+            if (hour < 9) {
+              dateCopy.setHours(9, 0, 0, 0);
+              return dateCopy;
+            }
+
+            // Si es después de las 7 PM, mover a las 9 AM del día siguiente
+            if (hour >= 19) {
+              dateCopy.setDate(dateCopy.getDate() + 1);
+              dateCopy.setHours(9, 0, 0, 0);
+              return dateCopy;
+            }
+
+            // Ya está en horario laboral
+            return dateCopy;
+          };
+
+          nextStepTime = adjustToBusinessHours(nextStepTime);
 
           console.log(`[Sequences] ⏰ Scheduling next step:`, {
             lead_sequence_id: leadSequence.id,
