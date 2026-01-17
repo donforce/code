@@ -17,8 +17,12 @@ import {
 import {
   handleWhatsAppMessage,
   sendDefaultTemplateToNewLead,
+  sendSequenceMessage,
 } from "./whatsapp-handler.cjs";
-import { handleSMSMessage } from "./sms-handler.cjs";
+import {
+  handleSMSMessage,
+  sendSequenceMessage as sendSMSSequenceMessage,
+} from "./sms-handler.cjs";
 
 dotenv.config();
 
@@ -983,189 +987,96 @@ async function processPendingSequences() {
               );
             }
 
-            // Normalizar número: quitar espacios, guiones, y asegurar formato correcto
-            let normalizedPhone = lead.phone
-              .replace(/\s+/g, "")
-              .replace(/[-\/]/g, "");
-            if (!normalizedPhone.startsWith("+")) {
-              normalizedPhone = `+${normalizedPhone}`;
-            }
-            normalizedPhone = normalizedPhone.replace(/^whatsapp:/, "");
-            const toNumber = `whatsapp:${normalizedPhone}`;
-            const fromNumber = `whatsapp:${userData.whatsapp_number.replace(
-              /^whatsapp:/,
-              ""
-            )}`;
-
-            const twilioClient = new Twilio(
-              TWILIO_ACCOUNT_SID,
-              TWILIO_AUTH_TOKEN
-            );
+            // Preparar contenido del mensaje y variables
+            let messageContent = currentStep.custom_text;
+            let contentSid = null;
+            let contentVariables = null;
+            let templateId = currentStep.template_id || null;
 
             // Verificar si es una plantilla de WhatsApp (Twilio) o una plantilla personalizada
-            if (
-              currentStep.template_id &&
-              currentStep.template_id.startsWith("whatsapp:")
-            ) {
-              // Es una plantilla de WhatsApp de Twilio
-              const contentSid = currentStep.template_id.replace(
-                "whatsapp:",
-                ""
-              );
+            if (templateId && templateId.startsWith("whatsapp:")) {
+              // Es una plantilla de WhatsApp de Twilio (Meta)
+              contentSid = templateId.replace("whatsapp:", "");
 
               // Preparar variables del template
-              const contentVariables = {
+              contentVariables = {
                 1: lead.name || "Cliente",
                 2: lead.phone || "",
                 3: lead.email || "",
               };
 
+              // Obtener el nombre del template para el contenido del mensaje
+              const { data: template } = await supabase
+                .from("whatsapp_templates")
+                .select('"Template name", description')
+                .eq('"Content template SID"', contentSid)
+                .eq("user_id", userId)
+                .maybeSingle();
+
+              if (template) {
+                messageContent =
+                  template.description ||
+                  template["Template name"] ||
+                  "Template enviado";
+              } else {
+                messageContent = "Template enviado";
+              }
+
               console.log(`[Sequences] 📱 Sending WhatsApp template message:`, {
-                from: fromNumber,
-                to: toNumber,
                 content_sid: contentSid,
                 content_variables: contentVariables,
               });
+            } else if (templateId) {
+              // Plantilla personalizada
+              const { data: template } = await supabase
+                .from("sequence_templates")
+                .select("content, variables")
+                .eq("id", templateId)
+                .single();
 
-              const twilioMessage = await twilioClient.messages.create({
-                from: fromNumber,
-                to: toNumber,
-                contentSid: contentSid,
-                contentVariables: JSON.stringify(contentVariables),
-              });
+              if (template?.content) {
+                messageContent = template.content;
+                // Reemplazar variables básicas {{1}} = nombre, {{2}} = teléfono, {{3}} = email
+                messageContent = messageContent
+                  .replace(/\{\{1\}\}/g, lead.name || "Cliente")
+                  .replace(/\{\{2\}\}/g, lead.phone || "")
+                  .replace(/\{\{3\}\}/g, lead.email || "");
+              }
+            }
 
-              messageSid = twilioMessage.sid;
-              console.log(`[Sequences] ✅ WhatsApp template message sent:`, {
+            if (!messageContent) {
+              throw new Error("No hay contenido para enviar");
+            }
+
+            // Usar función del handler para enviar mensaje (envuelve todo el proceso)
+            try {
+              const result = await sendSequenceMessage(
+                supabase,
+                userId,
+                lead.phone,
+                userData.whatsapp_number,
+                messageContent,
+                templateId,
+                contentSid,
+                contentVariables,
+                lead.id,
+                currentStep.enable_ai
+              );
+
+              messageSid = result.message_sid;
+              console.log(`[Sequences] ✅ WhatsApp message sent and saved:`, {
                 message_sid: messageSid,
+                conversation_id: result.conversation_id,
               });
-            } else {
-              // Plantilla personalizada o texto directo
-              let messageContent = currentStep.custom_text;
-
-              // Si hay template_id, obtener el contenido del template personalizado
-              if (currentStep.template_id) {
-                const { data: template } = await supabase
-                  .from("sequence_templates")
-                  .select("content, variables")
-                  .eq("id", currentStep.template_id)
-                  .single();
-
-                if (template?.content) {
-                  messageContent = template.content;
-                  // Reemplazar variables básicas {{1}} = nombre, {{2}} = teléfono, {{3}} = email
-                  messageContent = messageContent
-                    .replace(/\{\{1\}\}/g, lead.name || "Cliente")
-                    .replace(/\{\{2\}\}/g, lead.phone || "")
-                    .replace(/\{\{3\}\}/g, lead.email || "");
-                }
-              }
-
-              if (!messageContent) {
-                throw new Error("No hay contenido para enviar");
-              }
-
-              console.log(`[Sequences] 📱 Sending WhatsApp message:`, {
-                from: fromNumber,
-                to: toNumber,
-                message_length: messageContent.length,
-              });
-
-              const twilioMessage = await twilioClient.messages.create({
-                from: fromNumber,
-                to: toNumber,
-                body: messageContent,
-              });
-
-              messageSid = twilioMessage.sid;
-              console.log(`[Sequences] ✅ WhatsApp message sent:`, {
-                message_sid: messageSid,
-              });
-
-              // Si enable_ai es true, buscar o crear conversación y actualizar auto_respond
-              if (currentStep.enable_ai) {
-                try {
-                  // Normalizar números para buscar conversación
-                  const normalizedLeadPhone = normalizedPhone;
-                  const normalizedUserWhatsApp = userData.whatsapp_number
-                    .replace(/^whatsapp:/, "")
-                    .replace(/^\+/, "");
-
-                  // Buscar conversación existente
-                  const { data: existingConv, error: convSearchError } =
-                    await supabase
-                      .from("whatsapp_conversations")
-                      .select("id, auto_respond")
-                      .eq("user_id", userId)
-                      .eq("phone_number", normalizedLeadPhone)
-                      .eq("twilio_number", normalizedUserWhatsApp)
-                      .maybeSingle();
-
-                  if (existingConv) {
-                    // Actualizar auto_respond si es necesario
-                    if (existingConv.auto_respond !== true) {
-                      await supabase
-                        .from("whatsapp_conversations")
-                        .update({
-                          auto_respond: true,
-                          updated_at: new Date().toISOString(),
-                        })
-                        .eq("id", existingConv.id);
-                      console.log(
-                        `[Sequences] ✅ Updated auto_respond = true for conversation: ${existingConv.id}`
-                      );
-                    }
-                  } else {
-                    // Crear nueva conversación con auto_respond = true
-                    const { data: newConv, error: createConvError } =
-                      await supabase
-                        .from("whatsapp_conversations")
-                        .insert({
-                          user_id: userId,
-                          phone_number: normalizedLeadPhone,
-                          twilio_number: normalizedUserWhatsApp,
-                          status: "active",
-                          message_count: 0,
-                          auto_respond: true,
-                          lead_id: lead.id || null,
-                          created_at: new Date().toISOString(),
-                          updated_at: new Date().toISOString(),
-                        })
-                        .select()
-                        .single();
-
-                    if (!createConvError && newConv) {
-                      console.log(
-                        `[Sequences] ✅ Created conversation with auto_respond = true: ${newConv.id}`
-                      );
-                    } else if (createConvError) {
-                      console.error(
-                        `[Sequences] ❌ Error creating conversation:`,
-                        createConvError
-                      );
-                    }
-                  }
-                } catch (autoRespondError) {
-                  console.error(
-                    `[Sequences] ❌ Error updating auto_respond:`,
-                    autoRespondError
-                  );
-                  // No interrumpir el flujo si falla actualizar auto_respond
-                }
-              }
+            } catch (sendError) {
+              console.error(
+                `[Sequences] ❌ Error sending WhatsApp message:`,
+                sendError
+              );
+              throw sendError;
             }
           } else if (currentStep.step_type === "sms") {
-            // Obtener número de Twilio
-            const { data: userData } = await supabase
-              .from("users")
-              .select("phone")
-              .eq("id", userId)
-              .single();
-
-            const twilioPhoneNumber = process.env.TWILIO_PHONE_NUMBER;
-            if (!twilioPhoneNumber) {
-              throw new Error("Número de Twilio no configurado");
-            }
-
+            // Preparar contenido del mensaje
             let messageContent = currentStep.custom_text;
 
             // Si hay template_id, obtener el contenido del template
@@ -1178,7 +1089,7 @@ async function processPendingSequences() {
 
               if (template?.content) {
                 messageContent = template.content;
-                // Reemplazar variables básicas
+                // Reemplazar variables básicas {{1}} = nombre, {{2}} = teléfono, {{3}} = email
                 messageContent = messageContent
                   .replace(/\{\{1\}\}/g, lead.name || "Cliente")
                   .replace(/\{\{2\}\}/g, lead.phone || "")
@@ -1190,36 +1101,36 @@ async function processPendingSequences() {
               throw new Error("No hay contenido para enviar");
             }
 
-            // Enviar mensaje SMS
-            const twilioClient = new Twilio(
-              TWILIO_ACCOUNT_SID,
-              TWILIO_AUTH_TOKEN
-            );
-            // Normalizar número: quitar espacios, guiones, y asegurar formato correcto
-            let normalizedPhone = lead.phone
-              .replace(/\s+/g, "")
-              .replace(/[-\/]/g, "");
-            if (!normalizedPhone.startsWith("+")) {
-              normalizedPhone = `+${normalizedPhone}`;
+            // Obtener número de Twilio
+            const twilioPhoneNumber = process.env.TWILIO_PHONE_NUMBER;
+            if (!twilioPhoneNumber) {
+              throw new Error("Número de Twilio no configurado");
             }
-            const toNumber = normalizedPhone;
 
-            console.log(`[Sequences] 💬 Sending SMS message:`, {
-              from: twilioPhoneNumber,
-              to: toNumber,
-              message_length: messageContent.length,
-            });
+            // Usar función del handler para enviar mensaje SMS (envuelve todo el proceso)
+            try {
+              const result = await sendSMSSequenceMessage(
+                supabase,
+                userId,
+                lead.phone,
+                twilioPhoneNumber,
+                messageContent,
+                lead.id,
+                currentStep.enable_ai
+              );
 
-            const twilioMessage = await twilioClient.messages.create({
-              from: twilioPhoneNumber,
-              to: toNumber,
-              body: messageContent,
-            });
-
-            messageSid = twilioMessage.sid;
-            console.log(`[Sequences] ✅ SMS message sent:`, {
-              message_sid: messageSid,
-            });
+              messageSid = result.message_sid;
+              console.log(`[Sequences] ✅ SMS message sent and saved:`, {
+                message_sid: messageSid,
+                conversation_id: result.conversation_id,
+              });
+            } catch (sendError) {
+              console.error(
+                `[Sequences] ❌ Error sending SMS message:`,
+                sendError
+              );
+              throw sendError;
+            }
           } else if (currentStep.step_type === "call") {
             if (!currentStep.script_id) {
               throw new Error("Script ID requerido para pasos de llamada");

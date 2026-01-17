@@ -1932,6 +1932,121 @@ function hashPhone(phone) {
 
 console.log("📱 [WHATSAPP] Módulo de WhatsApp cargado exitosamente");
 
+// Función para enviar mensaje desde secuencia (envuelve todo el proceso)
+async function sendSequenceMessage(
+  supabase,
+  userId,
+  leadPhone,
+  userWhatsAppNumber,
+  messageContent,
+  templateId,
+  contentSid,
+  contentVariables,
+  leadId,
+  enableAi
+) {
+  try {
+    // Normalizar números
+    let normalizedLeadPhone = leadPhone
+      .replace(/\s+/g, "")
+      .replace(/[-\/]/g, "");
+    if (!normalizedLeadPhone.startsWith("+")) {
+      normalizedLeadPhone = `+${normalizedLeadPhone}`;
+    }
+    normalizedLeadPhone = normalizedLeadPhone.replace(/^whatsapp:/, "");
+
+    let normalizedUserWhatsApp = userWhatsAppNumber;
+    if (normalizedUserWhatsApp.startsWith("whatsapp:")) {
+      normalizedUserWhatsApp = normalizedUserWhatsApp.replace(/^whatsapp:/, "");
+    }
+    if (!normalizedUserWhatsApp.startsWith("+")) {
+      normalizedUserWhatsApp = `+${normalizedUserWhatsApp}`;
+    }
+
+    const fromNumber = `whatsapp:${normalizedUserWhatsApp}`;
+    const toNumber = `whatsapp:${normalizedLeadPhone}`;
+
+    // Enviar mensaje por Twilio
+    let twilioMessage;
+    if (contentSid) {
+      // Template de Meta
+      twilioMessage = await client.messages.create({
+        from: fromNumber,
+        to: toNumber,
+        contentSid: contentSid,
+        contentVariables: JSON.stringify(contentVariables),
+      });
+    } else {
+      // Mensaje regular
+      twilioMessage = await client.messages.create({
+        from: fromNumber,
+        to: toNumber,
+        body: messageContent,
+      });
+    }
+
+    const messageSid = twilioMessage.sid;
+    console.log(`[WHATSAPP Handler] ✅ Message sent: ${messageSid}`);
+
+    // Obtener o crear conversación
+    const conversation = await getOrCreateConversation(
+      supabase,
+      normalizedLeadPhone,
+      normalizedUserWhatsApp,
+      userId
+    );
+
+    // Actualizar lead_id y auto_respond si es necesario
+    const updateData = {};
+    if (!conversation.lead_id && leadId) {
+      updateData.lead_id = leadId;
+    }
+    if (enableAi && !conversation.auto_respond) {
+      updateData.auto_respond = true;
+    }
+    if (Object.keys(updateData).length > 0) {
+      await supabase
+        .from("whatsapp_conversations")
+        .update(updateData)
+        .eq("id", conversation.id);
+    }
+
+    // Guardar mensaje
+    await saveMessage(
+      supabase,
+      conversation.id,
+      normalizedLeadPhone,
+      messageContent,
+      "outgoing",
+      messageSid,
+      false
+    );
+
+    // Si hay template_id, actualizarlo en el mensaje guardado
+    if (templateId) {
+      await supabase
+        .from("whatsapp_messages")
+        .update({ template_id: templateId })
+        .eq("external_message_id", messageSid);
+    }
+
+    // Actualizar conversación
+    await updateConversation(supabase, conversation.id, messageContent);
+
+    return {
+      success: true,
+      message_sid: messageSid,
+      conversation_id: conversation.id,
+    };
+  } catch (error) {
+    console.error(
+      `[WHATSAPP Handler] ❌ Error sending sequence message:`,
+      error
+    );
+    throw error;
+  }
+}
+
 // Exportar funciones para uso en otros módulos
 module.exports = {
   handleWhatsAppMessage,
@@ -1942,4 +2057,8 @@ module.exports = {
   getEngagementMetrics,
   validateTwilioWebhook,
   sendDefaultTemplateToNewLead,
+  getOrCreateConversation,
+  saveMessage,
+  updateConversation,
+  sendSequenceMessage,
 };

@@ -102,13 +102,6 @@ async function handleSMSMessage(supabase, request, reply) {
         userId
       );
 
-      // Generar respuesta con OpenAI
-      const aiResponse = await generateAIResponse(
-        supabase,
-        messageBody,
-        conversation
-      );
-
       // Guardar mensaje entrante en la base de datos
       await saveMessage(
         supabase,
@@ -117,6 +110,113 @@ async function handleSMSMessage(supabase, request, reply) {
         messageBody,
         "incoming",
         messageId
+      );
+
+      // Verificar si la conversación tiene respuesta automática habilitada
+      // Si auto_respond es false o null (por defecto null = true), solo guardamos el mensaje
+      const shouldAutoRespond = conversation.auto_respond !== false;
+
+      console.log("🤖 [SMS] Auto-respond configurado:", {
+        conversationId: conversation.id,
+        auto_respond: conversation.auto_respond,
+        shouldAutoRespond: shouldAutoRespond,
+      });
+
+      if (!shouldAutoRespond) {
+        console.log(
+          "⏸️ [SMS] Respuesta automática desactivada. Mensaje guardado para respuesta manual."
+        );
+        return reply.code(200).send({
+          success: true,
+          message:
+            "Mensaje recibido y guardado. Respuesta automática desactivada.",
+          conversation_id: conversation.id,
+          auto_respond: false,
+        });
+      }
+
+      // Obtener mensajes desde el último que se envió a OpenAI
+      // para incluir todo el contexto en la generación de la respuesta
+      let conversationMessages = [];
+      try {
+        // Buscar el último mensaje de IA para saber desde dónde obtener el historial
+        // Buscamos el mensaje saliente que coincide con last_ai_response
+        const { data: lastAiConversation } = await supabase
+          .from("sms_conversations")
+          .select("last_response_id, last_ai_response")
+          .eq("id", conversation.id)
+          .single();
+
+        let lastAiMessageTimestamp = null;
+
+        // Si hay last_ai_response, buscar el mensaje saliente que coincide
+        if (lastAiConversation?.last_ai_response) {
+          const { data: lastAiMessage } = await supabase
+            .from("sms_messages")
+            .select("created_at")
+            .eq("conversation_id", conversation.id)
+            .eq("direction", "outgoing")
+            .eq("message_content", lastAiConversation.last_ai_response)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (lastAiMessage?.created_at) {
+            lastAiMessageTimestamp = lastAiMessage.created_at;
+          }
+        }
+
+        // Obtener todos los mensajes desde el último mensaje de IA (o todos si no hay mensajes de IA)
+        const messagesQuery = supabase
+          .from("sms_messages")
+          .select("message_content, direction, created_at")
+          .eq("conversation_id", conversation.id)
+          .order("created_at", { ascending: true });
+
+        if (lastAiMessageTimestamp) {
+          // Obtener mensajes creados después del último mensaje de IA
+          messagesQuery.gt("created_at", lastAiMessageTimestamp);
+        }
+
+        const { data: recentMessages, error: messagesError } =
+          await messagesQuery;
+
+        if (!messagesError && recentMessages && recentMessages.length > 0) {
+          // Construir contexto con todos los mensajes desde el último de IA
+          conversationMessages = recentMessages.map((msg) => ({
+            role: msg.direction === "incoming" ? "user" : "assistant",
+            content: msg.message_content,
+          }));
+          console.log(
+            `🤖 [OPENAI] Including ${conversationMessages.length} messages since last AI response`
+          );
+        }
+      } catch (messagesError) {
+        console.warn(
+          "⚠️ [OPENAI] Error obtaining conversation history:",
+          messagesError
+        );
+        // Continuar sin historial adicional
+      }
+
+      // Construir input con historial si hay mensajes nuevos
+      let inputMessage = messageBody;
+      if (conversationMessages.length > 0) {
+        // Incluir el historial en el input
+        const historyText = conversationMessages
+          .map(
+            (msg) =>
+              `${msg.role === "user" ? "Usuario" : "Asistente"}: ${msg.content}`
+          )
+          .join("\n");
+        inputMessage = `${historyText}\n\nUsuario: ${messageBody}`;
+      }
+
+      // Generar respuesta con OpenAI (solo si auto_respond está habilitado)
+      const aiResponse = await generateAIResponse(
+        supabase,
+        inputMessage,
+        conversation
       );
 
       try {
@@ -972,9 +1072,7 @@ async function sendSMSMetaEvents(
       // Si se envió el link, es Schedule (cita agendada)
       eventName = "Schedule";
       eventValue = 100;
-      console.log(
-        `[SMS META] 📅 Detected booking link sent → Schedule event`
-      );
+      console.log(`[SMS META] 📅 Detected booking link sent → Schedule event`);
     } else if (hasInterest) {
       // Si hay interés pero no se envió link, es CompleteRegistration
       eventName = "CompleteRegistration";
@@ -1090,6 +1188,83 @@ function hashPhone(phone) {
 
 console.log("📱 [SMS] Módulo de SMS cargado exitosamente");
 
+// Función para enviar mensaje desde secuencia (envuelve todo el proceso)
+async function sendSequenceMessage(
+  supabase,
+  userId,
+  leadPhone,
+  twilioPhoneNumber,
+  messageContent,
+  leadId,
+  enableAi
+) {
+  try {
+    // Normalizar número del lead
+    let normalizedLeadPhone = leadPhone
+      .replace(/\s+/g, "")
+      .replace(/[-\/]/g, "");
+    if (!normalizedLeadPhone.startsWith("+")) {
+      normalizedLeadPhone = `+${normalizedLeadPhone}`;
+    }
+
+    // Enviar mensaje por Twilio
+    const twilioMessage = await client.messages.create({
+      from: twilioPhoneNumber,
+      to: normalizedLeadPhone,
+      body: messageContent,
+    });
+
+    const messageSid = twilioMessage.sid;
+    console.log(`[SMS Handler] ✅ Message sent: ${messageSid}`);
+
+    // Obtener o crear conversación
+    // Nota: para SMS, toNumber es el número de Twilio y fromNumber es el número del cliente
+    const conversation = await getOrCreateConversation(
+      supabase,
+      normalizedLeadPhone, // fromNumber (cliente)
+      twilioPhoneNumber, // toNumber (número de Twilio)
+      userId
+    );
+
+    // Actualizar lead_id y auto_respond si es necesario
+    const updateData = {};
+    if (!conversation.lead_id && leadId) {
+      updateData.lead_id = leadId;
+    }
+    if (enableAi && conversation.auto_respond !== true) {
+      updateData.auto_respond = true;
+    }
+    if (Object.keys(updateData).length > 0) {
+      await supabase
+        .from("sms_conversations")
+        .update(updateData)
+        .eq("id", conversation.id);
+    }
+
+    // Guardar mensaje
+    await saveMessage(
+      supabase,
+      conversation.id,
+      normalizedLeadPhone,
+      messageContent,
+      "outgoing",
+      messageSid
+    );
+
+    // Actualizar conversación
+    await updateConversation(supabase, conversation.id, messageContent);
+
+    return {
+      success: true,
+      message_sid: messageSid,
+      conversation_id: conversation.id,
+    };
+  } catch (error) {
+    console.error(`[SMS Handler] ❌ Error sending sequence message:`, error);
+    throw error;
+  }
+}
+
 // Exportar funciones para uso en otros módulos
 module.exports = {
   handleSMSMessage,
@@ -1099,4 +1274,8 @@ module.exports = {
   cleanupOldConversations,
   getEngagementMetrics,
   validateTwilioWebhook,
+  getOrCreateConversation,
+  saveMessage,
+  updateConversation,
+  sendSequenceMessage,
 };
