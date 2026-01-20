@@ -1265,6 +1265,110 @@ async function sendSequenceMessage(
   }
 }
 
+// Función para actualizar status de mensajes SMS desde status callback de Twilio
+async function updateMessageStatus(supabase, messageSid, messageStatus, errorCode, errorMessage, reply) {
+  try {
+    console.log("📡 [SMS STATUS] Actualizando status del mensaje:", {
+      messageSid,
+      messageStatus,
+      errorCode,
+      errorMessage
+    });
+
+    // Validar que el status sea uno de los permitidos
+    const validStatuses = ["queued", "sending", "sent", "delivered", "undelivered", "failed", "read"];
+    if (!validStatuses.includes(messageStatus)) {
+      console.warn("⚠️ [SMS STATUS] Status desconocido:", messageStatus);
+    }
+
+    // Buscar el mensaje en la BD usando external_message_id (que contiene el MessageSid de Twilio)
+    const { data: message, error: findError } = await supabase
+      .from("sms_messages")
+      .select("id, conversation_id, external_message_id, status")
+      .eq("external_message_id", messageSid)
+      .single();
+
+    if (findError || !message) {
+      console.error("❌ [SMS STATUS] Mensaje no encontrado en BD:", {
+        messageSid,
+        error: findError?.message,
+      });
+      // No retornar error 404 porque Twilio seguirá intentando
+      // Simplemente registrar el error y retornar 200 para que Twilio no reintente
+      return reply.code(200).send({
+        received: true,
+        warning: "Mensaje no encontrado en BD",
+      });
+    }
+
+    // Preparar datos de actualización
+    const updateData = {
+      status: messageStatus,
+      updated_at: new Date().toISOString(),
+    };
+
+    // Si hay error, guardar información del error
+    if (errorCode) {
+      updateData.error_code = errorCode;
+    }
+    if (errorMessage) {
+      updateData.error_message = errorMessage;
+    }
+
+    // Guardar timestamps según el estado
+    const now = new Date().toISOString();
+    if (messageStatus === "delivered") {
+      updateData.delivered_at = now;
+    } else if (messageStatus === "read") {
+      updateData.read_at = now;
+      // Si se marca como leído, también marcar como entregado
+      updateData.delivered_at = now;
+    } else if (messageStatus === "failed" || messageStatus === "undelivered") {
+      updateData.failed_at = now;
+    }
+
+    console.log("💾 [SMS STATUS] Actualizando mensaje en BD:", {
+      messageId: message.id,
+      oldStatus: message.status,
+      newStatus: messageStatus,
+      updateData,
+    });
+
+    // Actualizar el mensaje en la BD
+    const { error: updateError } = await supabase
+      .from("sms_messages")
+      .update(updateData)
+      .eq("id", message.id);
+
+    if (updateError) {
+      console.error("❌ [SMS STATUS] Error actualizando mensaje:", updateError);
+      return reply.code(500).send({
+        received: true,
+        error: "Error actualizando mensaje en BD",
+        details: updateError.message,
+      });
+    }
+
+    console.log("✅ [SMS STATUS] Mensaje actualizado exitosamente:", {
+      messageId: message.id,
+      status: messageStatus,
+    });
+
+    // Retornar 200 para que Twilio sepa que recibimos el callback correctamente
+    return reply.code(200).send({
+      received: true,
+      messageId: message.id,
+      status: messageStatus,
+    });
+  } catch (error) {
+    console.error("❌ [SMS STATUS] Error procesando status callback:", error);
+    return reply.code(500).send({
+      received: true,
+      error: "Error procesando callback",
+    });
+  }
+}
+
 // Exportar funciones para uso en otros módulos
 module.exports = {
   handleSMSMessage,
@@ -1278,4 +1382,5 @@ module.exports = {
   saveMessage,
   updateConversation,
   sendSequenceMessage,
+  updateMessageStatus,
 };
