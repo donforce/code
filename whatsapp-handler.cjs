@@ -1056,10 +1056,13 @@ async function sendWhatsAppMessage(toNumber, fromNumber, message) {
   try {
     console.log("📤 [WHATSAPP] Enviando mensaje a:", fromNumber);
 
+    const statusCallbackUrl = `https://${process.env.RAILWAY_PUBLIC_DOMAIN}/webhook/message-status`;
+
     const response = await client.messages.create({
       body: message,
       from: `whatsapp:${toNumber}`,
       to: `whatsapp:${fromNumber}`,
+      statusCallback: statusCallbackUrl,
     });
 
     console.log("✅ [WHATSAPP] Mensaje enviado exitosamente:", response.sid);
@@ -1575,11 +1578,14 @@ async function sendDefaultTemplateToNewLead(supabase, userId, leadData) {
         contentSid: defaultTemplate["Content template SID"],
         contentVariables: JSON.stringify(contentVariables),
       });
+      const statusCallbackUrl = `https://${process.env.RAILWAY_PUBLIC_DOMAIN}/webhook/message-status`;
+
       twilioMessage = await twilioClient.messages.create({
         from: fromNumber,
         to: toNumber,
         contentSid: defaultTemplate["Content template SID"],
         contentVariables: JSON.stringify(contentVariables), // Twilio requiere string JSON
+        statusCallback: statusCallbackUrl,
       });
       console.log("🔍 [WHATSAPP] Respuesta de Twilio recibida:", {
         sid: twilioMessage.sid,
@@ -1968,20 +1974,24 @@ async function sendSequenceMessage(
 
     // Enviar mensaje por Twilio
     let twilioMessage;
+    const statusCallbackUrl = `https://${process.env.RAILWAY_PUBLIC_DOMAIN}/webhook/message-status`;
+    
     if (contentSid) {
-      // Template de Meta
+      // Template de Meta - SIEMPRE enviar como template, nunca como free form
       twilioMessage = await client.messages.create({
         from: fromNumber,
         to: toNumber,
         contentSid: contentSid,
         contentVariables: JSON.stringify(contentVariables),
+        statusCallback: statusCallbackUrl,
       });
     } else {
-      // Mensaje regular
+      // Mensaje regular (free form)
       twilioMessage = await client.messages.create({
         from: fromNumber,
         to: toNumber,
         body: messageContent,
+        statusCallback: statusCallbackUrl,
       });
     }
 
@@ -2049,21 +2059,27 @@ async function sendSequenceMessage(
 
 // Función para actualizar status de mensajes WhatsApp desde status callback de Twilio
 async function updateMessageStatus(supabase, messageSid, messageStatus, errorCode, errorMessage, reply) {
+  const timestamp = new Date().toISOString();
   try {
-    console.log("📡 [WHATSAPP STATUS] Actualizando status del mensaje:", {
-      messageSid,
-      messageStatus,
-      errorCode,
-      errorMessage
-    });
+    console.log("📱 [WHATSAPP STATUS] ═══ Procesando callback WhatsApp ═══");
+    console.log("📱 [WHATSAPP STATUS] Message SID:", messageSid);
+    console.log("📱 [WHATSAPP STATUS] Status:", messageStatus);
+    console.log("📱 [WHATSAPP STATUS] Timestamp:", timestamp);
+    if (errorCode) {
+      console.log("📱 [WHATSAPP STATUS] Error Code:", errorCode);
+    }
+    if (errorMessage) {
+      console.log("📱 [WHATSAPP STATUS] Error Message:", errorMessage);
+    }
 
     // Validar que el status sea uno de los permitidos
     const validStatuses = ["queued", "sending", "sent", "delivered", "undelivered", "failed", "read"];
     if (!validStatuses.includes(messageStatus)) {
-      console.warn("⚠️ [WHATSAPP STATUS] Status desconocido:", messageStatus);
+      console.warn("⚠️ [WHATSAPP STATUS] ⚠️ Status desconocido:", messageStatus);
     }
 
     // Buscar el mensaje en la BD usando external_message_id (que contiene el MessageSid de Twilio)
+    console.log("🔍 [WHATSAPP STATUS] Buscando mensaje en BD con MessageSid:", messageSid);
     const { data: message, error: findError } = await supabase
       .from("whatsapp_messages")
       .select("id, conversation_id, external_message_id, status")
@@ -2071,10 +2087,9 @@ async function updateMessageStatus(supabase, messageSid, messageStatus, errorCod
       .single();
 
     if (findError || !message) {
-      console.error("❌ [WHATSAPP STATUS] Mensaje no encontrado en BD:", {
-        messageSid,
-        error: findError?.message,
-      });
+      console.error("❌ [WHATSAPP STATUS] ⚠️ Mensaje NO encontrado en BD");
+      console.error("❌ [WHATSAPP STATUS] MessageSid:", messageSid);
+      console.error("❌ [WHATSAPP STATUS] Error:", findError?.message || "No se encontró registro");
       // No retornar error 404 porque Twilio seguirá intentando
       // Simplemente registrar el error y retornar 200 para que Twilio no reintente
       return reply.code(200).send({
@@ -2082,6 +2097,12 @@ async function updateMessageStatus(supabase, messageSid, messageStatus, errorCod
         warning: "Mensaje no encontrado en BD",
       });
     }
+
+    console.log("✅ [WHATSAPP STATUS] Mensaje encontrado en BD:");
+    console.log("   • ID:", message.id);
+    console.log("   • Conversation ID:", message.conversation_id);
+    console.log("   • Status actual:", message.status);
+    console.log("   • Nuevo status:", messageStatus);
 
     // Preparar datos de actualización
     const updateData = {
@@ -2109,12 +2130,7 @@ async function updateMessageStatus(supabase, messageSid, messageStatus, errorCod
       updateData.failed_at = now;
     }
 
-    console.log("💾 [WHATSAPP STATUS] Actualizando mensaje en BD:", {
-      messageId: message.id,
-      oldStatus: message.status,
-      newStatus: messageStatus,
-      updateData,
-    });
+    console.log("💾 [WHATSAPP STATUS] Datos de actualización:", JSON.stringify(updateData, null, 2));
 
     // Actualizar el mensaje en la BD
     const { error: updateError } = await supabase
@@ -2123,7 +2139,9 @@ async function updateMessageStatus(supabase, messageSid, messageStatus, errorCod
       .eq("id", message.id);
 
     if (updateError) {
-      console.error("❌ [WHATSAPP STATUS] Error actualizando mensaje:", updateError);
+      console.error("❌ [WHATSAPP STATUS] ⚠️ ERROR actualizando mensaje en BD");
+      console.error("❌ [WHATSAPP STATUS] Error:", updateError);
+      console.error("❌ [WHATSAPP STATUS] Message ID:", message.id);
       return reply.code(500).send({
         received: true,
         error: "Error actualizando mensaje en BD",
@@ -2131,10 +2149,8 @@ async function updateMessageStatus(supabase, messageSid, messageStatus, errorCod
       });
     }
 
-    console.log("✅ [WHATSAPP STATUS] Mensaje actualizado exitosamente:", {
-      messageId: message.id,
-      status: messageStatus,
-    });
+    console.log("✅ [WHATSAPP STATUS] ✅ Mensaje actualizado exitosamente en BD");
+    console.log("✅ [WHATSAPP STATUS] Status cambiado de '", message.status, "' a '", messageStatus, "'");
 
     // Retornar 200 para que Twilio sepa que recibimos el callback correctamente
     return reply.code(200).send({
