@@ -1258,81 +1258,8 @@ async function processPendingSequences() {
               ? nextStep.delay_minutes
               : (nextStep.delay_hours || 0) * 60;
 
-          // Obtener zona horaria del usuario
-          const { data: calendarSettings } = await supabase
-            .from("user_calendar_settings")
-            .select("calendar_timezone")
-            .eq("user_id", userId)
-            .single();
-
-          const userTimezone = calendarSettings?.calendar_timezone || "America/New_York";
-
-          // Función para calcular next_step_scheduled_at con timezone y horario laboral
-          const calculateNextStepTime = (currentUTC, delayMinutes, timezone) => {
-            // 1. Sumar el delay directamente en UTC
-            const futureUTC = new Date(currentUTC.getTime() + delayMinutes * 60 * 1000);
-
-            // 2. Obtener los componentes de la fecha futura en la zona horaria del usuario
-            const localFormatter = new Intl.DateTimeFormat("en-US", {
-              timeZone: timezone,
-              year: "numeric",
-              month: "2-digit",
-              day: "2-digit",
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: false,
-            });
-
-            const futureLocalParts = localFormatter.formatToParts(futureUTC);
-            let year = parseInt(futureLocalParts.find((p) => p.type === "year").value);
-            let month = parseInt(futureLocalParts.find((p) => p.type === "month").value) - 1; // Meses son 0-index
-            let day = parseInt(futureLocalParts.find((p) => p.type === "day").value);
-            let hour = parseInt(futureLocalParts.find((p) => p.type === "hour").value);
-            let minute = parseInt(futureLocalParts.find((p) => p.type === "minute").value);
-
-            // 3. Ajustar al horario laboral (9 AM - 7 PM) en la zona horaria del usuario
-            if (hour < 9) {
-              hour = 9;
-              minute = 0;
-            } else if (hour >= 19) {
-              day += 1; // Mover al día siguiente
-              hour = 9;
-              minute = 0;
-            }
-
-            // 4. Reconstruir la fecha en la zona horaria del usuario y convertirla a UTC
-            // Crear una fecha de referencia en UTC para el mediodía del día ajustado
-            const refUTC = new Date(Date.UTC(year, month, day, 12, 0, 0));
-
-            // Obtener la hora local de esa fecha UTC en la timezone del usuario
-            const refLocalParts = new Intl.DateTimeFormat("en-US", {
-              timeZone: timezone,
-              hour: "2-digit",
-              hour12: false,
-            }).formatToParts(refUTC);
-
-            const refLocalHour = parseInt(refLocalParts.find((p) => p.type === "hour").value);
-            const approximateOffset = 12 - refLocalHour; // Diferencia entre UTC y local
-
-            // Crear la fecha UTC ajustando por el offset aproximado y la hora/minuto deseados
-            let resultDate = new Date(Date.UTC(year, month, day, hour - approximateOffset, minute, 0));
-
-            // Ajuste fino de minutos si hay discrepancia (ej. por DST o redondeo)
-            const finalVerifyParts = localFormatter.formatToParts(resultDate);
-            const finalVerifyHour = parseInt(finalVerifyParts.find((p) => p.type === "hour").value);
-            const finalVerifyMinute = parseInt(finalVerifyParts.find((p) => p.type === "minute").value);
-
-            if (finalVerifyHour !== hour || finalVerifyMinute !== minute) {
-              const hourDiff = hour - finalVerifyHour;
-              const minuteDiff = minute - finalVerifyMinute;
-              resultDate = new Date(resultDate.getTime() + (hourDiff * 60 + minuteDiff) * 60 * 1000);
-            }
-
-            return resultDate;
-          };
-
-          // Calcular el tiempo del siguiente paso
-          const nextStepTime = calculateNextStepTime(new Date(), delayMinutes, userTimezone);
+          // Calcular next_step_scheduled_at sumando el delay directamente en UTC (sin ajustes de horario laboral)
+          const nextStepTime = new Date(Date.now() + delayMinutes * 60 * 1000);
 
           console.log(`[Sequences] ⏰ Scheduling next step:`, {
             lead_sequence_id: leadSequence.id,
