@@ -18,10 +18,12 @@ import {
   handleWhatsAppMessage,
   sendDefaultTemplateToNewLead,
   sendSequenceMessage,
+  updateMessageStatus as updateWhatsAppMessageStatus,
 } from "./whatsapp-handler.cjs";
 import {
   handleSMSMessage,
   sendSequenceMessage as sendSMSSequenceMessage,
+  updateMessageStatus as updateSMSMessageStatus,
 } from "./sms-handler.cjs";
 
 dotenv.config();
@@ -10740,6 +10742,105 @@ fastify.post("/webhook/whatsapp", async (request, reply) => {
 fastify.post("/webhook/sms", async (request, reply) => {
   console.log("🚀 [SERVER] Webhook SMS recibido");
   return await handleSMSMessage(supabase, request, reply);
+});
+
+// ===== RUTA DE STATUS CALLBACK DE MENSAJES =====
+fastify.post("/webhook/message-status", async (request, reply) => {
+  const timestamp = new Date().toISOString();
+  try {
+    console.log("=".repeat(80));
+    console.log(`📡 [MESSAGE STATUS] ═══ STATUS CALLBACK RECIBIDO ═══ [${timestamp}]`);
+    console.log("=".repeat(80));
+
+    // Twilio envía los datos como form-encoded
+    const {
+      MessageSid,
+      MessageStatus,
+      ErrorCode,
+      ErrorMessage,
+      To,
+      From,
+    } = request.body;
+
+    // Log completo del request
+    console.log("📋 [MESSAGE STATUS] Request completo:", JSON.stringify(request.body, null, 2));
+    console.log("📋 [MESSAGE STATUS] Headers:", JSON.stringify(request.headers, null, 2));
+
+    if (!MessageSid || !MessageStatus) {
+      console.error("❌ [MESSAGE STATUS] ⚠️ FALTAN CAMPOS REQUERIDOS:", {
+        MessageSid,
+        MessageStatus,
+        body: request.body,
+      });
+      return reply.code(400).send({
+        error: "Faltan campos requeridos",
+        message: "MessageSid y MessageStatus son requeridos",
+      });
+    }
+
+    // Determinar si es WhatsApp o SMS basándose en el número "To" o "From"
+    // Los números de WhatsApp tienen formato "whatsapp:+1234567890"
+    const isWhatsApp =
+      (To && To.startsWith("whatsapp:")) ||
+      (From && From.startsWith("whatsapp:"));
+
+    const messageType = isWhatsApp ? "WhatsApp" : "SMS";
+
+    // Log detallado de los datos recibidos
+    console.log("📊 [MESSAGE STATUS] Datos del callback:");
+    console.log(`   • Message SID: ${MessageSid}`);
+    console.log(`   • Message Status: ${MessageStatus}`);
+    console.log(`   • Tipo: ${messageType}`);
+    console.log(`   • To: ${To || "N/A"}`);
+    console.log(`   • From: ${From || "N/A"}`);
+    if (ErrorCode) {
+      console.log(`   • Error Code: ${ErrorCode}`);
+    }
+    if (ErrorMessage) {
+      console.log(`   • Error Message: ${ErrorMessage}`);
+    }
+
+    console.log(`🔄 [MESSAGE STATUS] Llamando handler para ${messageType}...`);
+
+    // Llamar al handler correspondiente
+    let result;
+    if (isWhatsApp) {
+      result = await updateWhatsAppMessageStatus(
+        supabase,
+        MessageSid,
+        MessageStatus,
+        ErrorCode,
+        ErrorMessage,
+        reply
+      );
+    } else {
+      result = await updateSMSMessageStatus(
+        supabase,
+        MessageSid,
+        MessageStatus,
+        ErrorCode,
+        ErrorMessage,
+        reply
+      );
+    }
+
+    console.log(`✅ [MESSAGE STATUS] Callback procesado exitosamente para ${messageType}`);
+    console.log("=".repeat(80));
+
+    return result;
+  } catch (error) {
+    console.error("=".repeat(80));
+    console.error(`❌ [MESSAGE STATUS] ═══ ERROR PROCESANDO CALLBACK ═══ [${timestamp}]`);
+    console.error("=".repeat(80));
+    console.error("❌ [MESSAGE STATUS] Error completo:", error);
+    console.error("❌ [MESSAGE STATUS] Stack trace:", error.stack);
+    console.error("❌ [MESSAGE STATUS] Request body:", JSON.stringify(request.body, null, 2));
+    console.error("=".repeat(80));
+    return reply.code(500).send({
+      error: "Error procesando callback",
+      message: error.message,
+    });
+  }
 });
 
 fastify.post("/api/admin/cleanup-recordings", async (request, reply) => {
