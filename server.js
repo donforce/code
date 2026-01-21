@@ -1302,7 +1302,7 @@ async function processPendingSequences() {
           }
         }
       } catch (sequenceError) {
-        // Error procesando una secuencia específica - loguear pero continuar
+        // Error procesando una secuencia específica - pausar la secuencia para este lead
         console.error(
           `[Sequences] ❌ Error processing sequence ${
             leadSequence?.id || "unknown"
@@ -1310,6 +1310,38 @@ async function processPendingSequences() {
           sequenceError
         );
         console.error(`[Sequences] Error stack:`, sequenceError?.stack);
+        
+        // Pausar el lead_sequence cuando hay un error al enviar el mensaje
+        if (leadSequence?.id) {
+          try {
+            const now = new Date().toISOString();
+            const { error: pauseError } = await supabase
+              .from("lead_sequences")
+              .update({
+                status: "paused",
+                paused_at: now,
+                updated_at: now,
+              })
+              .eq("id", leadSequence.id);
+
+            if (pauseError) {
+              console.error(
+                `[Sequences] ❌ Error pausing lead_sequence ${leadSequence.id}:`,
+                pauseError
+              );
+            } else {
+              console.log(
+                `[Sequences] ⏸️ Lead sequence ${leadSequence.id} paused due to error`
+              );
+            }
+          } catch (pauseErr) {
+            console.error(
+              `[Sequences] ❌ Error attempting to pause lead_sequence:`,
+              pauseErr
+            );
+          }
+        }
+        
         // No interrumpimos el procesamiento de otras secuencias
       }
     }
