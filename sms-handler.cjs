@@ -897,7 +897,7 @@ POLÍTICA DE RESPUESTA:
           model: modelName,
           previous_response_id: r.id, // Usar el id del response que tiene los tool_calls
           input: toolInputs, // Enviar los resultados de las tools en formato input
-          temperature: 0.7,
+          // Nota: temperature no está soportado cuando se envía input con tool outputs
         };
 
         try {
