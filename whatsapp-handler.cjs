@@ -47,6 +47,55 @@ function validateTwilioWebhook(request, webhookUrl) {
   }
 }
 
+// Función para pausar todas las secuencias activas de un lead
+async function pauseLeadSequences(supabase, leadId) {
+  try {
+    console.log("⏸️ [SEQUENCES] Pausando secuencias para lead:", leadId);
+    
+    const now = new Date().toISOString();
+    
+    // Buscar todas las secuencias activas del lead
+    const { data: activeSequences, error: findError } = await supabase
+      .from("lead_sequences")
+      .select("id, sequence_id")
+      .eq("lead_id", leadId)
+      .eq("status", "active");
+
+    if (findError) {
+      console.error("❌ [SEQUENCES] Error buscando secuencias activas:", findError);
+      return;
+    }
+
+    if (!activeSequences || activeSequences.length === 0) {
+      console.log("ℹ️ [SEQUENCES] No hay secuencias activas para pausar");
+      return;
+    }
+
+    // Pausar todas las secuencias activas
+    const sequenceIds = activeSequences.map((ls) => ls.id);
+    const { error: updateError } = await supabase
+      .from("lead_sequences")
+      .update({
+        status: "paused",
+        paused_at: now,
+        updated_at: now,
+      })
+      .in("id", sequenceIds);
+
+    if (updateError) {
+      console.error("❌ [SEQUENCES] Error pausando secuencias:", updateError);
+      return;
+    }
+
+    console.log(
+      `✅ [SEQUENCES] ${activeSequences.length} secuencia(s) pausada(s) para lead ${leadId}`
+    );
+  } catch (error) {
+    console.error("❌ [SEQUENCES] Error en pauseLeadSequences:", error);
+    throw error;
+  }
+}
+
 // Función para procesar mensajes entrantes de WhatsApp
 async function handleWhatsAppMessage(supabase, request, reply) {
   try {
@@ -108,6 +157,16 @@ async function handleWhatsAppMessage(supabase, request, reply) {
         "incoming",
         messageId
       );
+
+      // Pausar secuencias activas del lead si tiene lead_id
+      if (conversation.lead_id) {
+        try {
+          await pauseLeadSequences(supabase, conversation.lead_id);
+        } catch (pauseError) {
+          console.error("❌ [WHATSAPP] Error pausando secuencias:", pauseError);
+          // No fallar el webhook si hay error pausando secuencias
+        }
+      }
 
       // Verificar si la conversación tiene respuesta automática habilitada
       // Si auto_respond es false o null (por defecto null = true), solo guardamos el mensaje
