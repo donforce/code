@@ -799,9 +799,7 @@ POLÍTICA DE RESPUESTA:
             // Si es solicitud de representante, usar directamente el mensaje
             if (result.success && result.data) {
               finalResponse = result.data.mensaje;
-              console.log("👤 [REPRESENTATIVE] Usando respuesta directa de función");
-              // No generar respuesta adicional, usar la respuesta directa
-              break;
+              console.log("👤 [REPRESENTATIVE] Usando respuesta directa de función:", finalResponse);
             }
           } else if (functionName === "notifyAgentSpecialistRequest") {
             // Obtener información del cliente para notificar al agente
@@ -827,11 +825,18 @@ POLÍTICA DE RESPUESTA:
           console.log(`✅ [TOOL] Resultado de ${functionName}:`, JSON.stringify(result, null, 2));
           console.log("=".repeat(80));
           
+          // Agregar resultado a toolResults (importante para que OpenAI pueda procesarlo)
           toolResults.push({
             tool_call_id: toolCall.id,
             function_name: functionName,
             result: result,
           });
+          
+          // Si es handleRepresentativeRequest y fue exitoso, ya tenemos la respuesta final
+          // No necesitamos generar otra respuesta, pero sí agregamos el resultado para logging
+          if (functionName === "handleRepresentativeRequest" && result.success && result.data) {
+            console.log("👤 [REPRESENTATIVE] Respuesta final establecida, no se generará respuesta adicional");
+          }
         } catch (error) {
           console.error("=".repeat(80));
           console.error(`❌ [TOOL] ═══ ERROR EJECUTANDO TOOL ═══`);
