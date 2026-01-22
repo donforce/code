@@ -806,12 +806,18 @@ async function generateAIResponse(supabase, userMessage, conversation) {
         ? new Date(leadData.created_at).toLocaleDateString("es-ES")
         : "No disponible";
 
+      // Normalizar el origen: si es Facebook/Meta, cambiarlo a genérico
+      let leadSource = leadData.source || "No especificado";
+      if (leadSource && (leadSource.toLowerCase().includes("facebook") || leadSource.toLowerCase().includes("meta"))) {
+        leadSource = "Posible cliente";
+      }
+
       leadContext = `
 CONTEXTO DEL CLIENTE (LEAD):
 - Nombre: ${leadName}
 - Email: ${leadData.email || "No disponible"}
 - Teléfono: ${leadData.phone || "No disponible"}
-- Origen: ${leadData.source || "No especificado"}
+- Origen: ${leadSource}
 - Notas: ${leadData.notes || "Sin notas"}
 - Fecha de creación: ${leadCreatedDate}
 
@@ -847,9 +853,9 @@ MANEJO DE MENSAJES AUTOMÁTICOS:
 - Si el mensaje es ambiguo o parece automático, usa la respuesta genérica mencionada arriba.
 
 PRODUCT FACTS (úsalos para responder; si algo no está aquí, invita a la demo):
-- OrquestAI automatiza el contacto de leads en tiempo real y busca convertirlos en citas confirmadas.
-- Cómo funciona (4 pasos): 1) conectas fuentes (Meta Ads/CRM/formularios), 2) contacto inmediato por llamada, 3) clasifica y agenda si hay intención, 4) en el dashboard ves métricas/ROI y puedes revisar el resultado: escuchar la llamada grabada, ver el resumen, el outcome y las citas agendadas.
-- Características: calificación automática, agenda automática, recordatorios, dashboard, integraciones (Meta Ads, CRM, etc.).
+- OrquestAI automatiza el contacto de posibles clientes en tiempo real y busca convertirlos en citas confirmadas.
+- Cómo funciona (4 pasos): 1) conectas fuentes de posibles clientes (CRM/formularios/publicidad), 2) contacto inmediato por llamada, 3) clasifica y agenda si hay intención, 4) en el dashboard ves métricas/ROI y puedes revisar el resultado: escuchar la llamada grabada, ver el resumen, el outcome y las citas agendadas.
+- Características: calificación automática, agenda automática, recordatorios, dashboard, integraciones con diversas fuentes de posibles clientes.
 - Sistema de llamadas: antes de llamar aplica reglas (créditos, horario permitido, zona horaria, país autorizado); luego registra resultado, transcripción y métricas. Tipos: directa, en cola, programada.
 - Precios (solo "desde"): Profesional desde $199/mes (2,500 créditos). Empresarial desde $399/mes (6,000 créditos). Hay plan personalizado.
 - No hay límites de leads.
@@ -1166,21 +1172,22 @@ POLÍTICA DE RESPUESTA:
         (tr) => tr.function_name === "handleRepresentativeRequest" && tr.result.success
       );
       
-      // Siempre necesitamos enviar los tool_outputs de vuelta a OpenAI cuando hay tool_calls
+      // Siempre necesitamos enviar los resultados de las tools de vuelta a OpenAI cuando hay tool_calls
       if (toolResults.length > 0) {
-        // Preparar tool_outputs en el formato que OpenAI espera
-        const toolOutputs = toolResults.map((tr) => ({
+        // Preparar input con array de objetos tipo "tool" en el formato que OpenAI espera
+        const toolInputs = toolResults.map((tr) => ({
+          type: "tool",
           tool_call_id: tr.tool_call_id,
           output: JSON.stringify(tr.result),
         }));
 
-        console.log("📤 [OPENAI] Enviando tool_outputs a OpenAI:", JSON.stringify(toolOutputs, null, 2));
+        console.log("📤 [OPENAI] Enviando resultados de tools a OpenAI:", JSON.stringify(toolInputs, null, 2));
 
         // Generar respuesta final con los resultados de las tools
         const finalReq = {
           model: modelName,
           previous_response_id: r.id, // Usar el id del response que tiene los tool_calls
-          tool_outputs: toolOutputs, // Enviar los resultados de las tools
+          input: toolInputs, // Enviar los resultados de las tools en formato input
           temperature: 0.7,
         };
 
