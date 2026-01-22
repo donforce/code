@@ -1047,6 +1047,7 @@ POLÍTICA DE RESPUESTA:
       );
 
       const toolResults = [];
+      let finalR = null; // Declarar fuera del bloque para poder usarlo después
 
       for (const toolCall of r.tool_calls) {
         try {
@@ -1144,52 +1145,75 @@ POLÍTICA DE RESPUESTA:
         (tr) => tr.function_name === "handleRepresentativeRequest" && tr.result.success
       );
       
-      if (!representativeCalled && toolResults.length > 0) {
-        // Generar respuesta final con los resultados de las tools (solo si no es representante)
+      // Siempre necesitamos enviar los tool_outputs de vuelta a OpenAI cuando hay tool_calls
+      if (toolResults.length > 0) {
+        // Preparar tool_outputs en el formato que OpenAI espera
+        const toolOutputs = toolResults.map((tr) => ({
+          tool_call_id: tr.tool_call_id,
+          output: JSON.stringify(tr.result),
+        }));
+
+        console.log("📤 [OPENAI] Enviando tool_outputs a OpenAI:", JSON.stringify(toolOutputs, null, 2));
+
+        // Generar respuesta final con los resultados de las tools
         const finalReq = {
           model: modelName,
-          instructions:
-            instructions +
-            "\n\nUsa los resultados de las herramientas para dar una respuesta precisa y personalizada.",
-          input: `Usuario: ${userMessage}\n\nResultados de herramientas:\n${JSON.stringify(
-            toolResults,
-            null,
-            2
-          )}`,
+          previous_response_id: r.id, // Usar el id del response que tiene los tool_calls
+          tool_outputs: toolOutputs, // Enviar los resultados de las tools
           temperature: 0.7,
         };
 
-        const finalR = await openai.responses.create(finalReq);
-        finalResponse =
-          finalR.output_text ||
-          (Array.isArray(finalR.output) &&
-            finalR.output[0]?.content?.[0]?.text) ||
-          finalResponse;
+        try {
+          finalR = await openai.responses.create(finalReq);
+          console.log("✅ [OPENAI] Respuesta final recibida:", JSON.stringify(finalR, null, 2));
+          
+          // Si no es representante, usar la respuesta generada por OpenAI
+          if (!representativeCalled) {
+            finalResponse =
+              finalR.output_text ||
+              (Array.isArray(finalR.output) &&
+                finalR.output[0]?.content?.[0]?.text) ||
+              finalResponse;
+          }
+          // Si es representante, ya tenemos finalResponse establecido, solo actualizar r para el id
+          // pero mantener finalResponse como está
+        } catch (finalError) {
+          console.error("❌ [OPENAI] Error en segunda llamada con tool_outputs:", finalError);
+          // Si falla y es representante, ya tenemos finalResponse, continuar
+          // Si no es representante, usar el fallback
+          if (!representativeCalled) {
+            throw finalError; // Re-lanzar para que se maneje en el catch principal
+          }
+        }
       }
     }
 
-    // Validar que r tenga id antes de intentar persistirlo
-    if (!r || !r.id) {
-      console.error("❌ [OPENAI] Error: respuesta de OpenAI no tiene id");
+    // Determinar qué response_id usar para persistir (el último que se usó)
+    // Si hubo tool_calls y se hizo una segunda llamada, usar el id del response final
+    let responseIdToPersist = finalR?.id || r.id;
+
+    // Validar que tengamos un id antes de intentar persistirlo
+    if (!responseIdToPersist) {
+      console.error("❌ [OPENAI] Error: no hay response_id para persistir");
       console.error("❌ [OPENAI] Respuesta completa:", JSON.stringify(r, null, 2));
       console.error("❌ [OPENAI] finalResponse:", finalResponse);
       // Continuar sin actualizar last_response_id, pero retornar la respuesta
       return finalResponse;
     }
 
-    // Persistir el nuevo response.id para la próxima vuelta
+    // Persistir el response.id para la próxima vuelta
     try {
       await supabase
         .from("whatsapp_conversations")
         .update({
-          last_response_id: r.id,
+          last_response_id: responseIdToPersist,
           last_ai_response: finalResponse,
           last_message_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
         .eq("id", conversation.id);
 
-      console.log("🤖 [OPENAI] OK. response.id:", r.id);
+      console.log("🤖 [OPENAI] OK. response.id persistido:", responseIdToPersist);
     } catch (updateError) {
       console.error("❌ [OPENAI] Error actualizando conversación:", updateError);
       // No fallar completamente, solo loggear el error y continuar
