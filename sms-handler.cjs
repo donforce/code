@@ -748,6 +748,25 @@ POLÍTICA DE RESPUESTA:
     }
     console.log("=".repeat(80));
 
+    // Convertir output con function_call a formato tool_calls si es necesario
+    let toolCalls = r.tool_calls || [];
+    if (!toolCalls.length && Array.isArray(r.output)) {
+      // Buscar function_calls en el output
+      const functionCalls = r.output.filter(item => item.type === 'function_call');
+      if (functionCalls.length > 0) {
+        console.log("🔄 [OPENAI] Convirtiendo function_calls de output a tool_calls");
+        toolCalls = functionCalls.map(fc => ({
+          id: fc.call_id || fc.id,
+          type: 'function',
+          function: {
+            name: fc.name,
+            arguments: fc.arguments || '{}'
+          }
+        }));
+        console.log("📋 [OPENAI] tool_calls convertidos:", JSON.stringify(toolCalls, null, 2));
+      }
+    }
+
     // Procesar tools si el modelo los usó
     let finalResponse =
       r.output_text ||
@@ -758,15 +777,15 @@ POLÍTICA DE RESPUESTA:
     let finalR = null;
 
     // Si el modelo usó tools, ejecutarlas y generar respuesta final
-    if (r.tool_calls && r.tool_calls.length > 0) {
+    if (toolCalls && toolCalls.length > 0) {
       console.log(
         "🔧 [TOOLS] Modelo solicitó usar tools:",
-        r.tool_calls.length
+        toolCalls.length
       );
 
       const toolResults = [];
 
-      for (const toolCall of r.tool_calls) {
+      for (const toolCall of toolCalls) {
         try {
           console.log("=".repeat(80));
           console.log(`🔧 [TOOL] ═══ PROCESANDO TOOL CALL ═══`);
@@ -1488,27 +1507,14 @@ async function sendSequenceMessage(
 
 // Función para actualizar status de mensajes SMS desde status callback de Twilio
 async function updateMessageStatus(supabase, messageSid, messageStatus, errorCode, errorMessage, reply) {
-  const timestamp = new Date().toISOString();
   try {
-    console.log("💬 [SMS STATUS] ═══ Procesando callback SMS ═══");
-    console.log("💬 [SMS STATUS] Message SID:", messageSid);
-    console.log("💬 [SMS STATUS] Status:", messageStatus);
-    console.log("💬 [SMS STATUS] Timestamp:", timestamp);
-    if (errorCode) {
-      console.log("💬 [SMS STATUS] Error Code:", errorCode);
-    }
-    if (errorMessage) {
-      console.log("💬 [SMS STATUS] Error Message:", errorMessage);
-    }
-
     // Validar que el status sea uno de los permitidos
     const validStatuses = ["queued", "sending", "sent", "delivered", "undelivered", "failed", "read"];
     if (!validStatuses.includes(messageStatus)) {
-      console.warn("⚠️ [SMS STATUS] ⚠️ Status desconocido:", messageStatus);
+      console.warn("⚠️ [SMS STATUS] Status desconocido:", messageStatus);
     }
 
     // Buscar el mensaje en la BD usando external_message_id (que contiene el MessageSid de Twilio)
-    console.log("🔍 [SMS STATUS] Buscando mensaje en BD con MessageSid:", messageSid);
     const { data: message, error: findError } = await supabase
       .from("sms_messages")
       .select("id, conversation_id, external_message_id, status")
@@ -1516,22 +1522,12 @@ async function updateMessageStatus(supabase, messageSid, messageStatus, errorCod
       .single();
 
     if (findError || !message) {
-      console.error("❌ [SMS STATUS] ⚠️ Mensaje NO encontrado en BD");
-      console.error("❌ [SMS STATUS] MessageSid:", messageSid);
-      console.error("❌ [SMS STATUS] Error:", findError?.message || "No se encontró registro");
-      // No retornar error 404 porque Twilio seguirá intentando
-      // Simplemente registrar el error y retornar 200 para que Twilio no reintente
+      console.error("❌ [SMS STATUS] Mensaje no encontrado:", messageSid);
       return reply.code(200).send({
         received: true,
         warning: "Mensaje no encontrado en BD",
       });
     }
-
-    console.log("✅ [SMS STATUS] Mensaje encontrado en BD:");
-    console.log("   • ID:", message.id);
-    console.log("   • Conversation ID:", message.conversation_id);
-    console.log("   • Status actual:", message.status);
-    console.log("   • Nuevo status:", messageStatus);
 
     // Preparar datos de actualización
     const updateData = {
@@ -1553,13 +1549,10 @@ async function updateMessageStatus(supabase, messageSid, messageStatus, errorCod
       updateData.delivered_at = now;
     } else if (messageStatus === "read") {
       updateData.read_at = now;
-      // Si se marca como leído, también marcar como entregado
       updateData.delivered_at = now;
     } else if (messageStatus === "failed" || messageStatus === "undelivered") {
       updateData.failed_at = now;
     }
-
-    console.log("💾 [SMS STATUS] Datos de actualización:", JSON.stringify(updateData, null, 2));
 
     // Actualizar el mensaje en la BD
     const { error: updateError } = await supabase
@@ -1568,18 +1561,13 @@ async function updateMessageStatus(supabase, messageSid, messageStatus, errorCod
       .eq("id", message.id);
 
     if (updateError) {
-      console.error("❌ [SMS STATUS] ⚠️ ERROR actualizando mensaje en BD");
-      console.error("❌ [SMS STATUS] Error:", updateError);
-      console.error("❌ [SMS STATUS] Message ID:", message.id);
+      console.error("❌ [SMS STATUS] Error actualizando mensaje:", updateError.message);
       return reply.code(500).send({
         received: true,
         error: "Error actualizando mensaje en BD",
         details: updateError.message,
       });
     }
-
-    console.log("✅ [SMS STATUS] ✅ Mensaje actualizado exitosamente en BD");
-    console.log("✅ [SMS STATUS] Status cambiado de '", message.status, "' a '", messageStatus, "'");
 
     // Retornar 200 para que Twilio sepa que recibimos el callback correctamente
     return reply.code(200).send({
@@ -1588,7 +1576,7 @@ async function updateMessageStatus(supabase, messageSid, messageStatus, errorCod
       status: messageStatus,
     });
   } catch (error) {
-    console.error("❌ [SMS STATUS] Error procesando status callback:", error);
+    console.error("❌ [SMS STATUS] Error procesando callback:", error.message);
     return reply.code(500).send({
       received: true,
       error: "Error procesando callback",
