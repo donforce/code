@@ -541,7 +541,7 @@ async function generateAIResponse(supabase, userMessage, conversation) {
       "https://api.leadconnectorhq.com/widget/booking/xHzIB6FXahMqESj5Lf0e";
 
     // Importar tools
-    const tools = require("./sms-tools.cjs");
+    const tools = require("./ai-tools.cjs");
 
     // Usar contexto del usuario de la conversación o buscar si no está disponible
     let userData = null;
@@ -608,6 +608,45 @@ IMPORTANTE: Usa SIEMPRE el nombre real del usuario (${fullName}) y sus datos esp
     }
 
     console.log("🔍 [OPENAI] Contexto del usuario:", userContext);
+    
+    // Obtener datos del LEAD con el que se está generando la conversación
+    let leadData = null;
+    if (conversation.lead_id) {
+      try {
+        const { data: lead, error: leadError } = await supabase
+          .from("leads")
+          .select(
+            `
+            id,
+            name,
+            last_name,
+            phone,
+            email,
+            source,
+            notes,
+            created_at,
+            updated_at
+          `
+          )
+          .eq("id", conversation.lead_id)
+          .single();
+
+        if (lead && !leadError) {
+          leadData = lead;
+          console.log("🔍 [OPENAI] Lead encontrado por lead_id:", leadData);
+        } else {
+          console.warn(
+            "⚠️ [OPENAI] No se encontró lead con lead_id:",
+            conversation.lead_id
+          );
+        }
+      } catch (error) {
+        console.warn("⚠️ [OPENAI] Error obteniendo datos del lead:", error);
+      }
+    } else {
+      console.log("⚠️ [OPENAI] La conversación no tiene lead_id asociado");
+    }
+    
     // Instrucciones "system/developer" persistentes
     let instructions = `
 Eres el asistente virtual de OrquestAI atendiendo conversaciones por SMS.
@@ -640,6 +679,7 @@ POLÍTICA DE RESPUESTA:
 - Siempre que haya intención (demo/precio/contratar/cómo funciona): cierra con
   "¿Quieres que te comparta el link para agendar una demo de 30 min?"
   Si el lead ya pidió el link, compártelo directamente: ${BOOKING_LINK}
+- Si el cliente quiere hablar con un representante, especialista, persona, humano, agente, ejecutivo, asesor, o dice que no eres una persona real: DEBES usar la función handleRepresentativeRequest inmediatamente. Después, usa notifyAgentSpecialistRequest para notificar al agente por SMS. No respondas directamente, usa las funciones.
 - Usa el nombre de la persona en tus respuestas cuando esté disponible en el contexto. Personaliza el saludo y las respuestas incluyendo su nombre cuando sea apropiado.
 - Si hay nombre del lead en el contexto, úsalo en el saludo inicial: "Hola [nombre]! 👋". Si no hay nombre, usa "Hola! 👋".
 `.trim();
@@ -654,49 +694,11 @@ POLÍTICA DE RESPUESTA:
       model: modelName,
       instructions,
       input: userMessage,
-      // tools comentadas temporalmente para evitar errores de API
-      /*
       tools: [
         {
           type: "function",
-          name: "getUserInfo",
-          description: "Obtener información completa del usuario registrado",
-          parameters: {
-            type: "object",
-            properties: {
-              userId: {
-                type: "string",
-                description: "ID del usuario",
-              },
-            },
-            required: ["userId"],
-            additionalProperties: false,
-          },
-          strict: true,
-        },
-        {
-          type: "function",
-          name: "getUserLeadsStats",
-          description:
-            "Obtener estadísticas de leads del usuario (period opcional: 'week' o 'month', por defecto 'week')",
-          parameters: {
-            type: "object",
-            properties: {
-              userId: {
-                type: "string",
-                description: "ID del usuario",
-              },
-            },
-            required: ["userId"],
-            additionalProperties: false,
-          },
-          strict: true,
-        },
-        {
-          type: "function",
-          name: "getPricingInfo",
-          description:
-            "Obtener información de precios y créditos por país (country opcional, por defecto 'US')",
+          name: "handleRepresentativeRequest",
+          description: "Usar cuando el cliente quiere hablar con un representante, especialista, persona, humano, agente, ejecutivo, asesor, o dice que no eres una persona real. Esta función debe usarse inmediatamente cuando se detecte esta intención.",
           parameters: {
             type: "object",
             properties: {},
@@ -706,58 +708,16 @@ POLÍTICA DE RESPUESTA:
         },
         {
           type: "function",
-          name: "getCallQueueStatus",
-          description: "Obtener estado de la cola de llamadas del usuario",
+          name: "notifyAgentSpecialistRequest",
+          description: "Enviar una notificación por SMS al agente/usuario cuando un cliente quiere hablar con un especialista. Usa esta función después de usar handleRepresentativeRequest para notificar al agente.",
           parameters: {
             type: "object",
-            properties: {
-              userId: {
-                type: "string",
-                description: "ID del usuario",
-              },
-            },
-            required: ["userId"],
-            additionalProperties: false,
-          },
-          strict: true,
-        },
-        {
-          type: "function",
-          name: "getUserBillingInfo",
-          description: "Obtener información de facturación del usuario",
-          parameters: {
-            type: "object",
-            properties: {
-              userId: {
-                type: "string",
-                description: "ID del usuario",
-              },
-            },
-            required: ["userId"],
-            additionalProperties: false,
-          },
-          strict: true,
-        },
-        {
-          type: "function",
-          name: "getAvailableDiscounts",
-          description:
-            "Obtener descuentos disponibles para el usuario (plan opcional, por defecto se detecta automáticamente)",
-          parameters: {
-            type: "object",
-            properties: {
-              userId: {
-                type: "string",
-                description: "ID del usuario",
-              },
-            },
-            required: ["userId"],
+            properties: {},
             additionalProperties: false,
           },
           strict: true,
         },
       ],
-      */
       temperature: 0.7,
     };
 
@@ -773,6 +733,102 @@ POLÍTICA DE RESPUESTA:
       r.output_text ||
       (Array.isArray(r.output) && r.output[0]?.content?.[0]?.text) ||
       "Disculpa, ¿podrías repetir tu consulta?";
+
+    // Si el modelo usó tools, ejecutarlas y generar respuesta final
+    if (r.tool_calls && r.tool_calls.length > 0) {
+      console.log(
+        "🔧 [TOOLS] Modelo solicitó usar tools:",
+        r.tool_calls.length
+      );
+
+      const toolResults = [];
+
+      for (const toolCall of r.tool_calls) {
+        try {
+          const functionName = toolCall.function.name;
+          const functionArgs = JSON.parse(toolCall.function.arguments || "{}");
+
+          console.log(
+            `🔧 [TOOL] Ejecutando ${functionName} con args:`,
+            functionArgs
+          );
+
+          let result;
+          
+          // Ejecutar la función correspondiente
+          if (functionName === "handleRepresentativeRequest") {
+            result = await tools.handleRepresentativeRequest(supabase, BOOKING_LINK);
+            // Si es solicitud de representante, usar directamente el mensaje
+            if (result.success && result.data) {
+              finalResponse = result.data.mensaje;
+              console.log("👤 [REPRESENTATIVE] Usando respuesta directa de función");
+              // No generar respuesta adicional, usar la respuesta directa
+              break;
+            }
+          } else if (functionName === "notifyAgentSpecialistRequest") {
+            // Obtener información del cliente para notificar al agente
+            const clientPhone = conversation.phone_number || null;
+            const clientName = leadData 
+              ? `${leadData.name || ""} ${leadData.last_name || ""}`.trim() || null
+              : null;
+            const userId = conversation.user_id || null;
+            
+            result = await tools.notifyAgentSpecialistRequest(
+              supabase,
+              userId,
+              clientPhone,
+              clientName
+            );
+          } else {
+            result = {
+              success: false,
+              error: `Función ${functionName} no implementada`,
+            };
+          }
+          
+          toolResults.push({
+            tool_call_id: toolCall.id,
+            function_name: functionName,
+            result: result,
+          });
+        } catch (error) {
+          console.error(`❌ [TOOL] Error ejecutando tool:`, error);
+          toolResults.push({
+            tool_call_id: toolCall.id,
+            function_name: toolCall.function.name,
+            result: { success: false, error: error.message },
+          });
+        }
+      }
+
+      // Si handleRepresentativeRequest fue llamada, ya tenemos la respuesta final
+      const representativeCalled = toolResults.some(
+        (tr) => tr.function_name === "handleRepresentativeRequest" && tr.result.success
+      );
+      
+      if (!representativeCalled && toolResults.length > 0) {
+        // Generar respuesta final con los resultados de las tools (solo si no es representante)
+        const finalReq = {
+          model: modelName,
+          instructions:
+            instructions +
+            "\n\nUsa los resultados de las herramientas para dar una respuesta precisa y personalizada.",
+          input: `Usuario: ${userMessage}\n\nResultados de herramientas:\n${JSON.stringify(
+            toolResults,
+            null,
+            2
+          )}`,
+          temperature: 0.7,
+        };
+
+        const finalR = await openai.responses.create(finalReq);
+        finalResponse =
+          finalR.output_text ||
+          (Array.isArray(finalR.output) &&
+            finalR.output[0]?.content?.[0]?.text) ||
+          finalResponse;
+      }
+    }
 
     // Persistir el nuevo response.id para la próxima vuelta
     await supabase

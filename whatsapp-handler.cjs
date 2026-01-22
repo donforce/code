@@ -738,7 +738,7 @@ async function generateAIResponse(supabase, userMessage, conversation) {
       "https://api.leadconnectorhq.com/widget/booking/xHzIB6FXahMqESj5Lf0e";
 
     // Importar tools
-    const tools = require("./whatsapp-tools.cjs");
+    const tools = require("./ai-tools.cjs");
 
     // Obtener datos del usuario (necesario para eventos de Meta)
     let userData = null;
@@ -860,6 +860,7 @@ POLÍTICA DE RESPUESTA:
 - Siempre que haya intención (demo/precio/contratar/cómo funciona): cierra con
   "¿Quieres que te comparta el link para agendar una demo de 30 min?"
   Si el lead ya pidió el link, compártelo directamente: ${BOOKING_LINK}
+- Si el cliente quiere hablar con un representante, especialista, persona, humano, agente, ejecutivo, asesor, o dice que no eres una persona real: DEBES usar la función handleRepresentativeRequest inmediatamente. Después, usa notifyAgentSpecialistRequest para notificar al agente por SMS. No respondas directamente, usa las funciones.
 - Usa el nombre de la persona en tus respuestas cuando esté disponible en el contexto. Personaliza el saludo y las respuestas incluyendo su nombre cuando sea apropiado.
 - Si hay nombre del lead en el contexto, úsalo en el saludo inicial: "Hola [nombre]! 👋". Si no hay nombre, usa "Hola! 👋".
 `.trim();
@@ -874,9 +875,31 @@ POLÍTICA DE RESPUESTA:
       model: modelName,
       instructions,
       input: userMessage,
-      // tools comentadas temporalmente para evitar errores de API
-      /*
       tools: [
+        {
+          type: "function",
+          name: "handleRepresentativeRequest",
+          description: "Usar cuando el cliente quiere hablar con un representante, especialista, persona, humano, agente, ejecutivo, asesor, o dice que no eres una persona real. Esta función debe usarse inmediatamente cuando se detecte esta intención.",
+          parameters: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+          strict: true,
+        },
+        {
+          type: "function",
+          name: "notifyAgentSpecialistRequest",
+          description: "Enviar una notificación por SMS al agente/usuario cuando un cliente quiere hablar con un especialista. Usa esta función después de usar handleRepresentativeRequest para notificar al agente.",
+          parameters: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+          strict: true,
+        },
+      ],
+      /*
         {
           type: "function",
           name: "getUserInfo",
@@ -996,8 +1019,6 @@ POLÍTICA DE RESPUESTA:
       (Array.isArray(r.output) && r.output[0]?.content?.[0]?.text) ||
       "Disculpa, ¿podrías repetir tu consulta?";
 
-    // Tools comentadas temporalmente - solo usar respuesta directa
-    /*
     // Si el modelo usó tools, ejecutarlas y generar respuesta final
     if (r.tool_calls && r.tool_calls.length > 0) {
       console.log(
@@ -1010,7 +1031,7 @@ POLÍTICA DE RESPUESTA:
       for (const toolCall of r.tool_calls) {
         try {
           const functionName = toolCall.function.name;
-          const functionArgs = JSON.parse(toolCall.function.arguments);
+          const functionArgs = JSON.parse(toolCall.function.arguments || "{}");
 
           console.log(
             `🔧 [TOOL] Ejecutando ${functionName} con args:`,
@@ -1018,11 +1039,37 @@ POLÍTICA DE RESPUESTA:
           );
 
           let result;
-          // Tools comentadas temporalmente para evitar errores
-          result = {
-            success: false,
-            error: "Tools temporalmente deshabilitadas",
-          };
+          
+          // Ejecutar la función correspondiente
+          if (functionName === "handleRepresentativeRequest") {
+            result = await tools.handleRepresentativeRequest(supabase, BOOKING_LINK);
+            // Si es solicitud de representante, usar directamente el mensaje
+            if (result.success && result.data) {
+              finalResponse = result.data.mensaje;
+              console.log("👤 [REPRESENTATIVE] Usando respuesta directa de función");
+              // No generar respuesta adicional, usar la respuesta directa
+              break;
+            }
+          } else if (functionName === "notifyAgentSpecialistRequest") {
+            // Obtener información del cliente para notificar al agente
+            const clientPhone = conversation.phone_number || null;
+            const clientName = leadData 
+              ? `${leadData.name || ""} ${leadData.last_name || ""}`.trim() || null
+              : null;
+            const userId = conversation.user_id || null;
+            
+            result = await tools.notifyAgentSpecialistRequest(
+              supabase,
+              userId,
+              clientPhone,
+              clientName
+            );
+          } else {
+            result = {
+              success: false,
+              error: `Función ${functionName} no implementada`,
+            };
+          }
           
           toolResults.push({
             tool_call_id: toolCall.id,
@@ -1039,8 +1086,13 @@ POLÍTICA DE RESPUESTA:
         }
       }
 
-      // Generar respuesta final con los resultados de las tools
-      if (toolResults.length > 0) {
+      // Si handleRepresentativeRequest fue llamada, ya tenemos la respuesta final
+      const representativeCalled = toolResults.some(
+        (tr) => tr.function_name === "handleRepresentativeRequest" && tr.result.success
+      );
+      
+      if (!representativeCalled && toolResults.length > 0) {
+        // Generar respuesta final con los resultados de las tools (solo si no es representante)
         const finalReq = {
           model: modelName,
           instructions:
@@ -1062,7 +1114,6 @@ POLÍTICA DE RESPUESTA:
           finalResponse;
       }
     }
-    */
 
     // Persistir el nuevo response.id para la próxima vuelta
     await supabase
