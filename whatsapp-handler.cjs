@@ -1168,18 +1168,33 @@ POLÍTICA DE RESPUESTA:
       }
     }
 
-    // Persistir el nuevo response.id para la próxima vuelta
-    await supabase
-      .from("whatsapp_conversations")
-      .update({
-        last_response_id: r.id,
-        last_ai_response: finalResponse,
-        last_message_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", conversation.id);
+    // Validar que r tenga id antes de intentar persistirlo
+    if (!r || !r.id) {
+      console.error("❌ [OPENAI] Error: respuesta de OpenAI no tiene id");
+      console.error("❌ [OPENAI] Respuesta completa:", JSON.stringify(r, null, 2));
+      console.error("❌ [OPENAI] finalResponse:", finalResponse);
+      // Continuar sin actualizar last_response_id, pero retornar la respuesta
+      return finalResponse;
+    }
 
-    console.log("🤖 [OPENAI] OK. response.id:", r.id);
+    // Persistir el nuevo response.id para la próxima vuelta
+    try {
+      await supabase
+        .from("whatsapp_conversations")
+        .update({
+          last_response_id: r.id,
+          last_ai_response: finalResponse,
+          last_message_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", conversation.id);
+
+      console.log("🤖 [OPENAI] OK. response.id:", r.id);
+    } catch (updateError) {
+      console.error("❌ [OPENAI] Error actualizando conversación:", updateError);
+      // No fallar completamente, solo loggear el error y continuar
+      console.warn("⚠️ [OPENAI] Continuando sin actualizar last_response_id");
+    }
     if (leadData) {
       console.log(
         "👤 [LEAD] Respuesta personalizada para lead:",
@@ -1209,7 +1224,13 @@ POLÍTICA DE RESPUESTA:
 
     return finalResponse;
   } catch (error) {
-    console.error("❌ [OPENAI] Error (Responses):", error);
+    console.error("=".repeat(80));
+    console.error("❌ [OPENAI] ═══ ERROR EN generateAIResponse ═══");
+    console.error("=".repeat(80));
+    console.error("❌ [OPENAI] Error completo:", error);
+    console.error("❌ [OPENAI] Error message:", error.message);
+    console.error("❌ [OPENAI] Error stack:", error.stack);
+    console.error("=".repeat(80));
     return "Disculpa, tuve un inconveniente técnico. ¿Puedes intentar de nuevo en unos minutos?";
   }
 }
