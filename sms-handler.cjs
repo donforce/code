@@ -754,6 +754,9 @@ POLÍTICA DE RESPUESTA:
       (Array.isArray(r.output) && r.output[0]?.content?.[0]?.text) ||
       "Disculpa, ¿podrías repetir tu consulta?";
 
+    // Declarar finalR fuera del bloque para que esté disponible después
+    let finalR = null;
+
     // Si el modelo usó tools, ejecutarlas y generar respuesta final
     if (r.tool_calls && r.tool_calls.length > 0) {
       console.log(
@@ -762,7 +765,6 @@ POLÍTICA DE RESPUESTA:
       );
 
       const toolResults = [];
-      let finalR = null; // Declarar fuera del bloque para poder usarlo después
 
       for (const toolCall of r.tool_calls) {
         try {
