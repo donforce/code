@@ -1013,6 +1013,26 @@ POLÍTICA DE RESPUESTA:
 
     const r = await openai.responses.create(req);
 
+    // Logs detallados de la respuesta de OpenAI
+    console.log("=".repeat(80));
+    console.log("🤖 [OPENAI] ═══ RESPUESTA DE OPENAI ═══");
+    console.log("=".repeat(80));
+    console.log("📋 [OPENAI] Respuesta completa:", JSON.stringify(r, null, 2));
+    console.log("📋 [OPENAI] output_text:", r.output_text);
+    console.log("📋 [OPENAI] output:", r.output);
+    console.log("📋 [OPENAI] tool_calls:", r.tool_calls);
+    console.log("📋 [OPENAI] tool_calls length:", r.tool_calls?.length || 0);
+    if (r.tool_calls && r.tool_calls.length > 0) {
+      console.log("📋 [OPENAI] Detalles de tool_calls:");
+      r.tool_calls.forEach((tc, idx) => {
+        console.log(`   [${idx}] ID: ${tc.id}`);
+        console.log(`   [${idx}] Type: ${tc.type}`);
+        console.log(`   [${idx}] Function name: ${tc.function?.name}`);
+        console.log(`   [${idx}] Function arguments: ${tc.function?.arguments}`);
+      });
+    }
+    console.log("=".repeat(80));
+
     // Procesar tools si el modelo los usó
     let finalResponse =
       r.output_text ||
@@ -1030,8 +1050,26 @@ POLÍTICA DE RESPUESTA:
 
       for (const toolCall of r.tool_calls) {
         try {
-          const functionName = toolCall.function.name;
-          const functionArgs = JSON.parse(toolCall.function.arguments || "{}");
+          console.log("=".repeat(80));
+          console.log(`🔧 [TOOL] ═══ PROCESANDO TOOL CALL ═══`);
+          console.log("=".repeat(80));
+          console.log("📋 [TOOL] Tool call completo:", JSON.stringify(toolCall, null, 2));
+          
+          const functionName = toolCall.function?.name;
+          const functionArgumentsRaw = toolCall.function?.arguments || "{}";
+          
+          console.log(`📋 [TOOL] Function name: ${functionName}`);
+          console.log(`📋 [TOOL] Function arguments (raw): ${functionArgumentsRaw}`);
+          
+          let functionArgs = {};
+          try {
+            functionArgs = JSON.parse(functionArgumentsRaw);
+            console.log(`📋 [TOOL] Function arguments (parsed):`, functionArgs);
+          } catch (parseError) {
+            console.error(`❌ [TOOL] Error parseando arguments:`, parseError);
+            console.error(`❌ [TOOL] Arguments raw:`, functionArgumentsRaw);
+            throw new Error(`Error parseando arguments: ${parseError.message}`);
+          }
 
           console.log(
             `🔧 [TOOL] Ejecutando ${functionName} con args:`,
@@ -1071,16 +1109,26 @@ POLÍTICA DE RESPUESTA:
             };
           }
           
+          console.log(`✅ [TOOL] Resultado de ${functionName}:`, JSON.stringify(result, null, 2));
+          console.log("=".repeat(80));
+          
           toolResults.push({
             tool_call_id: toolCall.id,
             function_name: functionName,
             result: result,
           });
         } catch (error) {
+          console.error("=".repeat(80));
+          console.error(`❌ [TOOL] ═══ ERROR EJECUTANDO TOOL ═══`);
+          console.error("=".repeat(80));
           console.error(`❌ [TOOL] Error ejecutando tool:`, error);
+          console.error(`❌ [TOOL] Error stack:`, error.stack);
+          console.error(`❌ [TOOL] Tool call que falló:`, JSON.stringify(toolCall, null, 2));
+          console.error("=".repeat(80));
+          
           toolResults.push({
             tool_call_id: toolCall.id,
-            function_name: toolCall.function.name,
+            function_name: toolCall.function?.name || "unknown",
             result: { success: false, error: error.message },
           });
         }
