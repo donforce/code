@@ -679,7 +679,8 @@ POLÍTICA DE RESPUESTA:
 - Siempre que haya intención (demo/precio/contratar/cómo funciona): cierra con
   "¿Quieres que te comparta el link para agendar una demo de 30 min?"
   Si el lead ya pidió el link, compártelo directamente: ${BOOKING_LINK}
-- Si el cliente quiere hablar con un representante, especialista, persona, humano, agente, ejecutivo, asesor, o dice que no eres una persona real: DEBES usar la función handleRepresentativeRequest inmediatamente. Después, usa notifyAgentSpecialistRequest para notificar al agente por SMS. No respondas directamente, usa las funciones.
+- Si te preguntan si eres una IA, un bot, o si eres artificial: responde directamente que sí, que eres la asistente virtual de OrquestAI y que estás aquí para ayudarles. NO uses la función handleRepresentativeRequest en este caso.
+- Si el cliente quiere hablar con un representante, especialista, persona, humano, agente, ejecutivo, asesor, o pide específicamente hablar con una persona real: DEBES usar la función handleRepresentativeRequest inmediatamente. Después, usa notifyAgentSpecialistRequest para notificar al agente por SMS. No respondas directamente, usa las funciones.
 - Usa el nombre de la persona en tus respuestas cuando esté disponible en el contexto. Personaliza el saludo y las respuestas incluyendo su nombre cuando sea apropiado.
 - Si hay nombre del lead en el contexto, úsalo en el saludo inicial: "Hola [nombre]! 👋". Si no hay nombre, usa "Hola! 👋".
 `.trim();
@@ -698,7 +699,7 @@ POLÍTICA DE RESPUESTA:
         {
           type: "function",
           name: "handleRepresentativeRequest",
-          description: "Usar cuando el cliente quiere hablar con un representante, especialista, persona, humano, agente, ejecutivo, asesor, o dice que no eres una persona real. Esta función debe usarse inmediatamente cuando se detecte esta intención.",
+          description: "Usar SOLO cuando el cliente pide específicamente hablar con un representante, especialista, persona, humano, agente, ejecutivo o asesor. NO usar si solo preguntan si eres una IA o un bot - en ese caso responde directamente que sí eres la asistente virtual de OrquestAI. Esta función debe usarse inmediatamente cuando se detecte la intención de hablar con una persona real.",
           parameters: {
             type: "object",
             properties: {},
@@ -749,11 +750,19 @@ POLÍTICA DE RESPUESTA:
         // Si hay tool calls pendientes, ejecutarlas y enviar outputs ANTES del nuevo input
         if (pendingToolCalls && pendingToolCalls.length > 0) {
           console.log(`🔧 [OPENAI] Encontradas ${pendingToolCalls.length} tool calls pendientes, ejecutándolas primero...`);
+          console.log(`📋 [OPENAI] Tool calls pendientes:`, JSON.stringify(pendingToolCalls, null, 2));
           
-          let toolOutputs = [];
           for (const toolCall of pendingToolCalls) {
             const functionName = toolCall.function?.name;
+            const toolCallId = toolCall.id;
             const functionArgumentsRaw = toolCall.function?.arguments || "{}";
+            
+            console.log(`🔧 [TOOL] Procesando tool call:`, {
+              id: toolCallId,
+              functionName: functionName,
+              arguments: functionArgumentsRaw
+            });
+            
             let functionArgs = {};
             try {
               functionArgs = JSON.parse(functionArgumentsRaw);
@@ -768,8 +777,7 @@ POLÍTICA DE RESPUESTA:
               // Para handleRepresentativeRequest, podemos preparar el output antes de ejecutar
               toolOutput = JSON.stringify({ bookingLink: BOOKING_LINK });
             } else if (functionName === "notifyAgentSpecialistRequest") {
-              // Para notifyAgentSpecialistRequest, necesitamos ejecutar primero para obtener el resultado
-              // Pero preparamos el output placeholder
+              // Para notifyAgentSpecialistRequest, preparamos el output placeholder
               toolOutput = JSON.stringify({ notified: true });
             } else {
               toolOutput = JSON.stringify({ success: true });
@@ -778,7 +786,7 @@ POLÍTICA DE RESPUESTA:
             // Enviar respuesta a OpenAI ANTES de ejecutar la tool
             const toolInput = {
               type: "function_call_output",
-              tool_call_id: toolCall.id,
+              call_id: toolCallId,
               output: toolOutput,
             };
             
@@ -786,16 +794,26 @@ POLÍTICA DE RESPUESTA:
             
             const toolReq = {
               model: modelName,
-              previous_response_id: currentResponseId,
+              previous_response_id: currentResponseId || conversation.last_response_id,
               input: [toolInput],
             };
+            
+            console.log("📤 [OPENAI] Request para enviar tool output:", JSON.stringify(toolReq, null, 2));
             
             try {
               const toolResponse = await openai.responses.create(toolReq);
               console.log("✅ [OPENAI] Respuesta enviada a OpenAI antes de ejecutar tool, nuevo response_id:", toolResponse.id);
+              console.log("📋 [OPENAI] Respuesta completa después de tool output:", JSON.stringify(toolResponse, null, 2));
+              
+              // Verificar que el nuevo response no tiene tool calls pendientes
+              if (toolResponse.tool_calls && toolResponse.tool_calls.length > 0) {
+                console.warn("⚠️ [OPENAI] El nuevo response todavía tiene tool calls pendientes:", toolResponse.tool_calls);
+              }
+              
               currentResponseId = toolResponse.id;
             } catch (toolError) {
               console.error("❌ [OPENAI] Error enviando respuesta a OpenAI antes de ejecutar tool:", toolError);
+              console.error("❌ [OPENAI] Error details:", JSON.stringify(toolError, null, 2));
               // Continuar con la ejecución aunque falle el envío
             }
             
@@ -819,7 +837,7 @@ POLÍTICA DE RESPUESTA:
             // Agregar a toolOutputs para el caso de pending tools
             toolOutputs.push({
               type: "function_call_output",
-              tool_call_id: toolCall.id,
+              call_id: toolCall.id,
               output: toolOutput,
             });
           }
@@ -960,7 +978,7 @@ POLÍTICA DE RESPUESTA:
           // Enviar respuesta a OpenAI ANTES de ejecutar la tool
           const toolInput = {
             type: "function_call_output",
-            tool_call_id: toolCall.id,
+            call_id: toolCall.id,
             output: toolOutput,
           };
           
@@ -1039,7 +1057,7 @@ POLÍTICA DE RESPUESTA:
           const errorOutput = JSON.stringify({ error: `Error ejecutando ${functionName}: ${error.message}` });
           const errorInput = {
             type: "function_call_output",
-            tool_call_id: toolCall.id,
+            call_id: toolCall.id,
             output: errorOutput,
           };
 
