@@ -852,12 +852,28 @@ POLÍTICA DE RESPUESTA:
           console.log(`✅ [TOOL] Resultado de ${functionName}:`, JSON.stringify(result, null, 2));
           console.log("=".repeat(80));
           
+          // Generar mensaje descriptivo para OpenAI basado en la tool ejecutada
+          let toolOutputMessage;
+          if (functionName === "handleRepresentativeRequest") {
+            toolOutputMessage = result.success 
+              ? "Tool ejecutada: Se preparó el mensaje para el cliente con el link de agendar."
+              : `Error: ${result.error || "Error ejecutando tool"}`;
+          } else if (functionName === "notifyAgentSpecialistRequest") {
+            toolOutputMessage = result.success 
+              ? "Se avisó al usuario."
+              : `Error: ${result.error || "Error ejecutando tool"}`;
+          } else {
+            toolOutputMessage = result.success 
+              ? `Tool ${functionName} ejecutada exitosamente.`
+              : `Error: ${result.error || "Error ejecutando tool"}`;
+          }
+          
           // IMPORTANTE: Enviar respuesta a OpenAI ANTES de que se envíe el mensaje a SMS
           // Esto permite que OpenAI procese el resultado de la tool antes de que se envíe el mensaje
           const toolInput = {
             type: "tool",
             tool_call_id: toolCall.id,
-            output: JSON.stringify(result),
+            output: toolOutputMessage,
           };
 
           console.log("📤 [OPENAI] Enviando resultado de tool a OpenAI ANTES de enviar mensaje a SMS:", JSON.stringify(toolInput, null, 2));
@@ -906,11 +922,12 @@ POLÍTICA DE RESPUESTA:
           console.error(`❌ [TOOL] Tool call que falló:`, JSON.stringify(toolCall, null, 2));
           console.error("=".repeat(80));
           
-          // Enviar error a OpenAI también
+          // Enviar error a OpenAI también con mensaje descriptivo
+          const errorMessage = `Error ejecutando ${functionName}: ${error.message}`;
           const errorInput = {
             type: "tool",
             tool_call_id: toolCall.id,
-            output: JSON.stringify({ success: false, error: error.message }),
+            output: errorMessage,
           };
 
           try {
