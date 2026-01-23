@@ -762,7 +762,44 @@ POLÍTICA DE RESPUESTA:
               functionArgs = {};
             }
             
-            // Ejecutar la tool
+            // IMPORTANTE: Preparar y enviar respuesta a OpenAI ANTES de ejecutar la tool
+            let toolOutput;
+            if (functionName === "handleRepresentativeRequest") {
+              // Para handleRepresentativeRequest, podemos preparar el output antes de ejecutar
+              toolOutput = JSON.stringify({ bookingLink: BOOKING_LINK });
+            } else if (functionName === "notifyAgentSpecialistRequest") {
+              // Para notifyAgentSpecialistRequest, necesitamos ejecutar primero para obtener el resultado
+              // Pero preparamos el output placeholder
+              toolOutput = JSON.stringify({ notified: true });
+            } else {
+              toolOutput = JSON.stringify({ success: true });
+            }
+            
+            // Enviar respuesta a OpenAI ANTES de ejecutar la tool
+            const toolInput = {
+              type: "function_call_output",
+              tool_call_id: toolCall.id,
+              output: toolOutput,
+            };
+            
+            console.log("📤 [OPENAI] Enviando respuesta de tool a OpenAI ANTES de ejecutar:", JSON.stringify(toolInput, null, 2));
+            
+            const toolReq = {
+              model: modelName,
+              previous_response_id: currentResponseId,
+              input: [toolInput],
+            };
+            
+            try {
+              const toolResponse = await openai.responses.create(toolReq);
+              console.log("✅ [OPENAI] Respuesta enviada a OpenAI antes de ejecutar tool, nuevo response_id:", toolResponse.id);
+              currentResponseId = toolResponse.id;
+            } catch (toolError) {
+              console.error("❌ [OPENAI] Error enviando respuesta a OpenAI antes de ejecutar tool:", toolError);
+              // Continuar con la ejecución aunque falle el envío
+            }
+            
+            // AHORA ejecutar la tool
             let result;
             if (functionName === "handleRepresentativeRequest") {
               result = await tools.handleRepresentativeRequest(supabase, BOOKING_LINK);
@@ -777,26 +814,13 @@ POLÍTICA DE RESPUESTA:
               result = { success: false, error: `Función ${functionName} no implementada` };
             }
             
-            // Generar mensaje descriptivo
-            let toolOutputMessage;
-            if (functionName === "handleRepresentativeRequest") {
-              toolOutputMessage = result.success 
-                ? "Tool ejecutada: Se preparó el mensaje para el cliente con el link de agendar."
-                : `Error: ${result.error || "Error ejecutando tool"}`;
-            } else if (functionName === "notifyAgentSpecialistRequest") {
-              toolOutputMessage = result.success 
-                ? "Se avisó al usuario."
-                : `Error: ${result.error || "Error ejecutando tool"}`;
-            } else {
-              toolOutputMessage = result.success 
-                ? `Tool ${functionName} ejecutada exitosamente.`
-                : `Error: ${result.error || "Error ejecutando tool"}`;
-            }
+            console.log(`✅ [TOOL] Resultado de ${functionName} después de enviar respuesta a OpenAI:`, JSON.stringify(result, null, 2));
             
+            // Agregar a toolOutputs para el caso de pending tools
             toolOutputs.push({
               type: "function_call_output",
               tool_call_id: toolCall.id,
-              output: toolOutputMessage,
+              output: toolOutput,
             });
           }
           
@@ -921,9 +945,45 @@ POLÍTICA DE RESPUESTA:
             functionArgs
           );
 
-          let result;
+          // IMPORTANTE: Preparar y enviar respuesta a OpenAI ANTES de ejecutar la tool
+          let toolOutput;
+          if (functionName === "handleRepresentativeRequest") {
+            // Para handleRepresentativeRequest, podemos preparar el output antes de ejecutar
+            toolOutput = JSON.stringify({ bookingLink: BOOKING_LINK });
+          } else if (functionName === "notifyAgentSpecialistRequest") {
+            // Para notifyAgentSpecialistRequest, preparamos el output placeholder
+            toolOutput = JSON.stringify({ notified: true });
+          } else {
+            toolOutput = JSON.stringify({ success: true });
+          }
           
-          // Ejecutar la función correspondiente
+          // Enviar respuesta a OpenAI ANTES de ejecutar la tool
+          const toolInput = {
+            type: "function_call_output",
+            tool_call_id: toolCall.id,
+            output: toolOutput,
+          };
+          
+          console.log("📤 [OPENAI] Enviando respuesta de tool a OpenAI ANTES de ejecutar:", JSON.stringify(toolInput, null, 2));
+          
+          const toolReq = {
+            model: modelName,
+            previous_response_id: currentResponseId,
+            input: [toolInput],
+          };
+          
+          try {
+            const toolResponse = await openai.responses.create(toolReq);
+            console.log("✅ [OPENAI] Respuesta enviada a OpenAI antes de ejecutar tool, nuevo response_id:", toolResponse.id);
+            currentResponseId = toolResponse.id;
+            finalR = toolResponse; // Guardar el último response
+          } catch (toolError) {
+            console.error("❌ [OPENAI] Error enviando respuesta a OpenAI antes de ejecutar tool:", toolError);
+            // Continuar con la ejecución aunque falle el envío
+          }
+          
+          // AHORA ejecutar la función correspondiente
+          let result;
           if (functionName === "handleRepresentativeRequest") {
             result = await tools.handleRepresentativeRequest(supabase, BOOKING_LINK);
             // Si es solicitud de representante, usar directamente el mensaje
@@ -953,68 +1013,17 @@ POLÍTICA DE RESPUESTA:
             };
           }
           
-          console.log(`✅ [TOOL] Resultado de ${functionName}:`, JSON.stringify(result, null, 2));
+          console.log(`✅ [TOOL] Resultado de ${functionName} después de enviar respuesta a OpenAI:`, JSON.stringify(result, null, 2));
           console.log("=".repeat(80));
           
-          // Generar mensaje descriptivo para OpenAI basado en la tool ejecutada
-          let toolOutputMessage;
-          if (functionName === "handleRepresentativeRequest") {
-            toolOutputMessage = result.success 
-              ? "Tool ejecutada: Se preparó el mensaje para el cliente con el link de agendar."
-              : `Error: ${result.error || "Error ejecutando tool"}`;
-          } else if (functionName === "notifyAgentSpecialistRequest") {
-            toolOutputMessage = result.success 
-              ? "Se avisó al usuario."
-              : `Error: ${result.error || "Error ejecutando tool"}`;
-          } else {
-            toolOutputMessage = result.success 
-              ? `Tool ${functionName} ejecutada exitosamente.`
-              : `Error: ${result.error || "Error ejecutando tool"}`;
-          }
-          
-          // IMPORTANTE: Enviar respuesta a OpenAI ANTES de que se envíe el mensaje a SMS
-          // Esto permite que OpenAI procese el resultado de la tool antes de que se envíe el mensaje
-          const toolInput = {
-            type: "function_call_output",
-            tool_call_id: toolCall.id,
-            output: toolOutputMessage,
-          };
-
-          console.log("📤 [OPENAI] Enviando resultado de tool a OpenAI ANTES de enviar mensaje a SMS:", JSON.stringify(toolInput, null, 2));
-
-          const toolReq = {
-            model: modelName,
-            previous_response_id: currentResponseId, // Usar el response_id actual (inicial o del response anterior)
-            input: [toolInput], // Enviar solo el resultado de esta tool
-          };
-
-          console.log("📤 [OPENAI] Request que se envía a OpenAI:", JSON.stringify(toolReq, null, 2));
-
-          try {
-            // Enviar respuesta a OpenAI inmediatamente después de ejecutar la tool
-            // Esto debe hacerse ANTES de que se envíe el mensaje a SMS
-            const toolResponse = await openai.responses.create(toolReq);
-            console.log("✅ [OPENAI] Respuesta recibida después de tool (antes de enviar a SMS):", JSON.stringify(toolResponse, null, 2));
-            
-            // Actualizar currentResponseId para la siguiente tool (si hay más)
-            currentResponseId = toolResponse.id;
-            finalR = toolResponse; // Guardar el último response
-            
-            // Si no es representante, usar la respuesta generada por OpenAI
-            if (!representativeCalled) {
-              finalResponse =
-                toolResponse.output_text ||
-                (Array.isArray(toolResponse.output) &&
-                  toolResponse.output[0]?.content?.[0]?.text) ||
-                finalResponse;
-            }
-          } catch (toolError) {
-            console.error("❌ [OPENAI] Error enviando resultado de tool a OpenAI:", toolError);
-            // Si falla y es representante, ya tenemos finalResponse, continuar
-            // Si no es representante, re-lanzar el error
-            if (!representativeCalled) {
-              throw toolError;
-            }
+          // La respuesta ya fue enviada a OpenAI antes de ejecutar la tool
+          // Si no es representante y tenemos una respuesta de OpenAI, usarla
+          if (!representativeCalled && finalR && finalR.output_text) {
+            finalResponse =
+              finalR.output_text ||
+              (Array.isArray(finalR.output) &&
+                finalR.output[0]?.content?.[0]?.text) ||
+              finalResponse;
           }
           
         } catch (error) {
@@ -1026,12 +1035,12 @@ POLÍTICA DE RESPUESTA:
           console.error(`❌ [TOOL] Tool call que falló:`, JSON.stringify(toolCall, null, 2));
           console.error("=".repeat(80));
           
-          // Enviar error a OpenAI también con mensaje descriptivo
-          const errorMessage = `Error ejecutando ${functionName}: ${error.message}`;
+          // Enviar error a OpenAI también con formato JSON stringificado
+          const errorOutput = JSON.stringify({ error: `Error ejecutando ${functionName}: ${error.message}` });
           const errorInput = {
             type: "function_call_output",
             tool_call_id: toolCall.id,
-            output: errorMessage,
+            output: errorOutput,
           };
 
           try {
