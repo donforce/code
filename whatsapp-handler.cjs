@@ -2217,13 +2217,15 @@ async function sendWhatsAppMetaEvents(
 
     // Preparar payload de Meta
     const currentTime = Math.floor(Date.now() / 1000);
+    // Para eventos Schedule, action_source debe ser "website" según Meta
+    const actionSource = eventName === "Schedule" ? "website" : "messaging";
     const metaPayload = {
       data: [
         {
           event_name: eventName,
           event_time: currentTime,
           event_id: conversation.id, // ID de la conversación
-          action_source: "messaging",
+          action_source: actionSource,
           event_source_url: "https://orquest-ai.com/",
           user_data: {
             // Datos básicos (hasheados)
