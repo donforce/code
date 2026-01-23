@@ -794,7 +794,7 @@ POLÍTICA DE RESPUESTA:
             }
             
             toolOutputs.push({
-              type: "tool",
+              type: "function_call_output",
               tool_call_id: toolCall.id,
               output: toolOutputMessage,
             });
@@ -975,7 +975,7 @@ POLÍTICA DE RESPUESTA:
           // IMPORTANTE: Enviar respuesta a OpenAI ANTES de que se envíe el mensaje a SMS
           // Esto permite que OpenAI procese el resultado de la tool antes de que se envíe el mensaje
           const toolInput = {
-            type: "tool",
+            type: "function_call_output",
             tool_call_id: toolCall.id,
             output: toolOutputMessage,
           };
@@ -1029,7 +1029,7 @@ POLÍTICA DE RESPUESTA:
           // Enviar error a OpenAI también con mensaje descriptivo
           const errorMessage = `Error ejecutando ${functionName}: ${error.message}`;
           const errorInput = {
-            type: "tool",
+            type: "function_call_output",
             tool_call_id: toolCall.id,
             output: errorMessage,
           };

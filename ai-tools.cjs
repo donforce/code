@@ -36,7 +36,7 @@ async function notifyAgentSpecialistRequest(supabase, userId, clientPhone, clien
     // Obtener número de teléfono del usuario
     const { data: user, error: userError } = await supabase
       .from("users")
-      .select("phone_number, first_name, last_name")
+      .select("phone, first_name, last_name")
       .eq("id", userId)
       .single();
 
@@ -48,7 +48,7 @@ async function notifyAgentSpecialistRequest(supabase, userId, clientPhone, clien
       };
     }
 
-    if (!user.phone_number) {
+    if (!user.phone) {
       console.log("ℹ️ [NOTIFY AGENT] Usuario no tiene número de teléfono configurado");
       return {
         success: false,
@@ -83,7 +83,7 @@ async function notifyAgentSpecialistRequest(supabase, userId, clientPhone, clien
     // Enviar SMS al usuario/agente
     const response = await twilioClient.messages.create({
       from: twilioPhoneNumber,
-      to: user.phone_number,
+      to: user.phone,
       body: notificationMessage,
     });
 
@@ -93,7 +93,7 @@ async function notifyAgentSpecialistRequest(supabase, userId, clientPhone, clien
       success: true,
       data: {
         message_sid: response.sid,
-        agent_phone: user.phone_number,
+        agent_phone: user.phone,
         message: "Notificación enviada al agente",
       },
     };
@@ -122,7 +122,7 @@ async function getUserInfo(supabase, userId) {
         available_credits,
         total_credits,
         created_at,
-        phone_number
+        phone
       `
       )
       .eq("id", userId)
@@ -139,7 +139,7 @@ async function getUserInfo(supabase, userId) {
         creditos_totales: user.total_credits || 0,
         email: user.email,
         cliente_desde: new Date(user.created_at).toLocaleDateString("es-ES"),
-        telefono: user.phone_number,
+        telefono: user.phone,
       },
     };
   } catch (error) {
