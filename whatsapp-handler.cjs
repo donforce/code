@@ -1067,15 +1067,17 @@ POLÍTICA DE RESPUESTA:
 
     // Declarar finalR fuera del bloque para que esté disponible después
     let finalR = null;
+    let currentResponseId = r.id; // Empezar con el response_id inicial
 
-    // Si el modelo usó tools, ejecutarlas y generar respuesta final
+    // Si el modelo usó tools, ejecutarlas y enviar respuesta inmediatamente después de cada una
     if (toolCalls && toolCalls.length > 0) {
       console.log(
         "🔧 [TOOLS] Modelo solicitó usar tools:",
         toolCalls.length
       );
 
-      const toolResults = [];
+      // Si handleRepresentativeRequest fue llamada, ya tenemos la respuesta final
+      let representativeCalled = false;
 
       for (const toolCall of toolCalls) {
         try {
@@ -1113,6 +1115,7 @@ POLÍTICA DE RESPUESTA:
             // Si es solicitud de representante, usar directamente el mensaje
             if (result.success && result.data) {
               finalResponse = result.data.mensaje;
+              representativeCalled = true;
               console.log("👤 [REPRESENTATIVE] Usando respuesta directa de función:", finalResponse);
             }
           } else if (functionName === "notifyAgentSpecialistRequest") {
@@ -1139,18 +1142,51 @@ POLÍTICA DE RESPUESTA:
           console.log(`✅ [TOOL] Resultado de ${functionName}:`, JSON.stringify(result, null, 2));
           console.log("=".repeat(80));
           
-          // Agregar resultado a toolResults (importante para que OpenAI pueda procesarlo)
-          toolResults.push({
+          // IMPORTANTE: Enviar respuesta a OpenAI ANTES de que se envíe el mensaje a WhatsApp
+          // Esto permite que OpenAI procese el resultado de la tool antes de que se envíe el mensaje
+          const toolInput = {
+            type: "tool",
             tool_call_id: toolCall.id,
-            function_name: functionName,
-            result: result,
-          });
-          
-          // Si es handleRepresentativeRequest y fue exitoso, ya tenemos la respuesta final
-          // No necesitamos generar otra respuesta, pero sí agregamos el resultado para logging
-          if (functionName === "handleRepresentativeRequest" && result.success && result.data) {
-            console.log("👤 [REPRESENTATIVE] Respuesta final establecida, no se generará respuesta adicional");
+            output: JSON.stringify(result),
+          };
+
+          console.log("📤 [OPENAI] Enviando resultado de tool a OpenAI ANTES de enviar mensaje a WhatsApp:", JSON.stringify(toolInput, null, 2));
+
+          const toolReq = {
+            model: modelName,
+            previous_response_id: currentResponseId, // Usar el response_id actual (inicial o del response anterior)
+            input: [toolInput], // Enviar solo el resultado de esta tool
+          };
+
+          console.log("📤 [OPENAI] Request que se envía a OpenAI:", JSON.stringify(toolReq, null, 2));
+
+          try {
+            // Enviar respuesta a OpenAI inmediatamente después de ejecutar la tool
+            // Esto debe hacerse ANTES de que se envíe el mensaje a WhatsApp
+            const toolResponse = await openai.responses.create(toolReq);
+            console.log("✅ [OPENAI] Respuesta recibida después de tool (antes de enviar a WhatsApp):", JSON.stringify(toolResponse, null, 2));
+            
+            // Actualizar currentResponseId para la siguiente tool (si hay más)
+            currentResponseId = toolResponse.id;
+            finalR = toolResponse; // Guardar el último response
+            
+            // Si no es representante, usar la respuesta generada por OpenAI
+            if (!representativeCalled) {
+              finalResponse =
+                toolResponse.output_text ||
+                (Array.isArray(toolResponse.output) &&
+                  toolResponse.output[0]?.content?.[0]?.text) ||
+                finalResponse;
+            }
+          } catch (toolError) {
+            console.error("❌ [OPENAI] Error enviando resultado de tool a OpenAI:", toolError);
+            // Si falla y es representante, ya tenemos finalResponse, continuar
+            // Si no es representante, re-lanzar el error
+            if (!representativeCalled) {
+              throw toolError;
+            }
           }
+          
         } catch (error) {
           console.error("=".repeat(80));
           console.error(`❌ [TOOL] ═══ ERROR EJECUTANDO TOOL ═══`);
@@ -1160,60 +1196,26 @@ POLÍTICA DE RESPUESTA:
           console.error(`❌ [TOOL] Tool call que falló:`, JSON.stringify(toolCall, null, 2));
           console.error("=".repeat(80));
           
-          toolResults.push({
+          // Enviar error a OpenAI también
+          const errorInput = {
+            type: "tool",
             tool_call_id: toolCall.id,
-            function_name: toolCall.function?.name || "unknown",
-            result: { success: false, error: error.message },
-          });
-        }
-      }
+            output: JSON.stringify({ success: false, error: error.message }),
+          };
 
-      // Si handleRepresentativeRequest fue llamada, ya tenemos la respuesta final
-      const representativeCalled = toolResults.some(
-        (tr) => tr.function_name === "handleRepresentativeRequest" && tr.result.success
-      );
-      
-      // Siempre necesitamos enviar los resultados de las tools de vuelta a OpenAI cuando hay tool_calls
-      if (toolResults.length > 0) {
-        // Preparar input con array de objetos tipo "tool" en el formato que OpenAI espera
-        const toolInputs = toolResults.map((tr) => ({
-          type: "tool",
-          tool_call_id: tr.tool_call_id,
-          output: JSON.stringify(tr.result),
-        }));
+          try {
+            const errorReq = {
+              model: modelName,
+              previous_response_id: currentResponseId,
+              input: [errorInput],
+            };
 
-        console.log("📤 [OPENAI] Enviando resultados de tools a OpenAI:", JSON.stringify(toolInputs, null, 2));
-
-        // Generar respuesta final con los resultados de las tools
-        const finalReq = {
-          model: modelName,
-          previous_response_id: r.id, // Usar el id del response que tiene los tool_calls
-          input: toolInputs, // Enviar los resultados de las tools en formato input
-          // Nota: temperature no está soportado cuando se envía input con tool outputs
-        };
-
-        console.log("📤 [OPENAI] Final request (con tool outputs) que se envía a OpenAI:", JSON.stringify(finalReq, null, 2));
-
-        try {
-          finalR = await openai.responses.create(finalReq);
-          console.log("✅ [OPENAI] Respuesta final recibida:", JSON.stringify(finalR, null, 2));
-          
-          // Si no es representante, usar la respuesta generada por OpenAI
-          if (!representativeCalled) {
-            finalResponse =
-              finalR.output_text ||
-              (Array.isArray(finalR.output) &&
-                finalR.output[0]?.content?.[0]?.text) ||
-              finalResponse;
-          }
-          // Si es representante, ya tenemos finalResponse establecido, solo actualizar r para el id
-          // pero mantener finalResponse como está
-        } catch (finalError) {
-          console.error("❌ [OPENAI] Error en segunda llamada con tool_outputs:", finalError);
-          // Si falla y es representante, ya tenemos finalResponse, continuar
-          // Si no es representante, usar el fallback
-          if (!representativeCalled) {
-            throw finalError; // Re-lanzar para que se maneje en el catch principal
+            const errorResponse = await openai.responses.create(errorReq);
+            currentResponseId = errorResponse.id;
+            finalR = errorResponse;
+          } catch (errorSendError) {
+            console.error("❌ [OPENAI] Error enviando error de tool a OpenAI:", errorSendError);
+            // Continuar con la siguiente tool aunque falle el envío del error
           }
         }
       }
