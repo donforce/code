@@ -722,8 +722,109 @@ POLÍTICA DE RESPUESTA:
     };
 
     // Memoria de hilo: encadenar si hay último response
+    // IMPORTANTE: Si hay previous_response_id, verificar si tiene tool calls pendientes
+    let currentResponseId = null; // Declarar aquí para usar en todo el flujo
     if (conversation.last_response_id) {
-      req.previous_response_id = conversation.last_response_id;
+      // Obtener el response anterior para verificar si tiene tool calls pendientes
+      try {
+        const previousResponse = await openai.responses.retrieve(conversation.last_response_id);
+        console.log("📋 [OPENAI] Response anterior recuperado:", JSON.stringify(previousResponse, null, 2));
+        
+        // Verificar si tiene tool calls pendientes
+        let pendingToolCalls = previousResponse.tool_calls || [];
+        if (!pendingToolCalls.length && Array.isArray(previousResponse.output)) {
+          const functionCalls = previousResponse.output.filter(item => item.type === 'function_call');
+          if (functionCalls.length > 0) {
+            pendingToolCalls = functionCalls.map(fc => ({
+              id: fc.call_id || fc.id,
+              type: 'function',
+              function: {
+                name: fc.name,
+                arguments: fc.arguments || '{}'
+              }
+            }));
+          }
+        }
+        
+        // Si hay tool calls pendientes, ejecutarlas y enviar outputs ANTES del nuevo input
+        if (pendingToolCalls && pendingToolCalls.length > 0) {
+          console.log(`🔧 [OPENAI] Encontradas ${pendingToolCalls.length} tool calls pendientes, ejecutándolas primero...`);
+          
+          let toolOutputs = [];
+          for (const toolCall of pendingToolCalls) {
+            const functionName = toolCall.function?.name;
+            const functionArgumentsRaw = toolCall.function?.arguments || "{}";
+            let functionArgs = {};
+            try {
+              functionArgs = JSON.parse(functionArgumentsRaw);
+            } catch (parseError) {
+              console.error(`❌ [TOOL] Error parseando arguments:`, parseError);
+              functionArgs = {};
+            }
+            
+            // Ejecutar la tool
+            let result;
+            if (functionName === "handleRepresentativeRequest") {
+              result = await tools.handleRepresentativeRequest(supabase, BOOKING_LINK);
+            } else if (functionName === "notifyAgentSpecialistRequest") {
+              const clientPhone = conversation.phone_number || null;
+              const clientName = leadData 
+                ? `${leadData.name || ""} ${leadData.last_name || ""}`.trim() || null
+                : null;
+              const userId = conversation.user_id || null;
+              result = await tools.notifyAgentSpecialistRequest(supabase, userId, clientPhone, clientName);
+            } else {
+              result = { success: false, error: `Función ${functionName} no implementada` };
+            }
+            
+            // Generar mensaje descriptivo
+            let toolOutputMessage;
+            if (functionName === "handleRepresentativeRequest") {
+              toolOutputMessage = result.success 
+                ? "Tool ejecutada: Se preparó el mensaje para el cliente con el link de agendar."
+                : `Error: ${result.error || "Error ejecutando tool"}`;
+            } else if (functionName === "notifyAgentSpecialistRequest") {
+              toolOutputMessage = result.success 
+                ? "Se avisó al usuario."
+                : `Error: ${result.error || "Error ejecutando tool"}`;
+            } else {
+              toolOutputMessage = result.success 
+                ? `Tool ${functionName} ejecutada exitosamente.`
+                : `Error: ${result.error || "Error ejecutando tool"}`;
+            }
+            
+            toolOutputs.push({
+              type: "tool",
+              tool_call_id: toolCall.id,
+              output: toolOutputMessage,
+            });
+          }
+          
+          // Enviar tool outputs a OpenAI ANTES del nuevo input
+          if (toolOutputs.length > 0) {
+            console.log("📤 [OPENAI] Enviando tool outputs pendientes ANTES del nuevo input:", JSON.stringify(toolOutputs, null, 2));
+            const toolOutputReq = {
+              model: modelName,
+              previous_response_id: conversation.last_response_id,
+              input: toolOutputs,
+            };
+            
+            const toolOutputResponse = await openai.responses.create(toolOutputReq);
+            console.log("✅ [OPENAI] Tool outputs enviados, nuevo response_id:", toolOutputResponse.id);
+            currentResponseId = toolOutputResponse.id;
+            req.previous_response_id = toolOutputResponse.id; // Usar el nuevo response_id para el siguiente request
+          }
+        } else {
+          // No hay tool calls pendientes, usar el previous_response_id normalmente
+          req.previous_response_id = conversation.last_response_id;
+          currentResponseId = conversation.last_response_id;
+        }
+      } catch (retrieveError) {
+        console.error("❌ [OPENAI] Error recuperando response anterior:", retrieveError);
+        // Si falla, usar el previous_response_id normalmente
+        req.previous_response_id = conversation.last_response_id;
+        currentResponseId = conversation.last_response_id;
+      }
     }
 
     console.log("📤 [OPENAI] Request que se envía a OpenAI:", JSON.stringify(req, null, 2));
@@ -777,7 +878,10 @@ POLÍTICA DE RESPUESTA:
 
     // Declarar finalR fuera del bloque para que esté disponible después
     let finalR = null;
-    let currentResponseId = r.id; // Empezar con el response_id inicial
+    // currentResponseId ya está declarado arriba, actualizar con el response_id inicial si no se actualizó antes
+    if (!currentResponseId) {
+      currentResponseId = r.id;
+    }
 
     // Si el modelo usó tools, ejecutarlas y enviar respuesta inmediatamente después de cada una
     if (toolCalls && toolCalls.length > 0) {
