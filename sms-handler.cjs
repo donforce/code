@@ -718,13 +718,15 @@ POLÍTICA DE RESPUESTA:
           strict: true,
         },
       ],
-      temperature: 0.7,
+      // Nota: temperature no está soportado por este modelo
     };
 
     // Memoria de hilo: encadenar si hay último response
     if (conversation.last_response_id) {
       req.previous_response_id = conversation.last_response_id;
     }
+
+    console.log("📤 [OPENAI] Request que se envía a OpenAI:", JSON.stringify(req, null, 2));
 
     const r = await openai.responses.create(req);
 
@@ -899,6 +901,8 @@ POLÍTICA DE RESPUESTA:
           input: toolInputs, // Enviar los resultados de las tools en formato input
           // Nota: temperature no está soportado cuando se envía input con tool outputs
         };
+
+        console.log("📤 [OPENAI] Final request (con tool outputs) que se envía a OpenAI:", JSON.stringify(finalReq, null, 2));
 
         try {
           finalR = await openai.responses.create(finalReq);
